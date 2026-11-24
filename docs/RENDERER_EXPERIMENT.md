@@ -34,5 +34,3 @@ The JSON decoder rejects unknown fields, unsafe node/media types, invalid nestin
 - Select a permitted educational video and verify the complete click-to-load experience. The sample currently displays a pending-video notice.
 - Make TipTap produce the same restricted document format, or add a validated adapter. This JSON is not native TipTap JSON.
 - Add real accounts, persistence and the editorial workflow before any public application deployment. The local experiment must not be exposed publicly.
-
-The [homepage concept](design/homepage-concept.png) is a separate proposed visual, not a screenshot of this renderer or a deployed homepage.
