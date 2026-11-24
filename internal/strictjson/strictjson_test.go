@@ -1,6 +1,7 @@
 package strictjson
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -89,5 +90,49 @@ func TestRequiresPointer(t *testing.T) {
 	var d doc
 	if err := Unmarshal([]byte(`{}`), d); err == nil {
 		t.Fatal("non-pointer target accepted")
+	}
+}
+
+type custom struct{ A string }
+
+func (c *custom) UnmarshalJSON([]byte) error { return nil }
+
+func TestRefusesCustomUnmarshalers(t *testing.T) {
+	var v struct {
+		C custom `json:"c"`
+	}
+	if err := Unmarshal([]byte(`{"c":{"x":1}}`), &v); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("custom decoder scanned as a plain struct: %v", err)
+	}
+}
+
+func TestErrorNamesPath(t *testing.T) {
+	var d doc
+	err := Unmarshal([]byte(`{"blocks":[{"type":"p"},{"type":"p","children":[{"type":"i","SRC":"x"}]}]}`), &d)
+	if err == nil || !strings.Contains(err.Error(), `"SRC" in $.blocks[1].children[0]`) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// Error paths are built only on failure: deep nesting near the 128 KiB lesson
+// limit must not allocate per level in proportion to the depth.
+func TestDeepNestingStaysLinear(t *testing.T) {
+	var v struct {
+		Title string `json:"title"`
+	}
+	for _, src := range []string{
+		`{"title":` + strings.Repeat(`{"aaaaaaa":`, 9990) + `1` + strings.Repeat(`}`, 9991),
+		`{"title":` + strings.Repeat(`[`, 9990) + strings.Repeat(`]`, 9990) + `}`,
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		if err := Unmarshal([]byte(src), &v); err == nil {
+			t.Fatal("mistyped title accepted")
+		}
+		runtime.ReadMemStats(&after)
+		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 32<<20 {
+			t.Fatalf("%d-byte input allocated %d MiB", len(src), alloc>>20)
+		}
 	}
 }

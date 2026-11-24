@@ -11,19 +11,22 @@ package strictjson
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
 // Unmarshal decodes data into v, which must be a non-nil pointer. Struct
 // targets accept only keys that equal a field's JSON name byte for byte;
-// map and interface targets accept any key. Every object, at any depth,
-// must have unique keys (compared after unescaping). Trailing whitespace is
-// allowed; any other data after the value is an error.
+// map and interface targets accept any key. Every object, at any depth, must
+// have unique keys (compared after unescaping). Trailing whitespace is
+// allowed; any other data after the value is an error. Types with their own
+// UnmarshalJSON or UnmarshalText are refused rather than scanned wrongly.
 func Unmarshal(data []byte, v any) error {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -31,7 +34,8 @@ func Unmarshal(data []byte, v any) error {
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	if err := scan(dec, rv.Type().Elem(), "$"); err != nil {
+	var path []string
+	if err := scan(dec, rv.Type().Elem(), &path); err != nil {
 		return err
 	}
 	if _, err := dec.Token(); err != io.EOF {
@@ -42,11 +46,21 @@ func Unmarshal(data []byte, v any) error {
 	return exact.Decode(v)
 }
 
+var (
+	jsonUnmarshaler = reflect.TypeFor[json.Unmarshaler]()
+	textUnmarshaler = reflect.TypeFor[encoding.TextUnmarshaler]()
+)
+
 // scan reads one value from dec. t is the type it will decode into, or nil
-// when any value is acceptable.
-func scan(dec *json.Decoder, t reflect.Type, path string) error {
+// when any value is acceptable. path holds the segments leading to the value;
+// it is joined only when reporting an error, so memory stays linear in depth.
+func scan(dec *json.Decoder, t reflect.Type, path *[]string) error {
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+	if t != nil && (t.Implements(jsonUnmarshaler) || reflect.PointerTo(t).Implements(jsonUnmarshaler) ||
+		t.Implements(textUnmarshaler) || reflect.PointerTo(t).Implements(textUnmarshaler)) {
+		return fmt.Errorf("strictjson: %s has custom JSON decoding and is not supported", t)
 	}
 	tok, err := dec.Token()
 	if err != nil {
@@ -66,9 +80,11 @@ func scan(dec *json.Decoder, t reflect.Type, path string) error {
 			elem = t.Elem()
 		}
 		for i := 0; dec.More(); i++ {
-			if err := scan(dec, elem, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			*path = append(*path, "["+strconv.Itoa(i)+"]")
+			if err := scan(dec, elem, path); err != nil {
 				return err
 			}
+			*path = (*path)[:len(*path)-1]
 		}
 	case '{':
 		var fields map[string]reflect.Type
@@ -92,26 +108,32 @@ func scan(dec *json.Decoder, t reflect.Type, path string) error {
 			}
 			key := tok.(string)
 			if seen[key] {
-				return fmt.Errorf("duplicate key %q in %s", key, path)
+				return fmt.Errorf("duplicate key %q in %s", key, joinPath(*path))
 			}
 			seen[key] = true
 			next := elem
 			if fields != nil {
 				ft, ok := fields[key]
 				if !ok {
-					return fmt.Errorf("unknown field %q in %s", key, path)
+					return fmt.Errorf("unknown field %q in %s", key, joinPath(*path))
 				}
 				next = ft
 			}
-			if err := scan(dec, next, path+"."+key); err != nil {
+			*path = append(*path, "."+key)
+			if err := scan(dec, next, path); err != nil {
 				return err
 			}
+			*path = (*path)[:len(*path)-1]
 		}
 	default:
 		return fmt.Errorf("unexpected %q", delim)
 	}
 	_, err = dec.Token() // closing delimiter
 	return err
+}
+
+func joinPath(path []string) string {
+	return "$" + strings.Join(path, "")
 }
 
 // jsonFields maps each exported field's exact JSON name to its type.

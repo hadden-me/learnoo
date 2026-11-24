@@ -269,6 +269,15 @@ func TestLoginRejectsAmbiguousJSON(t *testing.T) {
 	if e.sessionCount() != 0 {
 		t.Fatal("rejected logins created sessions")
 	}
+	// Rejected bodies never reach the service, so they are not sign-in
+	// attempts: more than the 5-per-email limit were sent above.
+	var attempts int
+	if err := e.db.QueryRow(context.Background(), `SELECT count(*) FROM login_attempts`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 0 {
+		t.Fatalf("rejected logins recorded %d attempts", attempts)
+	}
 	if w := post("{" + creds + "}\n"); w.Code != http.StatusOK {
 		t.Fatalf("exact request with trailing newline: %d %s", w.Code, w.Body)
 	}
