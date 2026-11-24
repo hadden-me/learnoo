@@ -23,6 +23,24 @@ jobs:
     timeout-minutes: 20
     env:
       LEARNOO_TEST_PORT: "18080"
+      # Database-backed Go tests (LRN-005). REQUIRE makes them fail, not skip,
+      # if the database is unavailable. Disposable CI-only service; no secret.
+      LEARNOO_TEST_DATABASE_URL: postgres://learnoo@127.0.0.1:5432/learnoo_test?sslmode=disable
+      LEARNOO_REQUIRE_DB_TESTS: "1"
+    services:
+      postgres:
+        image: postgres:16.13
+        env:
+          POSTGRES_USER: learnoo
+          POSTGRES_DB: learnoo_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U learnoo -d learnoo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

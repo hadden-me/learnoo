@@ -98,3 +98,15 @@ On 2026-11-23 the maintainer approved replacing the temporary direct Udemy palet
 ## Studio editor adapter (LRN-003)
 
 The Studio keeps its own TipTap schema and converts to and from the restricted lesson JSON through a validated adapter, so the shared schema stays at version 1 with no fixture change. The mapping was posted on issue 3 before implementation. The Go renderer remains the only renderer: the Studio shows TeX source while editing and previews through `POST /preview`. A TypeScript port of `rendering.Validate` checks exports; shared contract cases keep it in parity with Go. The adapter is deliberately stricter than Go for attributes the reader ignores, so it never discards them silently. Pasted HTML is filtered: supported text, marks, math and language spans are kept; scripts, embeds and non-allowlisted images are removed and reported. Saves are browser-local; accounts, server drafts and publication remain later tasks. `web/studio` has its own lockfile; CI installs, typechecks, tests and builds it.
+
+## Application server foundation (LRN-005)
+
+Implementer choices for the foundation slice on 2026-11-24 (role model still open; nothing here grants or checks permissions):
+
+- `cmd/server` is separate from `cmd/renderer`; the renderer stays an isolated loopback experiment. The server also binds only to loopback until deployment work defines TLS and the trusted proxy chain.
+- PostgreSQL 16 through `pgx/v5`. Migrations use a small embedded runner (per-file transaction, advisory lock, SHA-256 checksums that reject edited, unknown or out-of-order history) instead of an external migration tool, to avoid a dependency for about 150 lines of logic.
+- Passwords: Argon2id from `golang.org/x/crypto/argon2`, PHC string format, OWASP minimum cost (19 MiB, t=2, p=1) chosen for the shared server's memory. Parameters are stored per hash, so they can be raised later. Unknown and disabled accounts are verified against a dummy hash to keep timing and responses identical.
+- Sessions: 256-bit random tokens; only their SHA-256 is stored. Cookie `__Host-learnoo_session`, `HttpOnly`, `Secure`, `SameSite=Lax`. Idle timeout 24 hours, absolute 14 days. Login always issues a new token and revokes any presented session; logout deletes the row.
+- CSRF: Go's `http.CrossOriginProtection` on every unsafe request (including login), plus a per-session token in `X-CSRF-Token` for authenticated mutations. Login accepts only `application/json`.
+- Throttling in PostgreSQL (no Redis): attempts are recorded before the password check under per-key advisory locks; more than 5 per email or 30 per client address in a sliding 15-minute window returns 429. Keys are stored as SHA-256 hashes, not raw emails or addresses. Accepted risk: an attacker can temporarily lock a known email out; revisit with LRN-022 public-launch hardening.
+- `create-user` reads the password from stdin and creates an account without roles; it is an operator tool, not registration. Role grants remain LRN-013.

@@ -48,12 +48,6 @@ Contributor pull requests will target `develop` and require approval from **@had
 
 ## Planning documents
 
-The [project plan](docs/PROJECT_PLAN.md) describes the product and long-term direction. The [implementation plan](docs/IMPLEMENTATION_PLAN.md) defines the current prototype scope and takes precedence where it narrows the broader plan. Working guides summarize these documents; unresolved decisions live in the decision log.
+The [project plan](docs/PROJECT_PLAN.md) describes the product and long-term direction. The [implementation plan](docs/IMPLEMENTATION_PLAN.md) defines the current prototype scope and takes precedence where it narrows the broader plan. Working guides summarize these documents; unresolved decisions live in the decision log. The [renderer experiment results](docs/RENDERER_EXPERIMENT.md) record what the local reader prototype has proven so far.
 
 Update these files in place as decisions evolve. Git records their history; filenames do not carry release numbers.
-
-## Communication drafts
-
-- [Tunisian-dialect Facebook post](docs/communications/facebook-post-tn.md) — draft, not posted.
-- [Homepage concept](docs/design/homepage-concept.png) — generated proposed design, not a live-site screenshot.
-- [Renderer experiment results](docs/RENDERER_EXPERIMENT.md).
