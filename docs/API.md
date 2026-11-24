@@ -101,7 +101,9 @@ Protected endpoints wrap their handler in `permissions.Middleware.Require(permis
 - No session: `401 unauthenticated`.
 - Session without the permission, an unknown permission, a disabled account, an unparseable subject or a database error: `403 forbidden`.
 
-Every grant and revoke is recorded in the append-only `permission_audit` table with actor, target, permission, subject and time. Self-approval prevention belongs to the review workflow (LRN-007). No HTTP endpoint changes permissions yet; LRN-013 adds the operator CLI.
+The middleware is a fast early check: it reads outside the handler's transaction, so a revocation or account disablement can commit between it and the change. Every state-changing editorial action must therefore re-check inside its own transaction with `permissions.RequireTx(ctx, tx, userID, permission)` or `permissions.RequireReviewerTx(ctx, tx, userID, subjectID)`. These share-lock the grant and account rows (`FOR SHARE`), so a concurrent revocation or disablement waits until the action commits and applies from the next transaction on. Such lock waits can end in a PostgreSQL deadlock or serialization error (SQLSTATE `40P01`/`40001`); callers report it, or retry the whole transaction, and never treat it as success.
+
+Every grant and revoke is recorded in the append-only `permission_audit` table with actor, target, permission, subject and time (the database transaction time, equal to the grant's `granted_at`). Revoking from an unknown user or subject returns an error rather than a silent no-op. Self-approval prevention belongs to the review workflow (LRN-007). No HTTP endpoint changes permissions yet; LRN-013 adds the operator CLI.
 
 ## Not yet defined
 

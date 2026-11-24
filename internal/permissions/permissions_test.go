@@ -11,12 +11,16 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/users"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -460,5 +464,301 @@ func TestMiddlewareDeniesByDefault(t *testing.T) {
 	}
 	if got := get("/t/author", tokens["reviewer"]); got != 403 {
 		t.Errorf("revoked author still allowed: %d", got)
+	}
+}
+
+// blocked runs f in a goroutine and reports whether it is still running after
+// a short wait; the returned channel yields f's error once it finishes.
+func blocked(f func() error) (bool, <-chan error) {
+	done := make(chan error, 1)
+	go func() { done <- f() }()
+	select {
+	case err := <-done:
+		done <- err
+		return false, done
+	case <-time.After(300 * time.Millisecond):
+		return true, done
+	}
+}
+
+func wait(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent change still blocked after commit")
+		return nil
+	}
+}
+
+// A check inside the caller's transaction holds the grant until that
+// transaction ends: a concurrent revocation or account disablement waits,
+// and the next transaction sees it.
+func TestTxChecksHoldGrantsUntilCommit(t *testing.T) {
+	e := newEnv(t)
+	math := e.subject("simulated-math")
+
+	cases := []struct {
+		name   string
+		check  func(pgx.Tx, int64) error
+		grant  func(int64)
+		remove func(int64) error
+	}{
+		{
+			name:  "revoke publisher",
+			check: func(tx pgx.Tx, u int64) error { return permissions.RequireTx(e.ctx, tx, u, permissions.Publisher) },
+			grant: func(u int64) {
+				if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Publisher); err != nil {
+					t.Fatal(err)
+				}
+			},
+			remove: func(u int64) error {
+				_, err := e.store.Revoke(e.ctx, permissions.Operator, u, permissions.Publisher)
+				return err
+			},
+		},
+		{
+			name:  "revoke reviewer",
+			check: func(tx pgx.Tx, u int64) error { return permissions.RequireReviewerTx(e.ctx, tx, u, math) },
+			grant: func(u int64) {
+				if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+					t.Fatal(err)
+				}
+			},
+			remove: func(u int64) error {
+				_, err := e.store.RevokeReviewer(e.ctx, permissions.Operator, u, math)
+				return err
+			},
+		},
+		{
+			name:  "disable account (publisher)",
+			check: func(tx pgx.Tx, u int64) error { return permissions.RequireTx(e.ctx, tx, u, permissions.Publisher) },
+			grant: func(u int64) {
+				if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Publisher); err != nil {
+					t.Fatal(err)
+				}
+			},
+			remove: func(u int64) error {
+				_, err := e.db.Exec(e.ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, u)
+				return err
+			},
+		},
+		{
+			name:  "disable account (reviewer)",
+			check: func(tx pgx.Tx, u int64) error { return permissions.RequireReviewerTx(e.ctx, tx, u, math) },
+			grant: func(u int64) {
+				if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+					t.Fatal(err)
+				}
+			},
+			remove: func(u int64) error {
+				_, err := e.db.Exec(e.ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, u)
+				return err
+			},
+		},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u := e.user("holder" + strconv.Itoa(i))
+			c.grant(u)
+
+			tx, err := e.db.Begin(e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(e.ctx)
+			if err := c.check(tx, u); err != nil {
+				t.Fatalf("check in tx A: %v", err)
+			}
+			isBlocked, done := blocked(func() error { return c.remove(u) })
+			if !isBlocked {
+				t.Fatalf("change did not wait for tx A (err=%v)", <-done)
+			}
+			if err := tx.Commit(e.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := wait(t, done); err != nil {
+				t.Fatalf("change after commit: %v", err)
+			}
+
+			// After the change commits, a new transaction is denied.
+			tx2, err := e.db.Begin(e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx2.Rollback(e.ctx)
+			if err := c.check(tx2, u); !errors.Is(err, permissions.ErrDenied) {
+				t.Fatalf("check after change: want denied, got %v", err)
+			}
+		})
+	}
+}
+
+func TestTxChecksDenyByDefault(t *testing.T) {
+	e := newEnv(t)
+	math := e.subject("simulated-math")
+	admin := e.userOfType("admin", permissions.Admin)
+	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, admin, math); err != nil {
+		t.Fatal(err)
+	}
+	physics := e.subject("simulated-physics")
+	err := pgx.BeginFunc(e.ctx, e.db, func(tx pgx.Tx) error {
+		for _, p := range allGlobal {
+			if err := permissions.RequireTx(e.ctx, tx, admin, p); err != nil {
+				t.Errorf("held %s denied: %v", p, err)
+			}
+		}
+		if err := permissions.RequireReviewerTx(e.ctx, tx, admin, math); err != nil {
+			t.Errorf("assigned subject denied: %v", err)
+		}
+		denied := map[string]error{
+			"reviewer as global": permissions.RequireTx(e.ctx, tx, admin, permissions.Reviewer),
+			"unknown permission": permissions.RequireTx(e.ctx, tx, admin, "superuser"),
+			"zero user":          permissions.RequireTx(e.ctx, tx, 0, permissions.Author),
+			"unknown user":       permissions.RequireTx(e.ctx, tx, 999999, permissions.Author),
+			"other subject":      permissions.RequireReviewerTx(e.ctx, tx, admin, physics),
+			"unknown subject":    permissions.RequireReviewerTx(e.ctx, tx, admin, 999999),
+			"zero reviewer":      permissions.RequireReviewerTx(e.ctx, tx, 0, math),
+		}
+		for name, err := range denied {
+			if !errors.Is(err, permissions.ErrDenied) {
+				t.Errorf("%s: want denied, got %v", name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(e.ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, admin); err != nil {
+		t.Fatal(err)
+	}
+	err = pgx.BeginFunc(e.ctx, e.db, func(tx pgx.Tx) error {
+		if err := permissions.RequireTx(e.ctx, tx, admin, permissions.Administrator); !errors.Is(err, permissions.ErrDenied) {
+			t.Errorf("disabled account kept administrator: %v", err)
+		}
+		if err := permissions.RequireReviewerTx(e.ctx, tx, admin, math); !errors.Is(err, permissions.ErrDenied) {
+			t.Errorf("disabled account kept reviewer: %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two administrators revoking each other's administrator at the same time:
+// the FOR SHARE lock on each actor's own grant means at most one succeeds and
+// an administrator always remains. The loser is denied (it ran after the
+// winner committed) or aborted as a deadlock (40P01).
+func TestConcurrentAdministratorsCannotRevokeEachOther(t *testing.T) {
+	e := newEnv(t)
+	deadlocks := 0
+	for i := range 10 {
+		a := e.user("admin-a" + strconv.Itoa(i))
+		b := e.user("admin-b" + strconv.Itoa(i))
+		for _, u := range []int64{a, b} {
+			if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Administrator); err != nil {
+				t.Fatal(err)
+			}
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for j, pair := range [][2]int64{{a, b}, {b, a}} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, errs[j] = e.store.Revoke(e.ctx, permissions.UserActor(pair[0]), pair[1], permissions.Administrator)
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		ok := 0
+		for _, err := range errs {
+			var pgErr *pgconn.PgError
+			switch {
+			case err == nil:
+				ok++
+			case errors.As(err, &pgErr) && pgErr.Code == "40P01":
+				deadlocks++
+			case errors.Is(err, permissions.ErrDenied):
+			default:
+				t.Fatalf("iteration %d: unexpected error %v", i, err)
+			}
+		}
+		if ok != 1 {
+			t.Fatalf("iteration %d: %d revocations succeeded (%v), want exactly 1", i, ok, errs)
+		}
+		remaining := 0
+		for _, u := range []int64{a, b} {
+			if e.set(u).Has(permissions.Administrator) {
+				remaining++
+			}
+		}
+		if remaining != 1 {
+			t.Fatalf("iteration %d: %d administrators remain, want 1", i, remaining)
+		}
+	}
+	t.Logf("%d of 10 races ended in a deadlock abort", deadlocks)
+}
+
+// Grant and audit times are both the transaction time.
+func TestAuditTimeMatchesGrantTime(t *testing.T) {
+	e := newEnv(t)
+	math := e.subject("simulated-math")
+	u := e.user("u")
+	if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Author); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+		t.Fatal(err)
+	}
+	var mismatches int
+	err := e.db.QueryRow(e.ctx, `
+		SELECT count(*) FROM permission_audit a
+		  LEFT JOIN user_permissions p ON a.subject_id IS NULL AND p.user_id = a.target_user_id AND p.permission = a.permission
+		  LEFT JOIN reviewer_assignments r ON r.user_id = a.target_user_id AND r.subject_id = a.subject_id
+		 WHERE a.target_user_id = $1 AND coalesce(p.granted_at, r.granted_at) IS DISTINCT FROM a.occurred_at`, u).Scan(&mismatches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mismatches != 0 {
+		t.Fatalf("%d audit rows disagree with their grant time", mismatches)
+	}
+	if log, _ := e.store.Audit(e.ctx, u); len(log) != 2 {
+		t.Fatalf("audit rows = %d, want 2", len(log))
+	}
+}
+
+func TestRevokeUnknownTargets(t *testing.T) {
+	e := newEnv(t)
+	math := e.subject("simulated-math")
+	admin := e.userOfType("admin", permissions.Admin)
+	u := e.user("u")
+	for _, actor := range []permissions.Actor{permissions.Operator, permissions.UserActor(admin)} {
+		if _, err := e.store.Revoke(e.ctx, actor, 999999, permissions.Author); !errors.Is(err, permissions.ErrUnknownUser) {
+			t.Errorf("revoke unknown user: %v", err)
+		}
+		if _, err := e.store.RevokeReviewer(e.ctx, actor, 999999, math); !errors.Is(err, permissions.ErrUnknownUser) {
+			t.Errorf("revoke reviewer of unknown user: %v", err)
+		}
+		if _, err := e.store.RevokeReviewer(e.ctx, actor, u, 999999); !errors.Is(err, permissions.ErrUnknownSubject) {
+			t.Errorf("revoke reviewer of unknown subject: %v", err)
+		}
+		// An absent grant on a known user and subject stays a no-op.
+		if changed, err := e.store.Revoke(e.ctx, actor, u, permissions.Publisher); changed || err != nil {
+			t.Errorf("revoke absent grant: changed=%v err=%v", changed, err)
+		}
+		if changed, err := e.store.RevokeReviewer(e.ctx, actor, u, math); changed || err != nil {
+			t.Errorf("revoke absent reviewer: changed=%v err=%v", changed, err)
+		}
+	}
+	// A non-administrator learns nothing about which users exist.
+	if _, err := e.store.Revoke(e.ctx, permissions.UserActor(u), 999999, permissions.Author); !errors.Is(err, permissions.ErrDenied) {
+		t.Errorf("non-administrator revoke of unknown user: %v", err)
 	}
 }

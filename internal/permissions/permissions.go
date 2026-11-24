@@ -116,16 +116,14 @@ func (s Set) AccountType() AccountType {
 
 // Store reads and changes permissions.
 type Store struct {
-	db  *pgxpool.Pool
-	now func() time.Time
+	db *pgxpool.Pool
 }
 
-// NewStore builds a Store. now may be nil to use the wall clock.
-func NewStore(db *pgxpool.Pool, now func() time.Time) *Store {
-	if now == nil {
-		now = time.Now
-	}
-	return &Store{db: db, now: now}
+// NewStore builds a Store. The clock argument is ignored and may be nil:
+// grant and audit times are the database transaction time (now()), so a
+// grant's granted_at and its audit row's occurred_at always agree.
+func NewStore(db *pgxpool.Pool, _ func() time.Time) *Store {
+	return &Store{db: db}
 }
 
 // Load returns the effective permissions of userID. Unknown or disabled
@@ -174,6 +172,10 @@ func load(ctx context.Context, q querier, userID int64) (Set, error) {
 
 // Require returns nil only if userID holds the global permission p.
 // Reviewer always fails here: use RequireReviewer with a subject.
+//
+// Require reads through the pool, outside any caller transaction, so it is
+// only a fast early check (as in Middleware). A state-changing action must
+// re-check with RequireTx inside its own transaction.
 func (s *Store) Require(ctx context.Context, userID int64, p Permission) error {
 	if !p.global() {
 		return ErrDenied
@@ -188,13 +190,59 @@ func (s *Store) Require(ctx context.Context, userID int64, p Permission) error {
 	return nil
 }
 
+// RequireTx checks the global permission p inside tx. The grant and account
+// rows are share-locked until tx ends, so a concurrent revocation or account
+// disablement waits for the protected change instead of interleaving with it.
+func RequireTx(ctx context.Context, tx pgx.Tx, userID int64, p Permission) error {
+	if !p.global() || userID == 0 {
+		return ErrDenied
+	}
+	var ok bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_permissions p JOIN users u ON u.id = p.user_id
+			 WHERE p.user_id = $1 AND p.permission = $2 AND u.disabled_at IS NULL
+			   FOR SHARE OF p, u)`, userID, string(p)).Scan(&ok)
+	if err != nil {
+		return errors.Join(ErrDenied, err)
+	}
+	if !ok {
+		return ErrDenied
+	}
+	return nil
+}
+
 // RequireReviewer returns nil only if userID is assigned to review subjectID.
+// Like Require, it is a fast early check outside any caller transaction;
+// state-changing review actions must re-check with RequireReviewerTx.
 func (s *Store) RequireReviewer(ctx context.Context, userID, subjectID int64) error {
 	set, err := s.Load(ctx, userID)
 	if err != nil {
 		return errors.Join(ErrDenied, err)
 	}
 	if !set.CanReview(subjectID) {
+		return ErrDenied
+	}
+	return nil
+}
+
+// RequireReviewerTx checks inside tx that userID is assigned to review
+// subjectID, share-locking the assignment and account rows until tx ends,
+// like RequireTx.
+func RequireReviewerTx(ctx context.Context, tx pgx.Tx, userID, subjectID int64) error {
+	if userID == 0 {
+		return ErrDenied
+	}
+	var ok bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM reviewer_assignments r JOIN users u ON u.id = r.user_id
+			 WHERE r.user_id = $1 AND r.subject_id = $2 AND u.disabled_at IS NULL
+			   FOR SHARE OF r, u)`, userID, subjectID).Scan(&ok)
+	if err != nil {
+		return errors.Join(ErrDenied, err)
+	}
+	if !ok {
 		return ErrDenied
 	}
 	return nil
@@ -209,6 +257,9 @@ type Actor struct {
 }
 
 // Operator is the actor for trusted local tools; audited with no actor_id.
+// It skips authorization entirely: anyone with local database access is
+// already an operator (docs/DECISIONS.md "Operator trust boundary"). It must
+// never be reachable from HTTP code; internal/server tests enforce this.
 var Operator = Actor{operator: true}
 
 // UserActor is a signed-in user acting through the application.
@@ -224,6 +275,13 @@ func (s *Store) Grant(ctx context.Context, actor Actor, target int64, p Permissi
 }
 
 // Revoke removes a global permission; revoking an absent one is a no-op.
+// An unknown target returns ErrUnknownUser.
+//
+// Permission changes by a user actor share-lock the actor's administrator
+// grant. Two administrators changing each other's grants at the same time
+// can deadlock; PostgreSQL then aborts one with SQLSTATE 40P01. Callers
+// should report such an error (or retry the whole call); it never leaves a
+// partial change.
 func (s *Store) Revoke(ctx context.Context, actor Actor, target int64, p Permission) (bool, error) {
 	if !p.global() {
 		return false, fmt.Errorf("revoke %q: use RevokeReviewer for subject-scoped permissions", p)
@@ -236,7 +294,8 @@ func (s *Store) GrantReviewer(ctx context.Context, actor Actor, target, subjectI
 	return s.change(ctx, actor, target, "grant", Reviewer, &subjectID)
 }
 
-// RevokeReviewer removes target's review assignment for subjectID.
+// RevokeReviewer removes target's review assignment for subjectID. An
+// unknown target or subject returns ErrUnknownUser or ErrUnknownSubject.
 func (s *Store) RevokeReviewer(ctx context.Context, actor Actor, target, subjectID int64) (bool, error) {
 	return s.change(ctx, actor, target, "revoke", Reviewer, &subjectID)
 }
@@ -274,32 +333,17 @@ func (s *Store) change(ctx context.Context, actor Actor, target int64, action st
 	return changed, err
 }
 
-// authorize checks the actor inside the transaction. FOR SHARE blocks a
-// concurrent revocation of the actor's administrator grant until commit.
+// authorize checks the actor inside the transaction. RequireTx's FOR SHARE
+// blocks a concurrent revocation of the actor's administrator grant, or
+// disablement of the actor's account, until commit.
 func authorize(ctx context.Context, tx pgx.Tx, actor Actor) error {
 	if actor.operator {
 		return nil
 	}
-	if actor.userID == 0 {
-		return ErrDenied
-	}
-	var ok bool
-	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM user_permissions p JOIN users u ON u.id = p.user_id
-			 WHERE p.user_id = $1 AND p.permission = 'administrator' AND u.disabled_at IS NULL
-			   FOR SHARE OF p)`, actor.userID).Scan(&ok)
-	if err != nil {
-		return errors.Join(ErrDenied, err)
-	}
-	if !ok {
-		return ErrDenied
-	}
-	return nil
+	return RequireTx(ctx, tx, actor.userID, Administrator)
 }
 
 func (s *Store) apply(ctx context.Context, tx pgx.Tx, actor Actor, target int64, action string, p Permission, subject *int64) (bool, error) {
-	now := s.now().UTC()
 	var actorID *int64
 	if !actor.operator {
 		actorID = &actor.userID
@@ -309,12 +353,12 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, actor Actor, target int64,
 	switch {
 	case action == "grant" && subject == nil:
 		tag, err = tx.Exec(ctx, `INSERT INTO user_permissions (user_id, permission, granted_at, granted_by)
-			VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, target, string(p), now, actorID)
+			VALUES ($1, $2, now(), $3) ON CONFLICT DO NOTHING`, target, string(p), actorID)
 	case action == "revoke" && subject == nil:
 		tag, err = tx.Exec(ctx, `DELETE FROM user_permissions WHERE user_id = $1 AND permission = $2`, target, string(p))
 	case action == "grant":
 		tag, err = tx.Exec(ctx, `INSERT INTO reviewer_assignments (user_id, subject_id, granted_at, granted_by)
-			VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, target, *subject, now, actorID)
+			VALUES ($1, $2, now(), $3) ON CONFLICT DO NOTHING`, target, *subject, actorID)
 	default:
 		tag, err = tx.Exec(ctx, `DELETE FROM reviewer_assignments WHERE user_id = $1 AND subject_id = $2`, target, *subject)
 	}
@@ -322,14 +366,37 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, actor Actor, target int64,
 		return false, mapFK(err)
 	}
 	if tag.RowsAffected() == 0 {
+		if action == "revoke" {
+			// Nothing to delete: distinguish an absent grant (a no-op) from
+			// an unknown target or subject. Grants already fail on the
+			// foreign keys.
+			return false, checkExists(ctx, tx, target, subject)
+		}
 		return false, nil
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO permission_audit (occurred_at, actor_id, target_user_id, action, permission, subject_id)
-		VALUES ($1, $2, $3, $4, $5, $6)`, now, actorID, target, action, string(p), subject)
+	// occurred_at defaults to now(), the transaction time, so it equals the
+	// grant's granted_at.
+	_, err = tx.Exec(ctx, `INSERT INTO permission_audit (actor_id, target_user_id, action, permission, subject_id)
+		VALUES ($1, $2, $3, $4, $5)`, actorID, target, action, string(p), subject)
 	if err != nil {
 		return false, fmt.Errorf("audit permission change: %w", mapFK(err))
 	}
 	return true, nil
+}
+
+func checkExists(ctx context.Context, tx pgx.Tx, user int64, subject *int64) error {
+	var userOK, subjectOK bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1),
+		$2::bigint IS NULL OR EXISTS (SELECT 1 FROM subjects WHERE id = $2)`, user, subject).Scan(&userOK, &subjectOK)
+	switch {
+	case err != nil:
+		return err
+	case !userOK:
+		return ErrUnknownUser
+	case !subjectOK:
+		return ErrUnknownSubject
+	}
+	return nil
 }
 
 func mapFK(err error) error {
