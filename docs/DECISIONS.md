@@ -131,6 +131,10 @@ Confirmed by the maintainer on 2026-11-24, as proposed in [CAHIER_DES_CHARGES.md
 
 Each permission is granted and checked separately on the server. Reviewing never implies publishing. Nobody approves their own revision. Administrators review educational content only in subjects they are assigned to. This unblocks the permission tables and default grants in LRN-005 and the role administration CLI (LRN-013).
 
+## Permission storage (LRN-005)
+
+Implementer choices on 2026-11-24, following the confirmed role model: global permissions (`author`, `publisher`, `administrator`) in `user_permissions`; per-subject reviewer grants in `reviewer_assignments`; an append-only `permission_audit` (database triggers reject update, delete and truncate). Account types are not stored; they are derived from permissions. A bare `subjects` table (`id`, unique `code`, no seed) exists only as the reviewer scope; LRN-014 extends and seeds it. Only an active `administrator` (or a trusted local operator tool) can grant or revoke. Administrators may assign themselves as subject reviewers; self-approval of their own revisions remains forbidden and is enforced in LRN-007. Removing the last administrator is not yet prevented; LRN-013 should guard it.
+
 ## Media upload limits (LRN-006)
 
 Implementer choices for the media slice on 2026-11-24, in `internal/media` (not yet wired to the database or HTTP):

@@ -2,7 +2,7 @@
 
 Two programs live in this repository and stay separate:
 
-- `cmd/server`: the application server (LRN-005 foundation): PostgreSQL, migrations, accounts, sessions and login. Authentication only; no roles, permissions or lessons yet.
+- `cmd/server`: the application server (LRN-005 foundation): PostgreSQL, migrations, accounts, sessions and login. Authentication and server-side permission checks; no lessons yet.
 - `cmd/renderer`: the loopback-only renderer experiment (LRN-004), below. It has no accounts or database and does not share code paths with the server.
 
 ## Application server
@@ -53,7 +53,7 @@ read -rs PW && printf '%s\n' "$PW" | go run ./cmd/server create-user -email you@
 go run ./cmd/server serve             # http://127.0.0.1:8090
 ```
 
-`serve` refuses to start while migrations are pending or the applied history differs from the files. `create-user` reads the password (12 to 1024 characters) from stdin so it never appears in shell history or process lists; it creates an account without roles and is not public registration. Role grants arrive with LRN-013.
+`serve` refuses to start while migrations are pending or the applied history differs from the files. `create-user` reads the password (12 to 1024 characters) from stdin so it never appears in shell history or process lists; it creates an account with no permissions (a Student) and is not public registration. Granting permissions from the command line arrives with LRN-013; until then the Go API (`internal/permissions`) is used by tests only.
 
 Try it (curl stores `Secure` cookies for `127.0.0.1`; browsers do the same for loopback):
 
@@ -76,11 +76,11 @@ go test ./...
 go vet ./...
 ```
 
-With `LEARNOO_TEST_DATABASE_URL` set, each database-backed test creates an isolated schema, migrates it and drops it afterwards, so tests may run in parallel and leave nothing behind. They cover migration repeatability and tamper detection, cookie attributes, enumeration-safe errors, anonymous access, idle and absolute expiry, rotation on login, logout revocation, CSRF rejection, strict login JSON (exact, unique keys), per-account and per-address throttling and concurrent attempts. They use simulated users only.
+With `LEARNOO_TEST_DATABASE_URL` set, each database-backed test creates an isolated schema, migrates it and drops it afterwards, so tests may run in parallel and leave nothing behind. They cover migration repeatability and tamper detection, cookie attributes, enumeration-safe errors, anonymous access, idle and absolute expiry, rotation on login, logout revocation, CSRF rejection, strict login JSON (exact, unique keys), per-account and per-address throttling and concurrent attempts, plus permission deny-by-default, per-subject reviewer scope, no implied permissions (reviewer never implies publisher), administrator-only grants, audit records and their append-only protection. They use simulated users only.
 
 ### Pending
 
-Permission and role tables, default grants and permission checks are not implemented yet; the role model is confirmed in [DECISIONS.md](DECISIONS.md#role-model). Image validation and content-addressed storage exist in `internal/media` (see [DECISIONS.md](DECISIONS.md#media-upload-limits-lrn-006)) but are not wired to the server: the media directory will be configured by a variable such as `LEARNOO_MEDIA_DIR` on a persistent volume, and there are no upload or serving endpoints yet. Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented.
+Permissions are implemented in `internal/permissions` and `migrations/0002_permissions.sql` (see [API.md](API.md#permissions)). Not yet implemented: the role administration CLI (LRN-013), self-approval prevention in review (LRN-007), curriculum data for subjects beyond a bare identifier (LRN-014). Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented. Image validation and content-addressed storage exist in `internal/media` (see [DECISIONS.md](DECISIONS.md#media-upload-limits-lrn-006)) but are not wired to the server: the media directory will be configured by a variable such as `LEARNOO_MEDIA_DIR` on a persistent volume, and there are no upload or serving endpoints yet. Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented.
 
 ## Local renderer experiment
 
