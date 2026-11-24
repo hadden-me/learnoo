@@ -98,7 +98,10 @@ export const InlineMath = Node.create({
         find: /(^|[^$\\])\$([^$\n]+)\$$/,
         handler: ({ state, range, match }) => {
           const from = range.from + match[1].length;
-          state.tr.replaceWith(from, range.to, this.type.create({ latex: match[2].trim() }));
+          // Carry over the marks active where the formula was typed (stored marks, e.g. bold
+          // toggled on, or the marks of the surrounding text); the schema keeps only bold.
+          const marks = this.type.allowedMarks(state.storedMarks ?? state.doc.resolve(from).marks());
+          state.tr.replaceWith(from, range.to, this.type.create({ latex: match[2].trim() }, null, marks));
         },
       }),
     ];

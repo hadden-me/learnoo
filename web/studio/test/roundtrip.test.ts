@@ -100,6 +100,28 @@ describe('editing produces the restricted format', () => {
     expect(second.document).toEqual(first);
   });
 
+  it('a formula typed while bold is on stays bold', () => {
+    const editor = createEditor();
+    type(editor, 'Avant ');
+    editor.chain().focus().toggleBold().run();
+    type(editor, 'gras $x^2$ fin');
+    editor.chain().toggleBold().setMark('lang', { lang: 'ar', dir: 'rtl' }).run();
+    type(editor, ' $y$');
+    expect(exportFrom(editor, meta).document.blocks).toEqual([
+      {
+        type: 'paragraph',
+        children: [
+          { type: 'text', text: 'Avant ' },
+          { type: 'strong', children: [{ type: 'text', text: 'gras ' }, { type: 'math', text: 'x^2' }, { type: 'text', text: ' fin' }] },
+          // The language mark is not allowed on math: the formula stays LTR and plain.
+          { type: 'text', text: ' ', lang: 'ar', dir: 'rtl' },
+          { type: 'math', text: 'y' },
+        ],
+      },
+    ]);
+    editor.destroy();
+  });
+
   it('canonicalises nested strong and adjacent text without losing content', () => {
     const source = JSON.stringify({
       schemaVersion: 1, title: 'T', language: 'fr', status: 'unreviewed', objective: '',
