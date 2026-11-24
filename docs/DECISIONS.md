@@ -26,6 +26,7 @@ Baseline: PROJECT_PLAN.md and IMPLEMENTATION_PLAN.md. Updated 2026-11-23. This f
 | Brand, domain, visual design | Maintainer + designer | Public pilot |
 | Resource limits, backup retention and recovery targets | Infrastructure maintainer | Shared-server deployment |
 | Privacy, deletion and retention policy | Maintainer + suitable reviewer | Public registration |
+| User-facing role model: Student / Teacher / Admin account types presenting the independently granted backend permissions author, subject-scoped reviewer, publisher and administrator (proposed 2026-11-24 in [CAHIER_DES_CHARGES.md](CAHIER_DES_CHARGES.md#2-users-and-access-levels); reviewing never implies publishing) | Maintainer | LRN-005 permission migrations |
 
 ## Assumptions to validate
 

@@ -1,6 +1,6 @@
 # Repository instructions
 
-Read README.md, docs/REQUIREMENTS.md, docs/ARCHITECTURE.md, and docs/DECISIONS.md before implementation. Read docs/CONTENT_AND_EDITORIAL.md for content, permissions, or publication work.
+Start with docs/CAHIER_DES_CHARGES.md for the access model, milestone plan and working protocol. Live task state, ownership and blockers are on GitHub issues: check the issue and be assigned before starting, and end every PR with the handoff described there. Then read README.md, docs/REQUIREMENTS.md, docs/ARCHITECTURE.md, and docs/DECISIONS.md before implementation. Read docs/CONTENT_AND_EDITORIAL.md for content, permissions, or publication work.
 
 Read docs/PROJECT_PLAN.md for the broad direction and docs/IMPLEMENTATION_PLAN.md for the overriding current implementation scope. Working docs summarize it. Record material decisions rather than silently expanding scope.
 
