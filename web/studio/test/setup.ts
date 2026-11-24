@@ -1,3 +1,8 @@
+import { afterEach } from 'vitest';
+import { destroyEditors } from './helpers';
+
+afterEach(destroyEditors);
+
 // jsdom has no ClipboardEvent; ProseMirror's pasteHTML/pasteText only need the constructor.
 if (typeof globalThis.ClipboardEvent === 'undefined') {
   class ClipboardEventShim extends Event {

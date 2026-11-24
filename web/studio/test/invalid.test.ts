@@ -40,13 +40,13 @@ describe('findDuplicateKey', () => {
 });
 
 describe('adapter refuses what the reader would silently ignore', () => {
-  const editor = createEditor();
   it.each([
     ['lang on a callout', { type: 'callout', lang: 'ar', children: [{ type: 'paragraph', children: [{ type: 'text', text: 'x' }] }] }],
     ['dir on inline math', { type: 'paragraph', children: [{ type: 'math', text: 'x', dir: 'rtl' }] }],
     ['title on a paragraph', { type: 'paragraph', title: 'x', children: [{ type: 'text', text: 'x' }] }],
   ])('%s', (_, block) => {
     const doc = parseLesson(JSON.stringify({ ...base, blocks: [block] }));
+    const editor = createEditor();
     expect(() => lessonToEditorChecked(editor.schema, doc.blocks)).toThrow(LessonError);
   });
 });

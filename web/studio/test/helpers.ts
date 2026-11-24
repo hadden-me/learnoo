@@ -3,8 +3,24 @@ import { lessonExtensions } from '../src/schema/extensions';
 import { editorToLesson, lessonToEditorChecked } from '../src/schema/adapter';
 import { parseLesson, type LessonDocument } from '../src/schema/lesson';
 
+const live = new Set<Editor>();
+
+/** Every editor is destroyed after its test by destroyEditors (test/setup.ts). */
 export function createEditor(): Editor {
-  return new Editor({ element: document.createElement('div'), extensions: lessonExtensions });
+  const editor = new Editor({ element: document.createElement('div'), extensions: lessonExtensions });
+  live.add(editor);
+  editor.on('destroy', () => live.delete(editor));
+  return editor;
+}
+
+// ProseMirror's DOM observer flushes on a 20 ms timer, which a destroyed view
+// can still schedule. Waiting past it keeps every timer inside the test, before
+// jsdom tears down `document`.
+const OBSERVER_FLUSH_MS = 20;
+
+export async function destroyEditors() {
+  for (const editor of [...live]) editor.destroy();
+  await new Promise((resolve) => setTimeout(resolve, OBSERVER_FLUSH_MS * 3));
 }
 
 export function loadInto(editor: Editor, doc: LessonDocument) {
