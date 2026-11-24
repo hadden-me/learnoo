@@ -10,6 +10,10 @@ Never bypass server-side authorization, self-approval prevention, immutable snap
 
 Keep changes focused and run checks appropriate to the work. No production deployments or credentials belong in this documentation bootstrap.
 
+## No AI attribution
+
+Never credit an AI tool (Claude, Codex, Copilot, ChatGPT or similar) in commits, pull requests, issues or comments: no `Co-Authored-By` trailers, no "Generated with" footers, and no AI author or committer identity. Commits are authored by the human contributor. Commit messages are one short, plain line. CI rejects pull requests whose commits break this rule.
+
 ## Task boundaries and implementation
 
 Work on an assigned issue or explicitly requested scope. Read its dependencies and acceptance criteria before editing. If prerequisites are missing, identify them rather than silently inventing educational content, legal permissions, or completed work.

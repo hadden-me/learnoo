@@ -24,6 +24,10 @@ Optional UI/UX skills and pinned upstream licenses are listed in [recommended sk
 
 Teachers will use Studio, not GitHub. Content must have a curriculum objective, clear explanation, sources/rights information, and a different qualified reviewer. AI-generated material is subject to the same review requirements.
 
+## No AI attribution
+
+You may use AI tools, but commits, pull requests and comments must not credit them: no AI `Co-Authored-By` trailers, no "Generated with" footers, no AI author or committer identity. Keep commit messages to one short, plain line. The `verify` check fails otherwise. Claude Code users get this by default from the project's `.claude/settings.json`; configure other tools to match.
+
 ## Collaboration
 
 Be respectful, specific, and constructive. Discuss the work rather than attacking contributors. Do not post secrets, personal student data, or exploit details publicly.
