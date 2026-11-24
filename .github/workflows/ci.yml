@@ -40,6 +40,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/studio/package-lock.json
 
       - name: Install locked npm dependencies
         run: npm ci --ignore-scripts
@@ -54,6 +57,22 @@ jobs:
 
       - name: Design contrast
         run: npm run design:contrast
+
+      - name: Install locked Studio dependencies
+        working-directory: web/studio
+        run: npm ci --ignore-scripts
+
+      - name: Studio typecheck
+        working-directory: web/studio
+        run: npm run typecheck
+
+      - name: Studio tests
+        working-directory: web/studio
+        run: npm test
+
+      - name: Studio build
+        working-directory: web/studio
+        run: npm run build
 
       - name: Go tests
         run: go test ./...

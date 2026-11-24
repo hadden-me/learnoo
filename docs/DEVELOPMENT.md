@@ -34,6 +34,33 @@ The JSON laboratory is not TipTap. No server-side draft storage or approval beha
 
 The reader consumes generated design tokens. Edit `web/design/tokens.json`, run `npm run design:build`, and rebuild the Go server. See [shared design exports](../web/design/README.md) for plain CSS and future Tailwind v4 Studio integration.
 
+## Studio editor prototype (LRN-003)
+
+`web/studio` is a local React/TypeScript/TipTap prototype with its own `package.json` and lockfile. It edits the restricted lesson JSON through a validated adapter; it has no accounts, server storage or publication. Saves stay in the current browser (`localStorage`) or a downloaded file. Verified versions: React 19.3.1, TipTap 3.35.0, Vite 8.3.8, TypeScript 6.0.3, Vitest 5.1.1, jsdom 29.1.1, on Node 22.20.0.
+
+Start the renderer in one terminal, then the Studio in another:
+
+```sh
+go run ./cmd/renderer
+cd web/studio
+npm ci --ignore-scripts
+npm run dev
+```
+
+Open http://127.0.0.1:5173. Vite binds to loopback and proxies `/preview` and `/static` to the renderer (`LEARNOO_RENDERER_URL`, default `http://127.0.0.1:8080`; `LEARNOO_STUDIO_PORT` changes 5173). The preview pane shows the renderer's canonical HTML; the Studio has no second renderer.
+
+Checks, from `web/studio`:
+
+```sh
+npm run typecheck
+npm test
+npm run build
+```
+
+`npm test` covers fixture round trips, save/reopen, paste filtering, invalid input and the Go-parity cases in `test/contract/cases.json`, which `go test ./internal/rendering` also runs. `test/golden/studio-features.json` is an editor-authored export that Go validates and renders; regenerate it deliberately with `UPDATE_GOLDEN=1 npm test`. The root `npm run test:browser` also builds the Studio and serves it on `LEARNOO_STUDIO_TEST_PORT` (default 18180), so install its dependencies first.
+
+Keyboard: `Ctrl/Cmd+B` bold, `Ctrl/Cmd+Alt+2` section heading, `$…$` inline formula, `$$ ` on an empty line for a display formula, `- ` for a list. Toolbar buttons are reachable with Tab; selected formulas, media, containers and paragraph language/direction are edited in the "Propriétés de la sélection" panel.
+
 ## Verify
 
 ```sh
@@ -52,7 +79,7 @@ For a restricted environment, put the Go build cache in a writable temporary dir
 
 ## Continuous integration
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the commands above on every pull request to `develop` or `main` (including fork PRs) and on pushes to those branches. GitHub reports the check as **`verify`** under the **CI** workflow; select that check from the list when configuring branch protection rather than typing a name. It runs on Ubuntu 24.04 with Go 1.25.x and Node 22, in this order: `npm ci --ignore-scripts`, `npm run design:check`, `npm run assets`, `npm run design:contrast`, `go test ./...`, `go vet ./...`, `npx playwright install --with-deps chromium`, `npm run test:browser`. Any failing step fails the job; no step is allowed to fail.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the commands above on every pull request to `develop` or `main` (including fork PRs) and on pushes to those branches. GitHub reports the check as **`verify`** under the **CI** workflow; select that check from the list when configuring branch protection rather than typing a name. It runs on Ubuntu 24.04 with Go 1.25.x and Node 22, in this order: `npm ci --ignore-scripts`, `npm run design:check`, `npm run assets`, `npm run design:contrast`, then in `web/studio` `npm ci --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run build`, then `go test ./...`, `go vet ./...`, `npx playwright install --with-deps chromium`, `npm run test:browser`. Any failing step fails the job; no step is allowed to fail.
 
 Security: the workflow uses the `pull_request` trigger (never `pull_request_target`), a read-only `contents: read` token, no repository secrets, and checkout without persisted credentials. Third-party actions are pinned to commit SHAs. If a step fails, the `test-results/` folder (local fixture screenshots and metrics only) is uploaded as the `playwright-test-results` artifact for 7 days.
 
@@ -64,4 +91,4 @@ Schema allowlists, escaped templates, local image allowlists, content/depth/form
 
 ## Dependency licensing
 
-KaTeX is MIT-licensed and Playwright is Apache-2.0-licensed; their own terms apply. The project's interim notice does not override dependencies. `scripts/copy-katex.mjs` preserves the KaTeX license in the generated vendor directory.
+KaTeX, React, TipTap, Vite and Vitest are MIT-licensed; Playwright and TypeScript are Apache-2.0-licensed; their own terms apply. The project's interim notice does not override dependencies. `scripts/copy-katex.mjs` preserves the KaTeX license in the generated vendor directory.

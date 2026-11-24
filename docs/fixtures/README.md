@@ -12,7 +12,7 @@ All documents are marked `unreviewed`. This technical choice does not finalize t
 
 ## Experimental content contract
 
-This is a small typed JSON format, not yet TipTap's native schema. LRN-003 must implement a validated mapping or revise the shared schema deliberately; do not claim TipTap compatibility before that work.
+This is a small typed JSON format, not TipTap's native schema. LRN-003 adds a validated two-way adapter in `web/studio/src/schema/` without changing it (still `schemaVersion: 1`). The Studio exports exactly this format; all three fixtures round-trip byte-identical. Export canonicalises adjacent identical text and nested `strong`, and drops empty paragraphs/lists. The adapter rejects `lang`/`dir` outside paragraphs, headings and text, and `title` outside callouts, exercises and videos, because the reader ignores them there. Validation parity cases live in `web/studio/test/contract/cases.json` and run in both Go and TypeScript.
 
 Document fields: `schemaVersion: 1`, `title`, `language` (`fr`/`ar`), `status: unreviewed`, `objective`, `blocks`.
 
