@@ -2,8 +2,9 @@ import { useCallback, useId, useRef, useState, type ChangeEvent } from 'react';
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
 import { lessonExtensions } from './schema/extensions';
-import { editorToLesson, lessonToEditorChecked, type Metadata } from './schema/adapter';
-import { ALLOWED_IMAGES, LessonError, YOUTUBE_ID, parseLesson, serializeLesson, type LessonDocument } from './schema/lesson';
+import { editorToLesson, type Metadata } from './schema/adapter';
+import { prepareLesson, prepareSource, type PreparedLesson } from './schema/importer';
+import { ALLOWED_IMAGES, LessonError, YOUTUBE_ID, serializeLesson, type LessonDocument } from './schema/lesson';
 import { describePaste, sanitizePastedHTML } from './schema/paste';
 import { reopenDraft, saveDraft } from './schema/storage';
 import { FIXTURES } from './fixtures';
@@ -38,7 +39,7 @@ export function App() {
     },
   });
 
-  /** Export the current editor content; returns null (and lists problems) when it cannot be saved. */
+  /** Export the current editor content; returns null (and reports why) when it cannot be saved. Never changes the editor. */
   const exportLesson = useCallback((): { doc: LessonDocument; json: string } | null => {
     if (!editor) return null;
     const result = editorToLesson(editor.getJSON(), meta);
@@ -47,20 +48,26 @@ export function App() {
       setStatus({ text: 'Le document ne respecte pas le format restreint ; rien n’a été enregistré.', error: true });
       return null;
     }
-    const json = serializeLesson(result.document);
-    setExported(json);
-    return { doc: result.document, json };
+    try {
+      const json = serializeLesson(result.document);
+      setExported(json);
+      return { doc: result.document, json };
+    } catch (error) {
+      setStatus({ text: `Export impossible, document conservé dans l’éditeur : ${(error as Error).message}`, error: true });
+      return null;
+    }
   }, [editor, meta]);
 
+  /** Replace the editor content with an already validated and serialised document. */
   const load = useCallback(
-    (doc: LessonDocument, message: string) => {
+    (prepared: PreparedLesson, message: string) => {
       if (!editor) return;
-      const content = lessonToEditorChecked(editor.schema, doc.blocks);
+      const { doc, content, json } = prepared;
       editor.commands.setContent(content, { emitUpdate: false });
       setMeta({ title: doc.title, language: doc.language, objective: doc.objective });
       setErrors([]);
       setPasteNotice(null);
-      setExported(serializeLesson(doc));
+      setExported(json);
       setStatus({ text: message });
     },
     [editor],
@@ -68,14 +75,18 @@ export function App() {
 
   const importSource = useCallback(
     (source: string, message: string) => {
+      if (!editor) return;
+      let prepared: PreparedLesson;
       try {
-        load(parseLesson(source), message);
+        prepared = prepareSource(editor.schema, source);
       } catch (error) {
-        // Invalid input never replaces the current document.
+        // Nothing has been changed yet, so the current document really is preserved.
         setStatus({ text: `Import refusé, document actuel conservé : ${(error as Error).message}`, error: true });
+        return;
       }
+      load(prepared, message);
     },
-    [load],
+    [editor, load],
   );
 
   const onSave = () => {
@@ -90,13 +101,17 @@ export function App() {
   };
 
   const onReopen = () => {
+    if (!editor) return;
+    let prepared: PreparedLesson | null;
     try {
       const doc = reopenDraft();
-      if (!doc) setStatus({ text: 'Aucune sauvegarde sur cet appareil.' });
-      else load(doc, 'Sauvegarde rouverte.');
+      prepared = doc && prepareLesson(editor.schema, doc);
     } catch (error) {
       setStatus({ text: `Sauvegarde illisible, document actuel conservé : ${(error as Error).message}`, error: true });
+      return;
     }
+    if (!prepared) setStatus({ text: 'Aucune sauvegarde sur cet appareil.' });
+    else load(prepared, 'Sauvegarde rouverte.');
   };
 
   const onDownload = () => {

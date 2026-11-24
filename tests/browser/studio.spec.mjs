@@ -76,6 +76,23 @@ test('invalid import is refused and the current document is kept', async ({ page
   await expect(page.getByRole('textbox', { name: 'Contenu de la leçon' })).toContainText('نكتب العدد المركّب');
 });
 
+test('an import that is too large once formatted is refused without touching the document', async ({ page }) => {
+  // Compact JSON under 128 KiB (accepted by Go) whose formatted export would exceed the limit.
+  const blocks = Array.from({ length: 240 }, (_, i) => ({ type: 'paragraph', children: [{ type: 'text', text: `${i} ${'x'.repeat(440)}` }] }));
+  const source = JSON.stringify({ schemaVersion: 1, title: 'Taille limite — test technique', language: 'fr', status: 'unreviewed', objective: '', blocks });
+  expect(Buffer.byteLength(source)).toBeLessThan(128 << 10);
+  await page.goto(studioURL);
+  await loadExample(page, 'Test arabe/français (RTL)');
+  const editor = page.getByRole('textbox', { name: 'Contenu de la leçon' });
+  const before = await editor.innerHTML();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Importer un JSON' }).click();
+  await (await chooser).setFiles({ name: 'large.json', mimeType: 'application/json', buffer: Buffer.from(source) });
+  await expect(status(page)).toContainText('Import refusé');
+  expect(await editor.innerHTML()).toBe(before);
+  await expect(page.getByLabel('Titre', { exact: true })).toHaveValue(/اختبار اتجاه الكتابة/);
+});
+
 test('pasting HTML strips unsupported markup and reports it', async ({ page }) => {
   await page.goto(studioURL);
   await page.getByRole('textbox', { name: 'Contenu de la leçon' }).click();
