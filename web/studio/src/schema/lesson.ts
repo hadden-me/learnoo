@@ -47,7 +47,11 @@ export class LessonError extends Error {}
 const utf8 = new TextEncoder();
 export const byteLength = (value: string) => utf8.encode(value).length;
 
-/** Strict JSON decoding: rejects unknown fields and wrong value types, like Go's DisallowUnknownFields. */
+/**
+ * Strict JSON decoding, matching internal/strictjson on the Go side: keys must
+ * be exact (JSON.parse is case-sensitive), unique in every object (JSON.parse
+ * would keep the last one), and nothing may follow the single value.
+ */
 export function parseLesson(source: string): LessonDocument {
   if (byteLength(source) > MAX_DOCUMENT_BYTES) throw new LessonError('Le document dépasse 128 Kio.');
   let raw: unknown;
@@ -56,6 +60,8 @@ export function parseLesson(source: string): LessonDocument {
   } catch {
     throw new LessonError('JSON invalide.');
   }
+  const duplicate = findDuplicateKey(source);
+  if (duplicate !== null) throw new LessonError(`Clé en double : ${duplicate}.`);
   if (!isRecord(raw)) throw new LessonError('Le document doit être un objet JSON.');
   for (const key of Object.keys(raw)) {
     if (!DOCUMENT_KEYS.includes(key)) throw new LessonError(`Champ inconnu dans le document : ${key}.`);
@@ -167,6 +173,34 @@ export function serializeLesson(doc: LessonDocument): string {
   const json = JSON.stringify(ordered, null, 2);
   if (byteLength(json) > MAX_DOCUMENT_BYTES) throw new LessonError('Le document dépasse 128 Kio.');
   return json;
+}
+
+/**
+ * Returns the first key repeated within one object, or null. Call only on
+ * text JSON.parse accepted. Keys compare after unescaping, as in Go.
+ */
+export function findDuplicateKey(source: string): string | null {
+  // One entry per open container: the keys seen so far, or null for an array.
+  const stack: (Set<string> | null)[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') stack.push(new Set());
+    else if (ch === '[') stack.push(null);
+    else if (ch === '}' || ch === ']') stack.pop();
+    else if (ch === '"') {
+      const start = i;
+      for (i++; source[i] !== '"'; i++) if (source[i] === '\\') i++;
+      const keys = stack[stack.length - 1];
+      if (!keys) continue;
+      let j = i + 1;
+      while (' \t\n\r'.includes(source[j])) j++;
+      if (source[j] !== ':') continue; // a string value, not a key
+      const key = JSON.parse(source.slice(start, i + 1)) as string;
+      if (keys.has(key)) return key;
+      keys.add(key);
+    }
+  }
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

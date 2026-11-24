@@ -22,7 +22,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, authe
 
 | Status | `code` | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | Malformed JSON, unknown fields, missing email or password |
+| 400 | `invalid_request` | Malformed JSON, unknown or wrong-case fields, duplicate fields, data after the JSON object, missing email or password |
 | 401 | `invalid_credentials` | Login failed. Identical for unknown email, wrong password and disabled account |
 | 401 | `unauthenticated` | No valid session (missing, expired, revoked or forged cookie) |
 | 403 | `csrf_rejected` | Missing or wrong `X-CSRF-Token` on an authenticated mutation |
@@ -51,7 +51,7 @@ Returned by login and `GET /api/auth/session`:
 
 ### `POST /api/auth/login`
 
-Request: `{"email": "student@example.test", "password": "…"}`. Email is trimmed and compared case-insensitively.
+Request: `{"email": "student@example.test", "password": "…"}`. Email is trimmed and compared case-insensitively. The request body is strict: field names must be exactly `email` and `password` (no other spelling, case or Unicode case folding such as `pasſword`), each at most once, and nothing but whitespace may follow the object; otherwise `400 invalid_request`. Rejected requests are not counted as sign-in attempts.
 
 - `200` session object and a new session cookie. Any session cookie sent with the request is revoked first: the token always rotates at login.
 - `401 invalid_credentials`, `400`, `415`, `403 cross_origin_rejected`, `429 rate_limited`.

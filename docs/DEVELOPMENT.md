@@ -75,7 +75,7 @@ go test ./...
 go vet ./...
 ```
 
-With `LEARNOO_TEST_DATABASE_URL` set, each database-backed test creates an isolated schema, migrates it and drops it afterwards, so tests may run in parallel and leave nothing behind. They cover migration repeatability and tamper detection, cookie attributes, enumeration-safe errors, anonymous access, idle and absolute expiry, rotation on login, logout revocation, CSRF rejection, per-account and per-address throttling and concurrent attempts. They use simulated users only.
+With `LEARNOO_TEST_DATABASE_URL` set, each database-backed test creates an isolated schema, migrates it and drops it afterwards, so tests may run in parallel and leave nothing behind. They cover migration repeatability and tamper detection, cookie attributes, enumeration-safe errors, anonymous access, idle and absolute expiry, rotation on login, logout revocation, CSRF rejection, strict login JSON (exact, unique keys), per-account and per-address throttling and concurrent attempts. They use simulated users only.
 
 ### Pending
 

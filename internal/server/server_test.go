@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -230,6 +231,46 @@ func TestInvalidCredentialsAreEnumerationSafe(t *testing.T) {
 	}
 	if e.sessionCount() != 0 {
 		t.Fatal("failed logins created sessions")
+	}
+}
+
+// Login request keys must match exactly and appear once: encoding/json alone
+// would fold "EMAIL" or "ſ"-spelled keys onto fields and keep the last duplicate.
+func TestLoginRejectsAmbiguousJSON(t *testing.T) {
+	e := newEnv(t)
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "http://learnoo.test/api/auth/login", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.RemoteAddr = "192.0.2.10:40000"
+		w := httptest.NewRecorder()
+		e.h.ServeHTTP(w, r)
+		return w
+	}
+	creds := `"email":"` + testEmail + `","password":"` + testPassword + `"`
+	for name, body := range map[string]string{
+		"upper-case key":     `{"EMAIL":"` + testEmail + `","password":"` + testPassword + `"}`,
+		"title-case key":     `{"email":"` + testEmail + `","Password":"` + testPassword + `"}`,
+		"long-s-folded key":  `{"email":"` + testEmail + `","pasſword":"` + testPassword + `"}`,
+		"duplicate email":    `{"email":"nobody@example.test",` + creds + `}`,
+		"duplicate password": `{` + creds + `,"password":"wrong-password-123"}`,
+		"trailing brace":     `{` + creds + `}}`,
+		"trailing bracket":   `{` + creds + `}]`,
+		"second value":       `{` + creds + `} {}`,
+		"unknown field":      `{` + creds + `,"remember":true}`,
+	} {
+		w := post(body)
+		if w.Code != http.StatusBadRequest || errorCode(t, w) != "invalid_request" {
+			t.Fatalf("%s: got %d %s", name, w.Code, w.Body)
+		}
+		if len(w.Result().Cookies()) != 0 {
+			t.Fatalf("%s: rejected login set a cookie", name)
+		}
+	}
+	if e.sessionCount() != 0 {
+		t.Fatal("rejected logins created sessions")
+	}
+	if w := post("{" + creds + "}\n"); w.Code != http.StatusOK {
+		t.Fatalf("exact request with trailing newline: %d %s", w.Code, w.Body)
 	}
 }
 

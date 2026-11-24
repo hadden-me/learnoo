@@ -111,6 +111,10 @@ Implementer choices for the foundation slice on 2026-11-24 (role model still ope
 - Throttling in PostgreSQL (no Redis): attempts are recorded before the password check under per-key advisory locks; more than 5 per email or 30 per client address in a sliding 15-minute window returns 429. Keys are stored as SHA-256 hashes, not raw emails or addresses. Accepted risk: an attacker can temporarily lock a known email out; revisit with LRN-022 public-launch hardening.
 - `create-user` reads the password from stdin and creates an account without roles; it is an operator tool, not registration. Role grants remain LRN-013.
 
+## Exact-key JSON decoding (issue 41)
+
+Go's `encoding/json` matches keys to struct fields case-insensitively, including Unicode folding (`ſrc` fills `src`, the Kelvin sign U+212A matches `k`), and keeps the last of duplicate keys. A lesson could then carry an allowed `src` that Go validated beside an unsafe one that an exact-key reader would use. From 2026-11-24, lesson JSON (`rendering.Decode`) and the login request go through `internal/strictjson`: keys must equal a field's JSON name byte for byte, each key appears once per object at every level, and only whitespace may follow the single value. The Studio's `parseLesson` applies the same rules; shared contract cases cover them. This is stricter validation only: `schemaVersion` stays 1 and every existing fixture and export is unchanged. Later JSON endpoints should decode through the same package.
+
 ## Role model
 
 Confirmed by the maintainer on 2026-11-24, as proposed in [CAHIER_DES_CHARGES.md §2](CAHIER_DES_CHARGES.md#2-users-and-access-levels). Users see three account types; the server stores and checks four independent permissions.

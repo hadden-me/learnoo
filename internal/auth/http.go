@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"mime"
@@ -12,6 +13,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/hadden-me/learnoo/internal/strictjson"
 )
 
 // CookieName uses the __Host- prefix: browsers only accept it with Secure,
@@ -140,9 +143,11 @@ func (h *Handlers) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req loginRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxLoginBody))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil || dec.More() || req.Email == "" || req.Password == "" {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxLoginBody))
+	if err == nil {
+		err = strictjson.Unmarshal(body, &req)
+	}
+	if err != nil || req.Email == "" || req.Password == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Email and password are required.")
 		return
 	}

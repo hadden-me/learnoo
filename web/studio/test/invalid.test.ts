@@ -1,7 +1,7 @@
 import casesSource from './contract/cases.json?raw';
 import { describe, expect, it } from 'vitest';
 import { lessonToEditorChecked } from '../src/schema/adapter';
-import { LessonError, MAX_DOCUMENT_BYTES, parseLesson } from '../src/schema/lesson';
+import { LessonError, MAX_DOCUMENT_BYTES, findDuplicateKey, parseLesson } from '../src/schema/lesson';
 import { DRAFT_KEY, reopenDraft } from '../src/schema/storage';
 import { createEditor, exportFrom } from './helpers';
 
@@ -21,6 +21,21 @@ describe('validation parity with Go (test/contract/cases.json)', () => {
   it('rejects documents over 128 KiB', () => {
     const big = JSON.stringify({ ...base, blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'a'.repeat(MAX_DOCUMENT_BYTES) }] }] });
     expect(() => parseLesson(big)).toThrow(/128 Kio/);
+  });
+});
+
+describe('findDuplicateKey', () => {
+  it.each([
+    ['{"a":1,"b":{"a":2},"c":[{"a":3},{"a":4}]}', null],
+    ['{"a":"\\"a\\":","b":"{\\\\","c":"}"}', null],
+    ['{"k":["a","a"],"v":"a"}', null],
+    ['{"a":1,"a":2}', 'a'],
+    ['{"x":[{"y":{"a":1, "a" :2}}]}', 'a'],
+    ['{"src":1,"\\u0073rc":2}', 'src'],
+    ['{"\\"":1,"\\u0022":2}', '"'],
+  ])('%s', (source, expected) => {
+    JSON.parse(source);
+    expect(findDuplicateKey(source)).toBe(expected);
   });
 });
 

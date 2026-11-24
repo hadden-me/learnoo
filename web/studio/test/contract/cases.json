@@ -35,6 +35,11 @@
   "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"callout\", \"children\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"x\"}]}]}]}]}]}]}]}]}]}]}]}]}"
  },
  {
+  "name": "repeated keys in sibling objects and key-like text",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"\\\"text\\\": \\\"x\\\", {\\\"type\\\": [}\"}, {\"type\": \"math\", \"text\": \"\\\\{ a \\\\}\"}]}, {\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\"}]}"
+ },
+ {
   "name": "malformed JSON",
   "valid": false,
   "source": "{\"schemaVersion\":1,"
@@ -163,5 +168,65 @@
   "name": "text value of wrong type",
   "valid": false,
   "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": 5}]}]}"
+ },
+ {
+  "name": "upper-case key SRC beside allowed src",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\", \"SRC\": \"javascript:alert(1)\"}]}"
+ },
+ {
+  "name": "upper-case key SRC alone",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"SRC\": \"/static/complex-plane.svg\", \"alt\": \"Plan\"}]}"
+ },
+ {
+  "name": "long s key ſrc beside allowed src",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\", \"ſrc\": \"javascript:alert(1)\"}]}"
+ },
+ {
+  "name": "long s key ſrc alone",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"ſrc\": \"/static/complex-plane.svg\", \"alt\": \"Plan\"}]}"
+ },
+ {
+  "name": "title-case document key",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"Title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"Bonjour\"}]}]}"
+ },
+ {
+  "name": "duplicate src (unsafe value last)",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"src\": \"javascript:alert(1)\", \"alt\": \"Plan\"}]}"
+ },
+ {
+  "name": "duplicate src (allowed value last)",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"javascript:alert(1)\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\"}]}"
+ },
+ {
+  "name": "duplicate src spelled with an escape",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\", \"\\u0073rc\": \"javascript:alert(1)\"}]}"
+ },
+ {
+  "name": "duplicate document key",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"approved\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"Bonjour\"}]}]}"
+ },
+ {
+  "name": "duplicate key in nested text node",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"a\", \"text\": \"b\"}]}]}"
+ },
+ {
+  "name": "trailing closing brace",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"Bonjour\"}]}]}}"
+ },
+ {
+  "name": "trailing closing bracket",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"Bonjour\"}]}]}]"
  }
 ]
