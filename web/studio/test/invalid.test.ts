@@ -1,7 +1,7 @@
 import casesSource from './contract/cases.json?raw';
 import { describe, expect, it } from 'vitest';
 import { lessonToEditorChecked } from '../src/schema/adapter';
-import { LessonError, MAX_DOCUMENT_BYTES, findDuplicateKey, parseLesson } from '../src/schema/lesson';
+import { LessonError, MAX_DOCUMENT_BYTES, findDuplicateKey, findNonIntegerNumber, parseLesson } from '../src/schema/lesson';
 import { DRAFT_KEY, reopenDraft } from '../src/schema/storage';
 import { createEditor, exportFrom } from './helpers';
 
@@ -36,6 +36,22 @@ describe('findDuplicateKey', () => {
   ])('%s', (source, expected) => {
     JSON.parse(source);
     expect(findDuplicateKey(source)).toBe(expected);
+  });
+});
+
+describe('findNonIntegerNumber', () => {
+  it.each([
+    ['{"a":1,"b":[0,-0,-12,9223372036854775807,-9223372036854775808]}', null],
+    ['{"a":"1.0 1e0","b":"\\"1.5","c":true,"d":null,"e":false}', null],
+    ['{"a":1.0}', '1.0'],
+    ['{"a":[1,1e0]}', '1e0'],
+    ['{"a":-1E+2}', '-1E+2'],
+    ['{"a":1.00000000000000001}', '1.00000000000000001'],
+    ['{"a":9223372036854775808}', '9223372036854775808'],
+    ['{"a":-9223372036854775809}', '-9223372036854775809'],
+  ])('%s', (source, expected) => {
+    JSON.parse(source);
+    expect(findNonIntegerNumber(source)).toBe(expected);
   });
 });
 

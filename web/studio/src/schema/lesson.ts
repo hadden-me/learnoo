@@ -50,7 +50,10 @@ export const byteLength = (value: string) => utf8.encode(value).length;
 /**
  * Strict JSON decoding, matching internal/strictjson on the Go side: keys must
  * be exact (JSON.parse is case-sensitive), unique in every object (JSON.parse
- * would keep the last one), and nothing may follow the single value.
+ * would keep the last one), and nothing may follow the single value. null is
+ * never a valid field value (the type checks below refuse it), and every
+ * number must be spelled as a plain integer that fits Go's int, because
+ * JSON.parse reads 1.0 and 1e0 as 1 where Go refuses them.
  */
 export function parseLesson(source: string): LessonDocument {
   if (byteLength(source) > MAX_DOCUMENT_BYTES) throw new LessonError('Le document dépasse 128 Kio.');
@@ -62,6 +65,8 @@ export function parseLesson(source: string): LessonDocument {
   }
   const duplicate = findDuplicateKey(source);
   if (duplicate !== null) throw new LessonError(`Clé en double : ${duplicate}.`);
+  const number = findNonIntegerNumber(source);
+  if (number !== null) throw new LessonError(`Nombre invalide : ${number} (entier attendu).`);
   if (!isRecord(raw)) throw new LessonError('Le document doit être un objet JSON.');
   for (const key of Object.keys(raw)) {
     if (!DOCUMENT_KEYS.includes(key)) throw new LessonError(`Champ inconnu dans le document : ${key}.`);
@@ -198,6 +203,34 @@ export function findDuplicateKey(source: string): string | null {
       const key = JSON.parse(source.slice(start, i + 1)) as string;
       if (keys.has(key)) return key;
       keys.add(key);
+    }
+  }
+  return null;
+}
+
+const INTEGER = /^-?(0|[1-9][0-9]*)$/;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/**
+ * Returns the first number literal that is not a plain integer within Go's
+ * int (int64) range, or null. Call only on text JSON.parse accepted. The only
+ * numeric lesson field is schemaVersion (a Go int); a number anywhere else is
+ * already a type error on both sides, so checking every literal changes no
+ * verdict and needs no path tracking.
+ */
+export function findNonIntegerNumber(source: string): string | null {
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"') {
+      for (i++; source[i] !== '"'; i++) if (source[i] === '\\') i++;
+    } else if (ch === '-' || (ch >= '0' && ch <= '9')) {
+      const start = i;
+      while (i + 1 < source.length && '0123456789eE.+-'.includes(source[i + 1])) i++;
+      const lexeme = source.slice(start, i + 1);
+      if (!INTEGER.test(lexeme)) return lexeme;
+      const value = BigInt(lexeme);
+      if (value < INT64_MIN || value > INT64_MAX) return lexeme;
     }
   }
   return null;
