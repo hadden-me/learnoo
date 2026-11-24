@@ -6,7 +6,11 @@
 // an exact-key consumer of the same bytes reads differently. Unmarshal first
 // scans the input against the target type and rejects any key that is not
 // exactly a field's JSON name, any duplicate key in any object, and anything
-// after the single top-level value; only then does it decode.
+// after the single top-level value. It also rejects null for any target that is
+// not a pointer or interface (encoding/json would leave the field unchanged,
+// so null and an absent field were indistinguishable), and any number for an
+// integer target that is not a plain in-range integer literal. Only then does
+// it decode.
 package strictjson
 
 import (
@@ -25,7 +29,10 @@ import (
 // targets accept only keys that equal a field's JSON name byte for byte;
 // map and interface targets accept any key. Every object, at any depth, must
 // have unique keys (compared after unescaping). Trailing whitespace is
-// allowed; any other data after the value is an error. Types with their own
+// allowed; any other data after the value is an error. null is accepted only
+// where the target is a pointer or an interface (or unknown, inside a value
+// that will fail to decode anyway); integer targets accept only integer
+// literals that fit, so 1.0 and 1e0 are refused. Types with their own
 // UnmarshalJSON or UnmarshalText are refused rather than scanned wrongly.
 func Unmarshal(data []byte, v any) error {
 	rv := reflect.ValueOf(v)
@@ -55,6 +62,7 @@ var (
 // when any value is acceptable. path holds the segments leading to the value;
 // it is joined only when reporting an error, so memory stays linear in depth.
 func scan(dec *json.Decoder, t reflect.Type, path *[]string) error {
+	nullable := t == nil || t.Kind() == reflect.Pointer || t.Kind() == reflect.Interface
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -69,9 +77,17 @@ func scan(dec *json.Decoder, t reflect.Type, path *[]string) error {
 		}
 		return err
 	}
+	if tok == nil && !nullable {
+		return fmt.Errorf("null is not allowed at %s", joinPath(*path))
+	}
+	if num, ok := tok.(json.Number); ok && t != nil {
+		if err := checkInteger(num, t); err != nil {
+			return fmt.Errorf("%w at %s", err, joinPath(*path))
+		}
+	}
 	delim, ok := tok.(json.Delim)
 	if !ok {
-		return nil // scalar; type mismatches are reported by Decode
+		return nil // other scalar type mismatches are reported by Decode
 	}
 	switch delim {
 	case '[':
@@ -130,6 +146,25 @@ func scan(dec *json.Decoder, t reflect.Type, path *[]string) error {
 	}
 	_, err = dec.Token() // closing delimiter
 	return err
+}
+
+// checkInteger refuses a number literal for an integer type unless it is a
+// plain integer that fits. encoding/json already fails on these; checking here
+// makes the rule explicit and names the path.
+func checkInteger(num json.Number, t reflect.Type) error {
+	var err error
+	switch t.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		_, err = strconv.ParseInt(string(num), 10, t.Bits())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		_, err = strconv.ParseUint(string(num), 10, t.Bits())
+	default:
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("number %s is not a valid %s", num, t)
+	}
+	return nil
 }
 
 func joinPath(path []string) string {

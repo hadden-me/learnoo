@@ -26,7 +26,11 @@ func TestAcceptsExactKeys(t *testing.T) {
 	for _, src := range []string{
 		`{"version":1,"blocks":[{"type":"p","children":[{"type":"img","src":"/a"}]}]}`,
 		`{"version":1,"blocks":[]}` + " \n\t\r",
-		`{"blocks":null,"meta":{"Any":"x","ANY":"y"},"extra":{"k":[1,{"K":2}]},"ptr":{"type":"x"}}`,
+		`{"blocks":[],"meta":{"Any":"x","ANY":"y"},"extra":{"k":[1,{"K":2}]},"ptr":{"type":"x"}}`,
+		`{"extra":null,"ptr":null}`,
+		`{"extra":[null,1.5,1e0],"meta":{}}`,
+		`{"version":-0}`,
+		`{"version":-9223372036854775808}`,
 		`{"blocks":[{"type":"x","-":"dash field"}]}`,
 		`{"blocks":[{"\u0074ype":"escaped key equals type"}]}`,
 	} {
@@ -65,6 +69,19 @@ func TestRejects(t *testing.T) {
 		"truncated":                  `{"version":1,"blocks":[`,
 		"empty":                      ``,
 		"wrong type":                 `{"version":"1"}`,
+		"null slice":                 `{"blocks":null}`,
+		"null map":                   `{"meta":null}`,
+		"null int":                   `{"version":null}`,
+		"null string":                `{"blocks":[{"type":null}]}`,
+		"null struct element":        `{"blocks":[null]}`,
+		"null nested slice":          `{"blocks":[{"type":"p","children":null}]}`,
+		"null map value":             `{"meta":{"a":null}}`,
+		"null in pointed-to struct":  `{"ptr":{"type":null}}`,
+		"int with fraction":          `{"version":1.0}`,
+		"int with exponent":          `{"version":1e0}`,
+		"int with tiny fraction":     `{"version":1.00000000000000001}`,
+		"int above range":            `{"version":9223372036854775808}`,
+		"int below range":            `{"version":-9223372036854775809}`,
 	} {
 		var d doc
 		if err := Unmarshal([]byte(src), &d); err == nil {
@@ -103,6 +120,18 @@ func TestRefusesCustomUnmarshalers(t *testing.T) {
 	}
 	if err := Unmarshal([]byte(`{"c":{"x":1}}`), &v); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("custom decoder scanned as a plain struct: %v", err)
+	}
+}
+
+func TestNullAndNumberErrorsNamePath(t *testing.T) {
+	for src, want := range map[string]string{
+		`{"blocks":[{"type":"p","children":[{"type":null}]}]}`: "null is not allowed at $.blocks[0].children[0].type",
+		`{"version":1e0}`: "at $.version",
+	} {
+		var d doc
+		if err := Unmarshal([]byte(src), &d); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v", src, err)
+		}
 	}
 }
 
