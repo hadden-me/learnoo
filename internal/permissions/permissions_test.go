@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	db := dbtest.Migrated(t)
-	return &env{t: t, db: db, store: permissions.NewStore(db, nil), ctx: context.Background()}
+	return &env{t: t, db: db, store: permissions.NewStore(db), ctx: context.Background()}
 }
 
 func (e *env) user(name string) int64 {
@@ -307,7 +308,7 @@ func TestGrantsAndRevokesAreAudited(t *testing.T) {
 	}
 	var got []row
 	for _, a := range log {
-		if a.ActorID == nil || *a.ActorID != admin || a.TargetID != target || a.OccurredAt.IsZero() {
+		if a.ActorID == nil || *a.ActorID != admin || a.OperatorLabel != "" || a.TargetID != target || a.OccurredAt.IsZero() {
 			t.Fatalf("bad audit actor/target/time: %+v", a)
 		}
 		got = append(got, row{a.Action, a.Permission, a.SubjectID != nil && *a.SubjectID == math})
@@ -327,7 +328,7 @@ func TestGrantsAndRevokesAreAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	log, _ = e.store.Audit(e.ctx, target)
-	if last := log[len(log)-1]; last.ActorID != nil || last.Permission != permissions.Author {
+	if last := log[len(log)-1]; last.ActorID != nil || last.OperatorLabel != permissions.UnattributedOperator || last.Permission != permissions.Author {
 		t.Fatalf("operator audit row: %+v", last)
 	}
 	// Defaults are audited one row per permission.
@@ -358,8 +359,8 @@ func TestSchemaConstraints(t *testing.T) {
 	for name, sql := range map[string]string{
 		"unknown permission":    `INSERT INTO user_permissions (user_id, permission, granted_at) VALUES ($1, 'superuser', now())`,
 		"reviewer as global":    `INSERT INTO user_permissions (user_id, permission, granted_at) VALUES ($1, 'reviewer', now())`,
-		"unscoped review audit": `INSERT INTO permission_audit (occurred_at, target_user_id, action, permission) VALUES (now(), $1, 'grant', 'reviewer')`,
-		"scoped author audit":   `INSERT INTO permission_audit (occurred_at, target_user_id, action, permission, subject_id) VALUES (now(), $1, 'grant', 'author', ` + strconv.FormatInt(math, 10) + `)`,
+		"unscoped review audit": `INSERT INTO permission_audit (occurred_at, operator_label, target_user_id, action, permission) VALUES (now(), 'op', $1, 'grant', 'reviewer')`,
+		"scoped author audit":   `INSERT INTO permission_audit (occurred_at, operator_label, target_user_id, action, permission, subject_id) VALUES (now(), 'op', $1, 'grant', 'author', ` + strconv.FormatInt(math, 10) + `)`,
 	} {
 		if _, err := e.db.Exec(e.ctx, sql, u); err == nil {
 			t.Errorf("%s accepted", name)
@@ -760,5 +761,120 @@ func TestRevokeUnknownTargets(t *testing.T) {
 	// A non-administrator learns nothing about which users exist.
 	if _, err := e.store.Revoke(e.ctx, permissions.UserActor(u), 999999, permissions.Author); !errors.Is(err, permissions.ErrDenied) {
 		t.Errorf("non-administrator revoke of unknown user: %v", err)
+	}
+}
+
+func TestOperatorLabelsAreAudited(t *testing.T) {
+	e := newEnv(t)
+	math := e.subject("simulated-math")
+	admin := e.userOfType("admin", permissions.Admin)
+	target := e.user("target")
+
+	named, err := permissions.OperatorAs("  simulated-op@simulated-host ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := permissions.OperatorAs(permissions.LocalOperatorLabel())
+	if err != nil {
+		t.Fatalf("LocalOperatorLabel %q rejected: %v", permissions.LocalOperatorLabel(), err)
+	}
+	if !strings.Contains(permissions.LocalOperatorLabel(), "@") {
+		t.Errorf("LocalOperatorLabel = %q, want user@host", permissions.LocalOperatorLabel())
+	}
+	steps := []struct {
+		do        func() (bool, error)
+		wantActor bool
+		wantLabel string
+	}{
+		{func() (bool, error) { return e.store.Grant(e.ctx, named, target, permissions.Author) }, false, "simulated-op@simulated-host"},
+		{func() (bool, error) { return e.store.GrantReviewer(e.ctx, named, target, math) }, false, "simulated-op@simulated-host"},
+		{func() (bool, error) { return e.store.Grant(e.ctx, permissions.Operator, target, permissions.Publisher) }, false, permissions.UnattributedOperator},
+		{func() (bool, error) { return e.store.Revoke(e.ctx, local, target, permissions.Publisher) }, false, permissions.LocalOperatorLabel()},
+		{func() (bool, error) { return e.store.RevokeReviewer(e.ctx, permissions.UserActor(admin), target, math) }, true, ""},
+	}
+	for i, st := range steps {
+		if changed, err := st.do(); !changed || err != nil {
+			t.Fatalf("step %d: changed=%v err=%v", i, changed, err)
+		}
+	}
+	log, err := e.store.Audit(e.ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != len(steps) {
+		t.Fatalf("audit rows = %d, want %d", len(log), len(steps))
+	}
+	for i, st := range steps {
+		a := log[i]
+		if (a.ActorID != nil) != st.wantActor || a.OperatorLabel != st.wantLabel {
+			t.Errorf("row %d: actor=%v label=%q, want actor=%v label=%q", i, a.ActorID, a.OperatorLabel, st.wantActor, st.wantLabel)
+		}
+	}
+	// User actors store NULL, not an empty label.
+	var labelled int
+	if err := e.db.QueryRow(e.ctx, `SELECT count(*) FROM permission_audit WHERE actor_id IS NOT NULL AND operator_label IS NOT NULL`).Scan(&labelled); err != nil {
+		t.Fatal(err)
+	}
+	if labelled != 0 {
+		t.Errorf("%d user-actor rows carry an operator label", labelled)
+	}
+	// Defaults applied by a named operator are attributed too.
+	other := e.user("other")
+	if err := e.store.GrantDefaults(e.ctx, named, other, permissions.Teacher); err != nil {
+		t.Fatal(err)
+	}
+	if log, _ := e.store.Audit(e.ctx, other); len(log) != 1 || log[0].OperatorLabel != "simulated-op@simulated-host" {
+		t.Errorf("defaults audit: %+v", log)
+	}
+}
+
+func TestInvalidOperatorLabels(t *testing.T) {
+	for name, label := range map[string]string{
+		"empty":        "",
+		"blank":        " \t ",
+		"newline":      "op\nforged line",
+		"carriage":     "op\rx",
+		"nul":          "op\x00x",
+		"escape":       "op\x1b[31m",
+		"delete":       "op\x7f",
+		"c1 control":   "op\u0085x",
+		"invalid utf8": "op\xffx",
+		"too long":     strings.Repeat("a", permissions.MaxOperatorLabel+1),
+	} {
+		if _, err := permissions.OperatorAs(label); !errors.Is(err, permissions.ErrInvalidOperatorLabel) {
+			t.Errorf("%s: want ErrInvalidOperatorLabel, got %v", name, err)
+		}
+	}
+	for _, label := range []string{"a", strings.Repeat("é", permissions.MaxOperatorLabel), "op user@host.example"} {
+		if _, err := permissions.OperatorAs(label); err != nil {
+			t.Errorf("%q rejected: %v", label, err)
+		}
+	}
+}
+
+func TestAuditActorConstraint(t *testing.T) {
+	e := newEnv(t)
+	u := e.user("u")
+	insert := `INSERT INTO permission_audit (actor_id, operator_label, target_user_id, action, permission) VALUES ($1, $2, $3, 'grant', 'author')`
+	var none *int64
+	for name, args := range map[string][]any{
+		"actor and label": {u, "op@host", u},
+		"neither":         {none, nil, u},
+		"empty label":     {none, "", u},
+		"padded label":    {none, " op@host", u},
+		"control char":    {none, "op\nx", u},
+		"too long":        {none, strings.Repeat("a", 201), u},
+	} {
+		if _, err := e.db.Exec(e.ctx, insert, args...); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	for name, args := range map[string][]any{
+		"user actor": {u, nil, u},
+		"operator":   {none, strings.Repeat("a", 200), u},
+	} {
+		if _, err := e.db.Exec(e.ctx, insert, args...); err != nil {
+			t.Errorf("%s rejected: %v", name, err)
+		}
 	}
 }

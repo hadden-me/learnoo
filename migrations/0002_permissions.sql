@@ -24,7 +24,8 @@ CREATE TABLE user_permissions (
     user_id    bigint      NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     permission text        NOT NULL,
     granted_at timestamptz NOT NULL DEFAULT now(),
-    -- NULL means the grant was made by an operator tool, not a signed-in user.
+    -- NULL means the grant was made by an operator tool, not a signed-in user;
+    -- the operator label is in the matching permission_audit row.
     granted_by bigint      REFERENCES users (id) ON DELETE SET NULL,
     PRIMARY KEY (user_id, permission),
     CONSTRAINT user_permissions_global CHECK (permission IN ('author', 'publisher', 'administrator'))
@@ -45,12 +46,20 @@ CREATE INDEX reviewer_assignments_subject_idx ON reviewer_assignments (subject_i
 CREATE TABLE permission_audit (
     id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     occurred_at    timestamptz NOT NULL DEFAULT now(),
+    -- Exactly one of actor_id (a signed-in administrator) and operator_label
+    -- (a self-asserted local operator identity, e.g. user@host) is set.
     actor_id       bigint      REFERENCES users (id),
+    operator_label text,
     target_user_id bigint      NOT NULL REFERENCES users (id),
     action         text        NOT NULL CHECK (action IN ('grant', 'revoke')),
     permission     text        NOT NULL CHECK (permission IN ('author', 'reviewer', 'publisher', 'administrator')),
     subject_id     bigint      REFERENCES subjects (id),
-    CONSTRAINT permission_audit_scope CHECK ((permission = 'reviewer') = (subject_id IS NOT NULL))
+    CONSTRAINT permission_audit_scope CHECK ((permission = 'reviewer') = (subject_id IS NOT NULL)),
+    CONSTRAINT permission_audit_actor CHECK ((actor_id IS NULL) = (operator_label IS NOT NULL)),
+    CONSTRAINT permission_audit_operator_label CHECK (
+        char_length(operator_label) BETWEEN 1 AND 200
+        AND operator_label = btrim(operator_label)
+        AND operator_label !~ '[[:cntrl:]]')
 );
 
 CREATE INDEX permission_audit_target_idx ON permission_audit (target_user_id, occurred_at);

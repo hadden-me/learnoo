@@ -14,7 +14,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/user"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -119,10 +124,10 @@ type Store struct {
 	db *pgxpool.Pool
 }
 
-// NewStore builds a Store. The clock argument is ignored and may be nil:
-// grant and audit times are the database transaction time (now()), so a
-// grant's granted_at and its audit row's occurred_at always agree.
-func NewStore(db *pgxpool.Pool, _ func() time.Time) *Store {
+// NewStore builds a Store. Grant and audit times are the database
+// transaction time (now()), so a grant's granted_at and its audit row's
+// occurred_at always agree.
+func NewStore(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
@@ -248,19 +253,89 @@ func RequireReviewerTx(ctx context.Context, tx pgx.Tx, userID, subjectID int64) 
 	return nil
 }
 
-// Actor identifies who changes permissions. Operator is a local tool with
-// direct database access (the future LRN-013 CLI); a user actor must hold
+// Actor identifies who changes permissions. An operator is a local tool
+// with direct database access (the LRN-013 CLI); a user actor must hold
 // administrator at the time of the change.
 type Actor struct {
 	userID   int64
 	operator bool
+	label    string // operators only; see OperatorAs
 }
 
-// Operator is the actor for trusted local tools; audited with no actor_id.
-// It skips authorization entirely: anyone with local database access is
-// already an operator (docs/DECISIONS.md "Operator trust boundary"). It must
-// never be reachable from HTTP code; internal/server tests enforce this.
+// Operator is an unattributed operator actor, audited with no actor_id and
+// the label UnattributedOperator. Operator tools must use OperatorAs instead
+// so the audit records who ran them; Operator remains for tests and existing
+// callers. Operators skip authorization entirely: anyone with local database
+// access is already an operator (docs/DECISIONS.md "Operator trust
+// boundary"). No operator actor may be reachable from HTTP code;
+// internal/server tests enforce this.
 var Operator = Actor{operator: true}
+
+// UnattributedOperator is the audit label stored for Operator.
+const UnattributedOperator = "operator (unattributed)"
+
+// MaxOperatorLabel is the maximum operator label length in characters; the
+// database enforces the same bound.
+const MaxOperatorLabel = 200
+
+// ErrInvalidOperatorLabel means an operator label is empty, too long or
+// contains control characters.
+var ErrInvalidOperatorLabel = errors.New("invalid operator label")
+
+// OperatorAs returns an operator actor whose changes are audited with label
+// (for example LocalOperatorLabel()) and no actor_id. The label is trimmed;
+// it must be non-empty, at most MaxOperatorLabel characters, valid UTF-8 and
+// free of control characters. It is self-asserted, not authenticated.
+func OperatorAs(label string) (Actor, error) {
+	label = strings.TrimSpace(label)
+	if !validLabel(label) {
+		return Actor{}, ErrInvalidOperatorLabel
+	}
+	return Actor{operator: true, label: label}, nil
+}
+
+func validLabel(label string) bool {
+	if label == "" || !utf8.ValidString(label) || utf8.RuneCountInString(label) > MaxOperatorLabel {
+		return false
+	}
+	return strings.IndexFunc(label, unicode.IsControl) < 0
+}
+
+// LocalOperatorLabel returns "<os user>@<hostname>" for the process running
+// an operator tool, falling back to "unknown" for either part when it cannot
+// be determined or would make an invalid label. It is a self-asserted label
+// for the audit trail, not authentication: whoever has local database access
+// is trusted as an operator regardless of the label.
+func LocalOperatorLabel() string {
+	name := "unknown"
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		name = u.Username
+	}
+	host := "unknown"
+	if h, err := os.Hostname(); err == nil && h != "" {
+		host = h
+	}
+	clean := func(s string) string {
+		s = strings.TrimSpace(s)
+		if !validLabel(s) || utf8.RuneCountInString(s) > MaxOperatorLabel/2-1 {
+			return "unknown"
+		}
+		return s
+	}
+	return clean(name) + "@" + clean(host)
+}
+
+// auditLabel is the operator label stored in the audit, or nil for users.
+func (a Actor) auditLabel() *string {
+	if !a.operator {
+		return nil
+	}
+	if a.label == "" {
+		l := UnattributedOperator
+		return &l
+	}
+	return &a.label
+}
 
 // UserActor is a signed-in user acting through the application.
 func UserActor(userID int64) Actor { return Actor{userID: userID} }
@@ -376,8 +451,8 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, actor Actor, target int64,
 	}
 	// occurred_at defaults to now(), the transaction time, so it equals the
 	// grant's granted_at.
-	_, err = tx.Exec(ctx, `INSERT INTO permission_audit (actor_id, target_user_id, action, permission, subject_id)
-		VALUES ($1, $2, $3, $4, $5)`, actorID, target, action, string(p), subject)
+	_, err = tx.Exec(ctx, `INSERT INTO permission_audit (actor_id, operator_label, target_user_id, action, permission, subject_id)
+		VALUES ($1, $2, $3, $4, $5, $6)`, actorID, actor.auditLabel(), target, action, string(p), subject)
 	if err != nil {
 		return false, fmt.Errorf("audit permission change: %w", mapFK(err))
 	}
@@ -415,16 +490,19 @@ func mapFK(err error) error {
 // AuditEntry is one row of the permission audit.
 type AuditEntry struct {
 	OccurredAt time.Time
-	ActorID    *int64
-	TargetID   int64
-	Action     string
-	Permission Permission
-	SubjectID  *int64
+	ActorID    *int64 // nil for operator changes
+	// OperatorLabel identifies the operator when ActorID is nil; empty for
+	// changes by a signed-in user.
+	OperatorLabel string
+	TargetID      int64
+	Action        string
+	Permission    Permission
+	SubjectID     *int64
 }
 
 // Audit returns the permission history of target, oldest first.
 func (s *Store) Audit(ctx context.Context, target int64) ([]AuditEntry, error) {
-	rows, err := s.db.Query(ctx, `SELECT occurred_at, actor_id, target_user_id, action, permission, subject_id
+	rows, err := s.db.Query(ctx, `SELECT occurred_at, actor_id, coalesce(operator_label, ''), target_user_id, action, permission, subject_id
 		FROM permission_audit WHERE target_user_id = $1 ORDER BY id`, target)
 	if err != nil {
 		return nil, err
@@ -432,7 +510,7 @@ func (s *Store) Audit(ctx context.Context, target int64) ([]AuditEntry, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditEntry, error) {
 		var e AuditEntry
 		var p string
-		err := r.Scan(&e.OccurredAt, &e.ActorID, &e.TargetID, &e.Action, &p, &e.SubjectID)
+		err := r.Scan(&e.OccurredAt, &e.ActorID, &e.OperatorLabel, &e.TargetID, &e.Action, &p, &e.SubjectID)
 		e.Permission = Permission(p)
 		return e, err
 	})

@@ -21,11 +21,15 @@ const (
 	serverPath      = modulePath + "/internal/server"
 )
 
-// permissions.Operator skips authorization; it is reserved for local
-// operator tools (docs/DECISIONS.md "Operator trust boundary"). These tests
-// type-check the HTTP layer, internal/server and every package of this
-// module it imports (except internal/permissions, which defines Operator),
-// and fail if any of them refers to it.
+// Operator actors (permissions.Operator, permissions.OperatorAs) skip
+// authorization; they are reserved for local operator tools
+// (docs/DECISIONS.md "Operator trust boundary"). These tests type-check the
+// HTTP layer, internal/server and every package of this module it imports
+// (except internal/permissions, which defines them), and fail if any of them
+// refers to either.
+
+// operatorIdents are the permissions identifiers that yield operator actors.
+var operatorIdents = map[string]bool{"Operator": true, "OperatorAs": true}
 
 type scanPackage struct {
 	path, dir string
@@ -64,7 +68,7 @@ func exportImporter(t *testing.T, root string, fset *token.FileSet) types.Import
 }
 
 // operatorUses type-checks files as package path and returns the positions
-// of identifiers that resolve to permissions.Operator.
+// of identifiers that resolve to an operator constructor in permissions.
 func operatorUses(fset *token.FileSet, imp types.Importer, path string, files []*ast.File) ([]string, error) {
 	info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
 	if _, err := (&types.Config{Importer: imp}).Check(path, fset, files, info); err != nil {
@@ -74,7 +78,7 @@ func operatorUses(fset *token.FileSet, imp types.Importer, path string, files []
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			if id, ok := n.(*ast.Ident); ok {
-				if obj := info.Uses[id]; obj != nil && obj.Name() == "Operator" &&
+				if obj := info.Uses[id]; obj != nil && operatorIdents[obj.Name()] &&
 					obj.Pkg() != nil && obj.Pkg().Path() == permissionsPath {
 					found = append(found, fset.Position(id.Pos()).String())
 				}
@@ -116,7 +120,7 @@ func TestHTTPLayerDoesNotUseOperator(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, u := range uses {
-			t.Errorf("%s: permissions.Operator used in the HTTP layer (%s)", u, pkg.path)
+			t.Errorf("%s: operator actor used in the HTTP layer (%s)", u, pkg.path)
 		}
 		scanned[pkg.path] = true
 	}
@@ -145,6 +149,12 @@ func f() any { return p.Operator }`,
 		"dot": `package probe
 import . "` + permissionsPath + `"
 var a = Operator`,
+		"labelled": `package probe
+import "` + permissionsPath + `"
+var a, _ = permissions.OperatorAs("x")`,
+		"labelled value": `package probe
+import p "` + permissionsPath + `"
+var f = p.OperatorAs`,
 	} {
 		f, err := parser.ParseFile(fset, name+".go", src, parser.SkipObjectResolution)
 		if err != nil {
