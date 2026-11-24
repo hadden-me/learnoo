@@ -44,11 +44,13 @@ jobs:
       - name: Install locked npm dependencies
         run: npm ci --ignore-scripts
 
-      - name: Generate embedded assets
-        run: npm run assets
-
+      # Must run before `npm run assets`, which regenerates the design files
+      # and would hide generated CSS that was not committed.
       - name: Design tokens are up to date
         run: npm run design:check
+
+      - name: Generate embedded assets
+        run: npm run assets
 
       - name: Design contrast
         run: npm run design:contrast
