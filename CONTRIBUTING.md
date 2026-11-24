@@ -6,6 +6,8 @@ Planning feedback, issue discussions, and expressions of interest are welcome. A
 
 ## Development workflow
 
+Follow the [working protocol](docs/CAHIER_DES_CHARGES.md#5-working-protocol-for-contributors-and-ai-agents): get assigned on the GitHub issue before starting, keep shared contracts in their documented home, and end every pull request with a handoff.
+
 Use focused branches and pull requests. Describe the problem, resulting behavior, relevant acceptance criteria, and validation. The maintainer reviews merges. CODEOWNERS requests review; repository protection settings must separately enforce it.
 
 Tests should cover meaningful risks: authorization, submitted-content immutability, publication races, lesson withdrawal, rendering safety, and recovery. Avoid broad scaffolding or unrelated dependencies. Document runnable setup when the prototype exists.

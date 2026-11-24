@@ -12,6 +12,7 @@ Learnoo will combine curriculum-aligned lessons, exercises, and educational vide
 
 ## Start here
 
+- [Cahier des charges: status, access levels and plan to v1.0](docs/CAHIER_DES_CHARGES.md)
 - [Run and test the local prototype](docs/DEVELOPMENT.md)
 - [Project requirements](docs/REQUIREMENTS.md)
 - [Architecture](docs/ARCHITECTURE.md)
