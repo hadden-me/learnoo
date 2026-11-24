@@ -115,6 +115,10 @@ Implementer choices for the foundation slice on 2026-11-24 (role model still ope
 
 Go's `encoding/json` matches keys to struct fields case-insensitively, including Unicode folding (`ſrc` fills `src`, the Kelvin sign U+212A matches `k`), and keeps the last of duplicate keys. A lesson could then carry an allowed `src` that Go validated beside an unsafe one that an exact-key reader would use. From 2026-11-24, lesson JSON (`rendering.Decode`) and the login request go through `internal/strictjson`: keys must equal a field's JSON name byte for byte, each key appears once per object at every level, and only whitespace may follow the single value. The Studio's `parseLesson` applies the same rules; shared contract cases cover them. This is stricter validation only: `schemaVersion` stays 1 and every existing fixture and export is unchanged. Later JSON endpoints should decode through the same package.
 
+## Null values and number spellings in lesson JSON (issue 43)
+
+`encoding/json` treats `null` in a non-pointer field as absent and refuses `1.0` or `1e0` for an `int`, while `JSON.parse` refuses `null` where text or a list is expected but reads `1.0`, `1e0` and `1.00000000000000001` as `1`. From 2026-11-24 both sides reject them: `internal/strictjson` refuses `null` unless the target is a pointer or interface, and refuses any integer-target number that is not a plain in-range integer literal; the Studio's `parseLesson` refuses every number literal that is not a plain integer within int64 range (the only numeric field is `schemaVersion`). Shared contract cases cover each spelling. Stricter validation only: no fixture or export uses these spellings, and `schemaVersion` stays 1. The login request decodes through the same package, so `null` there is now a decode error (still 400).
+
 ## Role model
 
 Confirmed by the maintainer on 2026-11-24, as proposed in [CAHIER_DES_CHARGES.md §2](CAHIER_DES_CHARGES.md#2-users-and-access-levels). Users see three account types; the server stores and checks four independent permissions.
