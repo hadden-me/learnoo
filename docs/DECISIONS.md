@@ -94,3 +94,15 @@ On 2026-11-23 the maintainer requested a landing page depicting the populated fu
 ## Shared Blue and Slate palette and prototype fixes
 
 On 2026-11-23 the maintainer approved replacing the temporary direct Udemy palette with Learnoo semantic tokens derived from Radix Blue/Slate, plus Amber/Grass/Red statuses. This supersedes the earlier direct Refero-export adoption. Both reader and catalogue deliberately use the shared system; unreviewed warnings have independent amber tokens. Refero exports remain ignored local references, with no build or runtime dependency. The served wordmark is a 12 KB WebP. Arabic headings and inline punctuation are corrected, and browser tests always start an isolated server on a configurable test port (default 18080). These changes do not establish production accessibility or teacher validation.
+
+## Application server foundation (LRN-005)
+
+Implementer choices for the foundation slice on 2026-11-24 (role model still open; nothing here grants or checks permissions):
+
+- `cmd/server` is separate from `cmd/renderer`; the renderer stays an isolated loopback experiment. The server also binds only to loopback until deployment work defines TLS and the trusted proxy chain.
+- PostgreSQL 16 through `pgx/v5`. Migrations use a small embedded runner (per-file transaction, advisory lock, SHA-256 checksums that reject edited, unknown or out-of-order history) instead of an external migration tool, to avoid a dependency for about 150 lines of logic.
+- Passwords: Argon2id from `golang.org/x/crypto/argon2`, PHC string format, OWASP minimum cost (19 MiB, t=2, p=1) chosen for the shared server's memory. Parameters are stored per hash, so they can be raised later. Unknown and disabled accounts are verified against a dummy hash to keep timing and responses identical.
+- Sessions: 256-bit random tokens; only their SHA-256 is stored. Cookie `__Host-learnoo_session`, `HttpOnly`, `Secure`, `SameSite=Lax`. Idle timeout 24 hours, absolute 14 days. Login always issues a new token and revokes any presented session; logout deletes the row.
+- CSRF: Go's `http.CrossOriginProtection` on every unsafe request (including login), plus a per-session token in `X-CSRF-Token` for authenticated mutations. Login accepts only `application/json`.
+- Throttling in PostgreSQL (no Redis): attempts are recorded before the password check under per-key advisory locks; more than 5 per email or 30 per client address in a sliding 15-minute window returns 429. Keys are stored as SHA-256 hashes, not raw emails or addresses. Accepted risk: an attacker can temporarily lock a known email out; revisit with LRN-022 public-launch hardening.
+- `create-user` reads the password from stdin and creates an account without roles; it is an operator tool, not registration. Role grants remain LRN-013.
