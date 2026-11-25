@@ -6,7 +6,8 @@
     "test:browser": "playwright test",
     "design:build": "node scripts/build-design.mjs",
     "design:check": "node scripts/build-design.mjs --check",
-    "design:contrast": "node scripts/check-contrast.mjs"
+    "design:contrast": "node scripts/check-contrast.mjs",
+    "test:reader": "playwright test -c playwright.reader.config.mjs"
   },
   "dependencies": {
     "katex": "0.19.1"
