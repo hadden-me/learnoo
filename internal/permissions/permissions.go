@@ -266,6 +266,35 @@ func RequireTx(ctx context.Context, tx pgx.Tx, userID int64, p Permission) error
 	return nil
 }
 
+// RequireAnyTx checks inside tx that userID holds at least one of the
+// global permissions ps, share-locking the matching grant and account rows
+// until tx ends, like RequireTx.
+func RequireAnyTx(ctx context.Context, tx pgx.Tx, userID int64, ps ...Permission) error {
+	if userID == 0 || len(ps) == 0 {
+		return ErrDenied
+	}
+	names := make([]string, 0, len(ps))
+	for _, p := range ps {
+		if !p.global() {
+			return ErrDenied
+		}
+		names = append(names, string(p))
+	}
+	var ok bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_permissions p JOIN users u ON u.id = p.user_id
+			 WHERE p.user_id = $1 AND p.permission = ANY ($2) AND u.disabled_at IS NULL
+			   FOR SHARE OF p, u)`, userID, names).Scan(&ok)
+	if err != nil {
+		return errors.Join(ErrDenied, err)
+	}
+	if !ok {
+		return ErrDenied
+	}
+	return nil
+}
+
 // RequireReviewer returns nil only if userID is assigned to review subjectID.
 // Like Require, it is a fast early check outside any caller transaction;
 // state-changing review actions must re-check with RequireReviewerTx.

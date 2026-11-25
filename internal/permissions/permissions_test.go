@@ -864,3 +864,79 @@ func TestAuditActorConstraint(t *testing.T) {
 		}
 	}
 }
+
+// RequireAnyTx accepts any one of the listed global permissions, denies
+// disabled accounts, reviewer and empty lists, and share-locks the grant.
+func TestRequireAnyTx(t *testing.T) {
+	e := newEnv(t)
+	teacher := e.userOfType("teacher", permissions.Teacher)
+	publisher := e.user("publisher")
+	if _, err := e.store.Grant(e.ctx, operator, publisher, permissions.Publisher); err != nil {
+		t.Fatal(err)
+	}
+	admin := e.user("admin-only")
+	if _, err := e.store.Grant(e.ctx, operator, admin, permissions.Administrator); err != nil {
+		t.Fatal(err)
+	}
+	disabled := e.user("disabled")
+	if _, err := e.store.Grant(e.ctx, operator, disabled, permissions.Publisher); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(e.ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, disabled); err != nil {
+		t.Fatal(err)
+	}
+	check := func(user int64, ps ...permissions.Permission) error {
+		tx, err := e.db.Begin(e.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(e.ctx) }()
+		return permissions.RequireAnyTx(e.ctx, tx, user, ps...)
+	}
+	pubOrAdmin := []permissions.Permission{permissions.Publisher, permissions.Administrator}
+	for name, c := range map[string]struct {
+		user  int64
+		ps    []permissions.Permission
+		allow bool
+	}{
+		"publisher":            {publisher, pubOrAdmin, true},
+		"administrator only":   {admin, pubOrAdmin, true},
+		"teacher":              {teacher, pubOrAdmin, false},
+		"disabled publisher":   {disabled, pubOrAdmin, false},
+		"anonymous":            {0, pubOrAdmin, false},
+		"empty list":           {publisher, nil, false},
+		"reviewer in the list": {publisher, []permissions.Permission{permissions.Reviewer, permissions.Publisher}, false},
+	} {
+		err := check(c.user, c.ps...)
+		if c.allow != (err == nil) || (!c.allow && !errors.Is(err, permissions.ErrDenied)) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// The matching grant is share-locked: a revocation waits for the
+	// transaction. (Publisher, not administrator: admin is the only active
+	// administrator, whose revocation is refused outright.)
+	tx, err := e.db.Begin(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(e.ctx) }()
+	if err := permissions.RequireAnyTx(e.ctx, tx, publisher, pubOrAdmin...); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.store.Revoke(e.ctx, operator, publisher, permissions.Publisher)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("revocation did not wait: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := tx.Commit(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

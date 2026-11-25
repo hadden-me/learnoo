@@ -36,6 +36,30 @@ func (m *Middleware) Require(p Permission, next http.Handler) http.Handler {
 	})
 }
 
+// RequireAny allows only users holding at least one of the global
+// permissions ps.
+func (m *Middleware) RequireAny(ps []Permission, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := auth.SessionFrom(r.Context())
+		if !ok {
+			auth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "Sign in to continue.")
+			return
+		}
+		set, err := m.store.Load(r.Context(), sess.User.ID)
+		if err != nil {
+			m.deny(w, err)
+			return
+		}
+		for _, p := range ps {
+			if set.Has(p) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		m.deny(w, ErrDenied)
+	})
+}
+
 // RequireReviewer allows only users assigned to review the subject that
 // subject extracts from the request. An extraction error denies.
 func (m *Middleware) RequireReviewer(subject func(*http.Request) (int64, error), next http.Handler) http.Handler {
