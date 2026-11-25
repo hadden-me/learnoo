@@ -11,6 +11,7 @@ import { deflateSync, crc32 } from 'node:zlib';
 const password = 'simulated-password-1';
 const author = { email: 'test-author@example.test', password };
 const reviewer = { email: 'test-reviewer@example.test', password };
+const authorTwo = { email: 'test-author-two@example.test', password };
 
 /** A small valid PNG (solid colour), built here so no binary fixture is needed. */
 function png(width = 40, height = 24) {
@@ -50,7 +51,8 @@ async function signIn(page, user, path = '/studio') {
   await page.getByRole('button', { name: 'Se connecter' }).click();
 }
 
-const editor = (page) => page.getByRole('textbox', { name: 'Contenu de la leçon' });
+const editor = (page) => page.getByRole('textbox', { name: 'Éditeur du contenu de la leçon' });
+const recoveryKeys = (page) => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('learnoo-studio-recovery')));
 const saveButton = (page) => page.getByRole('button', { name: 'Enregistrer', exact: true });
 const saveState = (page) => page.locator('.save-state');
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
@@ -63,6 +65,24 @@ async function newLesson(page, { title, language = 'fr' }) {
   if (language === 'ar') await page.getByRole('radio', { name: /Arabe/ }).check();
   await page.getByRole('button', { name: 'Commencer la rédaction' }).click();
   await page.getByLabel('Titre', { exact: true }).fill(title);
+}
+
+/** The TEST reviewer requests changes through the review API (their UI is the next slice). */
+async function requestChanges(browser, baseURL, revisionId, comment) {
+  const reviewerContext = await browser.newContext({ baseURL });
+  const login = await reviewerContext.request.post('/api/auth/login', { data: reviewer });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const decision = await reviewerContext.request.post(`/api/review/revisions/${revisionId}/request-changes`, { data: { comment }, headers: { 'X-CSRF-Token': csrfToken } });
+  expect(decision.status()).toBe(200);
+  await reviewerContext.close();
+}
+
+/** Signs this browser context in as `user` through the API (as another tab would), replacing its current session. */
+async function switchAccount(context, user) {
+  const current = await context.request.get('/api/auth/session');
+  if (current.ok()) await context.request.post('/api/auth/logout', { headers: { 'X-CSRF-Token': (await current.json()).csrfToken } });
+  expect((await context.request.post('/api/auth/login', { data: user })).status()).toBe(200);
 }
 
 async function save(page) {
@@ -229,17 +249,7 @@ test('reviewer feedback reaches the author, who drafts a correction and resubmit
   await expect(page.getByRole('heading', { name: /En relecture/ })).toBeVisible();
   const submitted = await openRevision(page);
 
-  // The reviewer requests changes through the review API (their UI is the next slice).
-  const reviewerContext = await browser.newContext({ baseURL });
-  const login = await reviewerContext.request.post('/api/auth/login', { data: reviewer });
-  expect(login.status()).toBe(200);
-  const { csrfToken } = await login.json();
-  const decision = await reviewerContext.request.post(`/api/review/revisions/${submitted.id}/request-changes`, {
-    data: { comment: 'TEST Précisez la définition du module.' },
-    headers: { 'X-CSRF-Token': csrfToken },
-  });
-  expect(decision.status()).toBe(200);
-  await reviewerContext.close();
+  await requestChanges(browser, baseURL, submitted.id, 'TEST Précisez la définition du module.');
 
   await page.getByRole('link', { name: 'Mes leçons' }).first().click();
   const card = page.getByRole('listitem').filter({ hasText: 'TEST Retour relecteur' });
@@ -323,11 +333,29 @@ test('a crashed tab leaves a labelled recovery copy that can be restored; discar
   await newLesson(page, { title: 'TEST Copie de secours' });
   await editor(page).click();
   await page.keyboard.type('Version enregistrée.');
+  // Text typed while the first save is still creating the lesson is kept, and stays unsaved.
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route('**/api/lessons', async (route) => {
+    if (route.request().method() === 'POST') await held;
+    await route.continue();
+  });
   await saveButton(page).click();
+  await expect(saveState(page)).toContainText('Enregistrement en cours');
+  await editor(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' Tapé pendant la création.');
+  release();
   await expect(page).toHaveURL(/\/edit$/);
+  await expect(page.getByText('Leçon créée et enregistrée sur le serveur.')).toBeVisible();
+  await expect(saveState(page)).toContainText('non enregistrées');
+  await expect(editor(page)).toContainText('Version enregistrée. Tapé pendant la création.');
+  await page.unroute('**/api/lessons');
+  await save(page);
+  expect(JSON.stringify((await openRevision(page)).content)).toContain('Tapé pendant la création.');
   const editURL = page.url();
-  // The editor reopens at the lesson's address with the caret where the author was typing.
-  await expect(editor(page)).toBeFocused();
+  await editor(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type(' Ajout jamais enregistré.');
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('learnoo-studio-recovery')).length)).toBe(1);
   // Simulate a crash: the tab goes away without unload handlers.
@@ -341,6 +369,15 @@ test('a crashed tab leaves a labelled recovery copy that can be restored; discar
   await expect(editor(fresh)).toContainText('Ajout jamais enregistré.');
   await save(fresh);
 
+  // Another tab's unsaved copy survives this tab's discard and is offered on the lesson's next draft.
+  const tab = await context.newPage();
+  await tab.goto(editURL);
+  await editor(tab).click();
+  await tab.keyboard.press('ControlOrMeta+End');
+  await tab.keyboard.type(' Copie d’un autre onglet.');
+  await expect.poll(() => recoveryKeys(tab).then((k) => k.length)).toBe(1);
+  await tab.close({ runBeforeUnload: false });
+
   await fresh.getByRole('button', { name: 'Supprimer ce brouillon' }).click();
   const dialog = fresh.getByRole('dialog', { name: 'Supprimer ce brouillon ?' });
   await expect(dialog.getByRole('button', { name: 'Garder le brouillon' })).toBeFocused();
@@ -351,6 +388,13 @@ test('a crashed tab leaves a labelled recovery copy that can be restored; discar
   await expect(fresh.getByRole('heading', { name: 'Mes leçons' })).toBeVisible();
   await expect(fresh.getByText('Brouillon supprimé.')).toBeVisible();
   await expect(fresh.getByRole('listitem').filter({ hasText: /Leçon n° \d+/ }).first()).toContainText('Aucune version en cours');
+  expect(await recoveryKeys(fresh)).toHaveLength(1);
+  await fresh.goto(editURL);
+  const offered = fresh.getByRole('region', { name: 'Copies de secours locales (non enregistrées)' });
+  await offered.getByRole('button', { name: 'Restaurer dans l’éditeur' }).click();
+  await expect(editor(fresh)).toContainText('Copie d’un autre onglet.');
+  await save(fresh);
+  expect(await recoveryKeys(fresh)).toEqual([]);
   expect(problems).toEqual([]);
 });
 
@@ -377,5 +421,136 @@ test('pasting HTML strips unsupported markup; an invalid import is refused witho
   await (await chooser).setFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"schemaVersion":1,"title":"x","language":"fr","status":"unreviewed","objective":"","blocks":[{"type":"html","text":"<script>"}]}') });
   await expect(page.getByRole('alert')).toContainText('Import refusé');
   await expect(editor(page)).toContainText('Collé ici');
+  expect(problems).toEqual([]);
+});
+
+test('a stale tab never writes as another account signed in on the same browser; it resumes once the author is back', async ({ page, context, baseURL }) => {
+  const problems = watch(page, baseURL);
+  await signIn(page, author);
+  await newLesson(page, { title: 'TEST Compte changé' });
+  await editor(page).click();
+  await page.keyboard.type('Version enregistrée.');
+  await saveButton(page).click();
+  await expect(page).toHaveURL(/\/edit$/);
+  const before = await openRevision(page);
+  await editor(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' Modification locale.');
+  // A second tab holds a lesson not created yet.
+  const fresh = await context.newPage();
+  await fresh.goto('/studio');
+  await newLesson(fresh, { title: 'TEST Jamais créée' });
+  await editor(fresh).click();
+  await fresh.keyboard.type('Texte de la leçon à créer.');
+
+  // Someone signs in with another author account in this browser.
+  await switchAccount(context, authorTwo);
+
+  // Save, upload and create are refused in the stale tabs; the edits stay.
+  await saveButton(page).click();
+  const banner = page.locator('.banner.expired');
+  await expect(banner).toContainText('Un autre compte est connecté dans ce navigateur.');
+  await expect(editor(page)).toContainText('Version enregistrée. Modification locale.');
+  await page.getByLabel('Téléverser une image (PNG, JPEG ou WebP, 5 Mio au maximum)').setInputFiles({ name: 'figure.png', mimeType: 'image/png', buffer: png() });
+  await expect(page.locator('.media [role="alert"]')).toContainText('Un autre compte est connecté');
+  await saveButton(fresh).click();
+  await expect(fresh.locator('.banner.expired')).toContainText('Un autre compte est connecté dans ce navigateur.');
+  await expect(fresh).toHaveURL(/\/studio\/lessons\/new$/);
+  await expect(editor(fresh)).toContainText('Texte de la leçon à créer.');
+  // Nothing reached the other account.
+  const theirs = await (await context.request.get('/api/lessons/mine')).json();
+  expect(theirs.lessons).toEqual([]);
+  // Resuming while the other account is still signed in is refused.
+  await page.getByRole('button', { name: 'Reprendre ici' }).click();
+  await expect(banner).toContainText('Un autre compte est toujours connecté');
+
+  // The author signs in again: both tabs resume and save as the author.
+  await switchAccount(context, author);
+  await page.getByRole('button', { name: 'Reprendre ici' }).click();
+  await expect(banner).toHaveCount(0);
+  await save(page);
+  const after = await openRevision(page);
+  expect(after.version).toBe(before.version + 1);
+  expect(JSON.stringify(after.content)).toContain('Modification locale.');
+  await fresh.getByRole('button', { name: 'Reprendre ici' }).click();
+  await saveButton(fresh).click();
+  await expect(fresh).toHaveURL(/\/studio\/lessons\/\d+\/edit$/);
+  expect((await openRevision(fresh)).authorId).toBe(after.authorId);
+  expect(problems).toEqual([]);
+});
+
+test('edits in a tab whose draft was submitted elsewhere are kept and restored on the corrected version; sign-out clears copies', async ({ page, context, browser, baseURL }) => {
+  const problems = watch(page, baseURL);
+  await signIn(page, author);
+  await newLesson(page, { title: 'TEST Soumis ailleurs' });
+  await editor(page).click();
+  await page.keyboard.type('Première version.');
+  await saveButton(page).click();
+  await expect(page).toHaveURL(/\/edit$/);
+  const editURL = page.url();
+
+  const other = await context.newPage();
+  await other.goto(editURL);
+  await other.getByRole('button', { name: 'Soumettre pour relecture' }).click();
+  await other.getByRole('dialog').getByRole('button', { name: 'Soumettre', exact: true }).click();
+  await expect(other.getByRole('heading', { name: /Révision 1 · En relecture/ })).toBeVisible();
+  await other.close();
+
+  await editor(page).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' Ajout après soumission.');
+  await saveButton(page).click();
+  await expect(page.getByRole('heading', { name: 'Ce brouillon a été soumis ailleurs' })).toBeFocused();
+  await expect(editor(page)).toContainText('Première version. Ajout après soumission.');
+  await page.getByRole('button', { name: 'Voir la révision soumise' }).click();
+  await expect(page.getByRole('heading', { name: /Révision 1 · En relecture/ })).toBeVisible();
+  const recovery = page.getByRole('region', { name: 'Copies de secours locales (non enregistrées)' });
+  await expect(recovery).toContainText('gardée lors d’un conflit');
+  await expect(recovery.getByRole('button', { name: 'Restaurer dans l’éditeur' })).toHaveCount(0);
+
+  await requestChanges(browser, baseURL, (await openRevision(page)).id, 'TEST Ajoutez un exemple.');
+  await page.reload();
+  await page.getByRole('button', { name: 'Créer la version corrigée' }).click();
+  await expect(page.getByText('Brouillon · révision 2')).toBeVisible();
+  await expect(recovery).toContainText('faite sur la révision 1');
+  await recovery.getByRole('button', { name: 'Restaurer dans l’éditeur' }).click();
+  await expect(editor(page)).toContainText('Ajout après soumission.');
+  await save(page);
+  const corrected = await openRevision(page);
+  expect(corrected.number).toBe(2);
+  expect(JSON.stringify(corrected.content)).toContain('Ajout après soumission.');
+  expect(await recoveryKeys(page)).toEqual([]);
+
+  // Unsaved edits at sign-out: asked first, then this account's copies are removed from the device.
+  await editor(page).click();
+  await page.keyboard.type(' Jamais enregistré.');
+  await expect.poll(() => recoveryKeys(page).then((k) => k.length)).toBe(1);
+  await page.getByRole('button', { name: 'Se déconnecter' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Se déconnecter sans enregistrer ?' });
+  await expect(dialog).toContainText('effacées de cet appareil');
+  await dialog.getByRole('button', { name: 'Se déconnecter quand même' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(await recoveryKeys(page)).toEqual([]);
+  expect(problems).toEqual([]);
+});
+
+test('the preview typesets display math and keeps a malformed formula readable as source', async ({ page, baseURL }) => {
+  const problems = watch(page, baseURL);
+  await signIn(page, author);
+  await newLesson(page, { title: 'TEST Formules' });
+  await editor(page).click();
+  await page.keyboard.type('Avant $\\frac{1}{$ après la formule fautive.');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('$$ ');
+  await page.getByLabel('Formule centrée (TeX)').fill('\\int_0^1 x\\,dx = \\frac{1}{2}');
+  await page.getByRole('button', { name: 'Prévisualiser' }).first().click();
+  const preview = page.getByTestId('lesson-preview');
+  await expect(preview.locator('.formula .katex-display')).toBeVisible();
+  const broken = preview.locator('.math-error');
+  await expect(broken).toHaveCount(1);
+  await expect(broken).toHaveText('\\frac{1}{');
+  await expect(broken).toHaveAttribute('aria-label', 'Formule non rendue : \\frac{1}{');
+  await expect(preview).toContainText('après la formule fautive.');
+  expect(await preview.getAttribute('data-math-errors')).toBe('1');
   expect(problems).toEqual([]);
 });
