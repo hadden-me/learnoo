@@ -426,7 +426,9 @@ func TestForeignKeysAndUniqueness(t *testing.T) {
 	wantSQLState(t, "chapter of another subject", insert(rev.LessonID, 2, "fr", f.subject, &foreignChapter, nil, "draft"), "23503")
 	wantSQLState(t, "subject differs from lesson", insert(rev.LessonID, 2, "fr", physics, nil, nil, "draft"), "23503")
 	wantSQLState(t, "language differs from lesson", insert(rev.LessonID, 2, "ar", f.subject, nil, nil, "draft"), "23503")
-	wantSQLState(t, "unknown lesson", insert(999999, 1, "fr", f.subject, nil, nil, "draft"), "23503")
+	// The ownership guard refuses a revision of an unknown lesson (it has no
+	// owner) before the foreign key would.
+	wantGuard(t, "unknown lesson", insert(999999, 1, "fr", f.subject, nil, nil, "draft"), "authored by the lesson's owner")
 	// A base from another lesson is also covered by a composite foreign key;
 	// the insert guard (base must equal the current published pointer) fires first.
 	wantSQLState(t, "base from another lesson", insert(rev.LessonID, 2, "fr", f.subject, nil, &other.ID, "draft"), "LRN01")

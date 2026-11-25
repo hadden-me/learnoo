@@ -5,8 +5,10 @@
 // approved revision never published), immutable submitted snapshots
 // and media references, immutable media assets, and consistent foreign keys.
 // This package adds the checks that need the caller: the author permission,
-// own-draft ownership, optimistic version checks and schema v1 validation
-// through internal/rendering before anything is stored.
+// lesson ownership (only a lesson's creator, while holding author, starts a
+// draft of it or translates it; the database guards the same rule),
+// optimistic version checks and schema v1 validation through
+// internal/rendering before anything is stored.
 //
 // Review decisions, publication, restoration and withdrawal are not here
 // (LRN-007, LRN-009); neither is media upload (a later LRN-006 slice).
@@ -50,6 +52,11 @@ var (
 	// ErrDenied is permissions.ErrDenied: missing author permission,
 	// anonymous caller, or another author's draft.
 	ErrDenied = permissions.ErrDenied
+	// ErrNotOwner means the caller is not the lesson's owner (its creator,
+	// lessons.created_by): only the owner may start a draft of it or add a
+	// translation of it. Administrators get no exception. It wraps ErrDenied;
+	// the HTTP slice should answer it like a missing lesson.
+	ErrNotOwner = fmt.Errorf("%w: not the lesson's owner", permissions.ErrDenied)
 	// ErrNotFound means the lesson or revision does not exist.
 	ErrNotFound = errors.New("lesson or revision not found")
 	// ErrNotDraft means the revision was submitted and can no longer change.
@@ -228,7 +235,10 @@ func prepare(f Fields) (snapshot, error) {
 	return snapshot{content: content, doc: doc, prereq: f.Prerequisites, chapter: f.ChapterID, media: media}, nil
 }
 
-// CreateLesson creates a lesson and its first draft, authored by actor.
+// CreateLesson creates a lesson and its first draft, authored by actor,
+// who becomes the lesson's owner. A translation (nl.TranslationOf) joins the
+// source lesson's translation group and requires actor to own the source:
+// otherwise ErrNotOwner, checked before anything else about the source.
 func (s *Store) CreateLesson(ctx context.Context, actor int64, nl NewLesson) (Revision, error) {
 	var rev Revision
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
@@ -245,16 +255,19 @@ func (s *Store) CreateLesson(ctx context.Context, actor int64, nl NewLesson) (Re
 		var group string
 		if nl.TranslationOf != 0 {
 			// The share lock keeps the source from being archived meanwhile.
-			var subject int64
+			var subject, owner int64
 			var archived *time.Time
 			err := tx.QueryRow(ctx, `
-				SELECT translation_group_id::text, subject_id, archived_at
-				  FROM lessons WHERE id = $1 FOR SHARE`, nl.TranslationOf).Scan(&group, &subject, &archived)
+				SELECT translation_group_id::text, subject_id, archived_at, created_by
+				  FROM lessons WHERE id = $1 FOR SHARE`, nl.TranslationOf).Scan(&group, &subject, &archived, &owner)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			if err != nil {
 				return err
+			}
+			if owner != actor {
+				return ErrNotOwner
 			}
 			if archived != nil {
 				return ErrArchived
@@ -285,7 +298,9 @@ func (s *Store) CreateLesson(ctx context.Context, actor int64, nl NewLesson) (Re
 
 // CreateDraft starts a new draft of an existing lesson, authored by actor:
 // the successor of a changes-requested revision, or a new draft while the
-// published revision stays untouched. Its base is the lesson's published
+// published revision stays untouched. Only the lesson's owner may (actor
+// must have created it and hold author); anyone else gets ErrNotOwner,
+// checked right after the lesson is found and before its state. Its base is the lesson's published
 // revision, read under a lock in the same transaction. At most one active
 // candidate exists per lesson: a draft, an in-review revision, or an approved
 // revision not yet published (nor, from LRN-009, withdrawn). While one
@@ -301,20 +316,25 @@ func (s *Store) CreateDraft(ctx context.Context, actor, lessonID int64, f Fields
 			return err
 		}
 		var language string
-		var subject int64
+		var subject, owner int64
 		var published *int64
 		var archived *time.Time
 		var last int
 		// The row lock serializes draft creation per lesson and keeps the
 		// published pointer stable until the draft records it as its base.
 		err = tx.QueryRow(ctx, `
-			SELECT language, subject_id, published_revision_id, archived_at, last_revision_number
-			  FROM lessons WHERE id = $1 FOR UPDATE`, lessonID).Scan(&language, &subject, &published, &archived, &last)
+			SELECT language, subject_id, published_revision_id, archived_at, last_revision_number, created_by
+			  FROM lessons WHERE id = $1 FOR UPDATE`, lessonID).Scan(&language, &subject, &published, &archived, &last, &owner)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
+		}
+		// created_by never changes, so this needs no further lock; the
+		// author permission was share-locked by RequireTx above.
+		if owner != actor {
+			return ErrNotOwner
 		}
 		if archived != nil {
 			return ErrArchived

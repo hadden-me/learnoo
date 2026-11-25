@@ -78,9 +78,11 @@ func TestApprovedUnpublishedBlocksDraftsUntilPublished(t *testing.T) {
 	}
 	_, err := f.store.CreateDraft(f.ctx, f.author, rev.LessonID, lessons.Fields{Content: doc("Blocked", "fr")})
 	wantErr(t, err, lessons.ErrActiveCandidateExists)
+	// Another author is refused as a non-owner before the lesson's state is
+	// examined (TestOnlyTheOwnerStartsDrafts).
 	other := f.newAuthor("other")
 	_, err = f.store.CreateDraft(f.ctx, other, rev.LessonID, lessons.Fields{Content: doc("Blocked too", "fr")})
-	wantErr(t, err, lessons.ErrActiveCandidateExists)
+	wantErr(t, err, lessons.ErrNotOwner)
 	// The index rejects writers that bypass the Store.
 	wantActiveCandidateIndex(t, "direct insert", f.insertDirect(rev, 5))
 	if n := f.count(`SELECT count(*) FROM lesson_revisions WHERE lesson_id = $1`, rev.LessonID); n != 1 {

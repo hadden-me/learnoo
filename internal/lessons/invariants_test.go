@@ -11,6 +11,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/rendering"
+	"github.com/jackc/pgx/v5"
 )
 
 // waitBlockedBy waits until some backend is waiting on a lock held by pid.
@@ -230,13 +231,20 @@ func TestReferencedRowsCannotBeDeletedOrTruncated(t *testing.T) {
 	chapter := f.chapter(f.subject, "simulated-chapter")
 	rev := f.submitted("Kept")
 
-	// A user without grants (so no permission audit rows) who authored rows directly.
+	// A user without grants (so no permission audit rows) who authored rows
+	// directly, in a translation group of their own (created in the same
+	// transaction, as the ownership guard requires).
 	plain := f.user("plain")
 	var lesson int64
-	err := f.db.QueryRow(f.ctx, `
-		INSERT INTO lessons (translation_group_id, language, subject_id, created_at, created_by)
-		VALUES ((SELECT translation_group_id FROM lessons WHERE id = $1), 'ar', $2, now(), $3) RETURNING id`,
-		rev.LessonID, f.subject, plain).Scan(&lesson)
+	err := pgx.BeginFunc(f.ctx, f.db, func(tx pgx.Tx) error {
+		var group string
+		if err := tx.QueryRow(f.ctx, `INSERT INTO translation_groups (subject_id) VALUES ($1) RETURNING id::text`, f.subject).Scan(&group); err != nil {
+			return err
+		}
+		return tx.QueryRow(f.ctx, `
+			INSERT INTO lessons (translation_group_id, language, subject_id, created_at, created_by)
+			VALUES ($1::uuid, 'ar', $2, now(), $3) RETURNING id`, group, f.subject, plain).Scan(&lesson)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,24 +322,6 @@ func TestSubmissionAndMediaChangeAreSerialized(t *testing.T) {
 		t.Fatalf("unexpected submitted revision: %+v", got)
 	}
 	wantSQLState(t, "remove after submission", f.exec(`DELETE FROM revision_media WHERE revision_id = $1`, rev.ID), "LRN01")
-}
-
-func TestOtherAuthorMayStartDraftOfExistingLesson(t *testing.T) {
-	f := newFixture(t)
-	rev := f.submitted("Shared")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
-	other := f.newAuthor("other")
-	draft, err := f.store.CreateDraft(f.ctx, other, rev.LessonID, lessons.Fields{Content: doc("By another author", "fr")})
-	if err != nil {
-		t.Fatalf("another author's draft: %v", err)
-	}
-	if draft.AuthorID != other {
-		t.Fatalf("draft author %d, want %d", draft.AuthorID, other)
-	}
-	// The draft belongs to its creator only.
-	if _, err := f.store.SaveDraft(f.ctx, f.author, draft.ID, draft.Version, lessons.Fields{Content: doc("Original author", "fr")}); !errors.Is(err, lessons.ErrDenied) {
-		t.Fatalf("original author saved another's draft: %v", err)
-	}
 }
 
 func TestRevokedAuthorCannotCreate(t *testing.T) {

@@ -304,6 +304,75 @@ CREATE TRIGGER zz_guard_lesson_revisions_insert_as_draft
     BEFORE INSERT ON lesson_revisions
     FOR EACH ROW EXECUTE FUNCTION lesson_revisions_guard_insert();
 
+-- Lesson ownership (maintainer decision of 2026-11-25, docs/DECISIONS.md
+-- "Lesson ownership"): a lesson's creator (lessons.created_by) is its owner.
+-- Only the owner authors its revisions, and every lesson of a translation
+-- group has the same owner, so adding a translation needs ownership of the
+-- source lesson. internal/lessons checks the acting user against the owner
+-- together with the author permission; administrators get no exception.
+-- The database cannot know who is acting, so these guards enforce only the
+-- consistency the rule implies, for every writer: a revision's author_id
+-- equals its lesson's created_by, and a translation group has a single
+-- owner. They stop rows that contradict an existing owner, not a writer
+-- that names the owner itself.
+--
+-- Snapshots. created_by never changes (zz_guard_lessons_identity), so an
+-- owner read here cannot be stale. What a stale snapshot can hide is a row
+-- inserted after it, so both guards refuse when they find nothing: a lesson
+-- the inserting transaction cannot see has no owner, and a translation
+-- group without a visible lesson accepts its first lesson only from the
+-- transaction that created the group (the group row's xmin is the current
+-- transaction ID; CreateLesson inserts both in one transaction, without a
+-- savepoint). A writer whose snapshot predates a group and its first lesson
+-- therefore cannot add a lesson of another owner to it.
+CREATE FUNCTION lesson_revisions_guard_owner() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    owner bigint;
+BEGIN
+    -- EXECUTE does not set FOUND; a missing or invisible lesson leaves owner NULL.
+    EXECUTE format('SELECT created_by FROM %I.lessons WHERE id = $1', TG_TABLE_SCHEMA)
+       INTO owner USING NEW.lesson_id;
+    IF NEW.author_id IS DISTINCT FROM owner THEN
+        RAISE EXCEPTION 'a revision must be authored by the lesson''s owner' USING ERRCODE = 'LRN01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER zz_guard_lesson_revisions_author_owns_lesson
+    BEFORE INSERT ON lesson_revisions
+    FOR EACH ROW EXECUTE FUNCTION lesson_revisions_guard_owner();
+
+CREATE FUNCTION lessons_guard_translation_owner() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    lessons_seen bigint;
+    other_owner  boolean;
+    group_xmin   xid;
+BEGIN
+    EXECUTE format('SELECT count(*), coalesce(bool_or(created_by IS DISTINCT FROM $2), false)
+                      FROM %I.lessons WHERE translation_group_id = $1', TG_TABLE_SCHEMA)
+       INTO lessons_seen, other_owner USING NEW.translation_group_id, NEW.created_by;
+    IF other_owner THEN
+        RAISE EXCEPTION 'only the owner of a translation group''s lessons can add a lesson to it' USING ERRCODE = 'LRN01';
+    END IF;
+    IF lessons_seen = 0 THEN
+        EXECUTE format('SELECT xmin FROM %I.translation_groups WHERE id = $1', TG_TABLE_SCHEMA)
+           INTO group_xmin USING NEW.translation_group_id;
+        IF group_xmin IS DISTINCT FROM xid(pg_current_xact_id()) THEN
+            RAISE EXCEPTION 'a translation group''s first lesson must be created in the transaction that created the group'
+                USING ERRCODE = 'LRN01';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER zz_guard_lessons_translation_owner
+    BEFORE INSERT ON lessons
+    FOR EACH ROW EXECUTE FUNCTION lessons_guard_translation_owner();
+
 -- A new revision number must exceed every number the lesson has used, so a
 -- discarded draft's number is never reused. AFTER INSERT, so the unique
 -- indexes (including the one-active-candidate index) are checked first.
