@@ -65,6 +65,31 @@ describe('API client', () => {
     expect(server.calls.at(-1)!.headers['X-CSRF-Token']).toBe('tok-1');
   });
 
+  it('confirms the account before a read when the last check is stale or invalidated', async () => {
+    const other = { ...session, user: { ...session.user, id: 8 } };
+    let clock = 1_000_000;
+    const onAccountChanged = vi.fn();
+    const server = fakeServer([[200, session], [200, { lessons: [] }], [200, other]]);
+    const api = new Api({ fetch: server.fetch, onAccountChanged, now: () => clock });
+    await api.session();
+    clock += 1000;
+    await api.myLessons(); // fresh check: read sent directly
+    api.invalidateAccount(); // for example an in-app navigation
+    await expect(api.myLessons()).rejects.toMatchObject({ code: 'account_changed' });
+    expect(server.calls.map((c) => c.url)).toEqual(['/api/auth/session', '/api/lessons/mine', '/api/auth/session']);
+    expect(onAccountChanged).toHaveBeenCalledOnce();
+  });
+
+  it('re-checks after the check expires, sharing one session request between concurrent reads', async () => {
+    let clock = 0;
+    const server = fakeServer([[200, session], [200, session], [200, { lessons: [] }], [200, { lessons: [] }]]);
+    const api = new Api({ fetch: server.fetch, now: () => clock });
+    await api.session();
+    clock += 3001;
+    await Promise.all([api.myLessons(), api.myLessons()]);
+    expect(server.calls.filter((c) => c.url === '/api/auth/session')).toHaveLength(2);
+  });
+
   it('reports 401 to the shell and throws a typed error', async () => {
     const onUnauthenticated = vi.fn();
     const server = fakeServer([[401, err('unauthenticated')]]);

@@ -36,7 +36,17 @@ export function routePath(route: Route): string {
 }
 
 const listeners = new Set<() => void>();
-const notify = () => listeners.forEach((l) => l());
+/** Called before any page change is rendered (the shell invalidates the account check there). */
+const beforeNavigate = new Set<() => void>();
+const notify = () => {
+  beforeNavigate.forEach((l) => l());
+  listeners.forEach((l) => l());
+};
+
+export function onNavigate(fn: () => void): () => void {
+  beforeNavigate.add(fn);
+  return () => beforeNavigate.delete(fn);
+}
 
 /** Navigation guards: each returns true when leaving must first be confirmed (unsaved edits). */
 type Guard = () => boolean;

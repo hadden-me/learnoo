@@ -7,7 +7,7 @@ import { ACCOUNT_CHANGED, Api, isApiError, type Session } from './api/client';
 import { describeError } from './api/messages';
 import { StudioContext, allowUnload, useStudio, type Studio } from './context';
 import { Link } from './ui/Link';
-import { BASE, hasBlockingGuard, setLeaveConfirmation, useRoute } from './router';
+import { BASE, hasBlockingGuard, onNavigate, setLeaveConfirmation, useRoute } from './router';
 import { Dialog } from './ui/Dialog';
 import { findUserRecovery, purgeRecovery, RECOVERY_MAX_AGE_MS, suspendRecovery } from './recovery';
 import { LessonList } from './pages/LessonList';
@@ -45,6 +45,16 @@ export function App() {
 
   useEffect(() => {
     setLeaveConfirmation((proceed) => setLeave(() => proceed));
+    // Another account may have signed in from another tab: re-check before showing any page's data,
+    // and as soon as this tab is shown again (the banner then replaces nothing on screen).
+    const removeNavigate = onNavigate(() => api.invalidateAccount());
+    const recheck = () => {
+      if (document.visibilityState !== 'visible' || !booted.current) return;
+      api.invalidateAccount();
+      api.session().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
     // Recovery copies are short-lived crash protection: forget old ones.
     purgeRecovery(localStorage, { olderThan: new Date(Date.now() - RECOVERY_MAX_AGE_MS) });
     (async () => {
@@ -63,6 +73,11 @@ export function App() {
         if (!isApiError(error, 'unauthenticated')) setBoot({ state: 'error', message: describeError(error) });
       }
     })();
+    return () => {
+      removeNavigate();
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+    };
   }, [api]);
 
   if (boot.state === 'loading') return <p className="loading" role="status">Chargement du Studio…</p>;

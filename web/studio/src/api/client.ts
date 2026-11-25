@@ -136,7 +136,16 @@ export interface ApiOptions {
   onUnauthenticated?: () => void;
   /** Called when the browser's session now belongs to another account than the one this page started with. */
   onAccountChanged?: () => void;
+  /** Clock, for tests. */
+  now?: () => number;
 }
+
+/**
+ * Reads are preceded by an account check (GET /api/auth/session) when the
+ * last one is older than this, or was invalidated (navigation, the tab
+ * becoming visible again), so a page never shows another account's data.
+ */
+export const ACCOUNT_CHECK_MS = 3000;
 
 /**
  * Thrown (status 0, never sent by the server) when the session cookie now
@@ -152,6 +161,10 @@ export class Api {
   /** The account this page started with; every later session must be the same account. */
   private userId: number | null = null;
   private accountChanged = false;
+  /** When the account was last confirmed (0: never, or invalidated). */
+  private checkedAt = 0;
+  private checking: Promise<Session> | null = null;
+  private readonly now: () => number;
   private readonly fetchImpl: typeof fetch;
   private readonly onUnauthenticated: () => void;
   private readonly onAccountChanged: () => void;
@@ -161,6 +174,12 @@ export class Api {
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.onUnauthenticated = options.onUnauthenticated ?? (() => {});
     this.onAccountChanged = options.onAccountChanged ?? (() => {});
+    this.now = options.now ?? Date.now;
+  }
+
+  /** Forces an account check before the next read (in-app navigation, tab shown again). */
+  invalidateAccount() {
+    this.checkedAt = 0;
   }
 
   /**
@@ -169,7 +188,15 @@ export class Api {
    * refused with account_changed, its token is never kept, and every request
    * is refused until a session of the original account is read again.
    */
-  async session(): Promise<Session> {
+  session(): Promise<Session> {
+    // Concurrent checks share one request.
+    this.checking ??= this.readSession().finally(() => {
+      this.checking = null;
+    });
+    return this.checking;
+  }
+
+  private async readSession(): Promise<Session> {
     const session = await this.send<Session>('GET', '/api/auth/session', {}, false);
     if (this.userId === null) this.userId = session.user.id;
     if (session.user.id !== this.userId) {
@@ -182,6 +209,7 @@ export class Api {
     }
     this.accountChanged = false;
     this.csrf = session.csrfToken;
+    this.checkedAt = this.now();
     return session;
   }
 
@@ -209,11 +237,12 @@ export class Api {
    * again in another tab, which rotates the session) is refreshed from the
    * session once and the request repeated; nothing was written the first time.
    * The refresh checks the account (session()), so a request is never
-   * repeated as another user.
+   * repeated as another user. Reads first confirm the account when the last
+   * check is stale (writes are bound to the account by their CSRF token).
    */
   async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
     if (this.accountChanged) throw new ApiError(0, ACCOUNT_CHANGED, 'Another account is signed in');
-    if (UNSAFE.has(method) && this.csrf === null) await this.session();
+    if (UNSAFE.has(method) ? this.csrf === null : this.now() - this.checkedAt > ACCOUNT_CHECK_MS) await this.session();
     try {
       return await this.send<T>(method, path, options, true);
     } catch (error) {

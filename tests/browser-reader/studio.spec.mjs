@@ -554,3 +554,21 @@ test('the preview typesets display math and keeps a malformed formula readable a
   expect(await preview.getAttribute('data-math-errors')).toBe('1');
   expect(problems).toEqual([]);
 });
+
+test('a page never shows another account’s lessons after someone else signs in on the same browser', async ({ page, context, baseURL }) => {
+  const problems = watch(page, baseURL);
+  await signIn(page, authorTwo);
+  await expect(page.getByRole('heading', { name: 'Mes leçons' })).toBeVisible();
+  await expect(page.locator('.who')).toHaveText('TEST Auteur Deux');
+  // test-author signs in from another tab (here: the context's API, same cookies).
+  await switchAccount(context, author);
+  await page.getByRole('link', { name: 'Nouvelle leçon' }).click();
+  await page.getByRole('navigation', { name: 'Studio' }).getByRole('link', { name: 'Mes leçons' }).click();
+  await expect(page.locator('.banner.expired')).toContainText('Un autre compte est connecté dans ce navigateur.');
+  // Nothing of test-author's was fetched or shown under test-author-two's header.
+  await expect(page.locator('.lesson-list')).toHaveCount(0);
+  await expect(page.getByText(/TEST (Parcours auteur|Compte changé|Soumis ailleurs)/)).toHaveCount(0);
+  await expect(page.getByLabel('Matière')).toHaveCount(0);
+  await switchAccount(context, authorTwo);
+  expect(problems).toEqual([]);
+});
