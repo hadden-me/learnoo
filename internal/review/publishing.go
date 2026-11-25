@@ -60,6 +60,36 @@ type PublishQueueItem struct {
 // revision was drafted: Publish would refuse it with ErrStaleBase.
 func (it PublishQueueItem) Stale() bool { return !sameID(it.BaseRevisionID, it.PublishedRevisionID) }
 
+// queueSelect reads PublishQueueItem rows; $1 is a revision ID (0 for all),
+// $2 the row limit.
+const queueSelect = `
+	SELECT r.id, r.lesson_id, l.public_id::text, r.revision_number, r.title, r.language, r.subject_id, s.code,
+	       r.author_id, au.display_name, d.reviewer_id, rv.display_name, d.decided_at,
+	       r.base_revision_id, l.published_revision_id
+	  FROM lesson_revisions r
+	  JOIN lessons l ON l.id = r.lesson_id
+	  JOIN subjects s ON s.id = r.subject_id
+	  JOIN review_decisions d ON d.revision_id = r.id AND d.action = 'approve'
+	  JOIN users au ON au.id = r.author_id
+	  JOIN users rv ON rv.id = d.reviewer_id
+	 WHERE ($1 = 0 OR r.id = $1) AND ` + awaitingPublication + `
+	 ORDER BY d.decided_at, r.id
+	 LIMIT $2`
+
+func queueItems(ctx context.Context, tx pgx.Tx, revisionID int64, limit int) ([]PublishQueueItem, error) {
+	rows, err := tx.Query(ctx, queueSelect, revisionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PublishQueueItem, error) {
+		var q PublishQueueItem
+		err := row.Scan(&q.RevisionID, &q.LessonID, &q.LessonPublicID, &q.Number, &q.Title, &q.Language,
+			&q.SubjectID, &q.SubjectCode, &q.AuthorID, &q.AuthorName, &q.ApprovedBy, &q.ApproverName,
+			&q.ApprovedAt, &q.BaseRevisionID, &q.PublishedRevisionID)
+		return q, err
+	})
+}
+
 // PublishQueue lists approved revisions that were never published, are not
 // withdrawn and belong to lessons that are not archived, oldest approval
 // first, at most MaxPublishQueue. It requires the publisher permission.
@@ -69,29 +99,8 @@ func (s *Store) PublishQueue(ctx context.Context, actor int64) ([]PublishQueueIt
 		if err := permissions.RequireTx(ctx, tx, actor, permissions.Publisher); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.lesson_id, l.public_id::text, r.revision_number, r.title, r.language, r.subject_id, s.code,
-			       r.author_id, au.display_name, d.reviewer_id, rv.display_name, d.decided_at,
-			       r.base_revision_id, l.published_revision_id
-			  FROM lesson_revisions r
-			  JOIN lessons l ON l.id = r.lesson_id
-			  JOIN subjects s ON s.id = r.subject_id
-			  JOIN review_decisions d ON d.revision_id = r.id AND d.action = 'approve'
-			  JOIN users au ON au.id = r.author_id
-			  JOIN users rv ON rv.id = d.reviewer_id
-			 WHERE `+awaitingPublication+`
-			 ORDER BY d.decided_at, r.id
-			 LIMIT $1`, MaxPublishQueue)
-		if err != nil {
-			return err
-		}
-		items, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (PublishQueueItem, error) {
-			var q PublishQueueItem
-			err := row.Scan(&q.RevisionID, &q.LessonID, &q.LessonPublicID, &q.Number, &q.Title, &q.Language,
-				&q.SubjectID, &q.SubjectCode, &q.AuthorID, &q.AuthorName, &q.ApprovedBy, &q.ApproverName,
-				&q.ApprovedAt, &q.BaseRevisionID, &q.PublishedRevisionID)
-			return q, err
-		})
+		var err error
+		items, err = queueItems(ctx, tx, 0, MaxPublishQueue)
 		return err
 	})
 	if err != nil {
@@ -104,31 +113,35 @@ func (s *Store) PublishQueue(ctx context.Context, actor int64) ([]PublishQueueIt
 }
 
 // PublishRevision returns a revision awaiting publication (the PublishQueue
-// rule) to a publisher, so they can read what they publish. Any other
-// revision, including a missing one, is ErrNotFound; a caller without the
-// publisher permission gets ErrDenied.
-func (s *Store) PublishRevision(ctx context.Context, actor, revisionID int64) (lessons.Revision, error) {
+// rule) to a publisher, with its queue facts (names, current pointer,
+// stale base), so they can read what they publish whatever the queue's
+// bound. Any other revision, including a missing one, is ErrNotFound; a
+// caller without the publisher permission gets ErrDenied.
+func (s *Store) PublishRevision(ctx context.Context, actor, revisionID int64) (PublishQueueItem, lessons.Revision, error) {
+	var item PublishQueueItem
 	var rev lessons.Revision
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if err := permissions.RequireTx(ctx, tx, actor, permissions.Publisher); err != nil {
 			return err
 		}
-		var ok bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM lesson_revisions r JOIN lessons l ON l.id = r.lesson_id
-			WHERE r.id = $1 AND `+awaitingPublication+`)`, revisionID).Scan(&ok)
+		if revisionID <= 0 {
+			return ErrNotFound
+		}
+		items, err := queueItems(ctx, tx, revisionID, 1)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if len(items) != 1 {
 			return ErrNotFound
 		}
+		item = items[0]
 		rev, err = lessons.RevisionTx(ctx, tx, revisionID)
 		return err
 	})
 	if err != nil {
-		return lessons.Revision{}, err
+		return PublishQueueItem{}, lessons.Revision{}, err
 	}
-	return rev, nil
+	return item, rev, nil
 }
 
 // LessonRevisionState is one submitted revision of a lesson as seen by
@@ -149,7 +162,10 @@ type LessonRevisionState struct {
 	// is limited to such revisions).
 	EverPublished bool
 	// Candidate: approved and still the lesson's active candidate.
-	Candidate  bool
+	Candidate bool
+	// Withdrawn: the revision was withdrawn (shown to publishers too).
+	Withdrawn bool
+	// Withdrawal holds the withdrawal's reason and actor: administrators only.
 	Withdrawal *WithdrawalRecord
 	// WithdrawnByName is the withdrawing administrator's display name.
 	WithdrawnByName string
@@ -164,7 +180,16 @@ type PointerEvent struct {
 
 // LessonPublication is a lesson's publication state for publishers and
 // administrators.
+//
+// Full (administrators) carries every submitted revision with author,
+// reviewer and withdrawal details and the pointer audit with actors and
+// reasons: the audit log is the administrator's (CAHIER_DES_CHARGES §2.2).
+// Callers without administrator (publishers) get only what restoration
+// needs: the current pointer and the approved revisions' ID, number, title,
+// approval time, ever-published, withdrawn and candidate flags; no names,
+// no reasons, no revisions in review or sent back, and no history.
 type LessonPublication struct {
+	Full                bool
 	LessonID            int64
 	PublicID            string
 	SubjectID           int64
@@ -205,6 +230,13 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 		if err := permissions.RequireAnyTx(ctx, tx, actor, permissions.Publisher, permissions.Administrator); err != nil {
 			return err
 		}
+		switch err := permissions.RequireTx(ctx, tx, actor, permissions.Administrator); {
+		case err == nil:
+			out.Full = true
+		case errors.Is(err, ErrDenied) && !deniedWithCause(err):
+		default:
+			return err
+		}
 		if !ok {
 			return ErrNotFound
 		}
@@ -231,9 +263,9 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 			  LEFT JOIN users rv ON rv.id = d.reviewer_id
 			  LEFT JOIN revision_withdrawals w ON w.revision_id = r.id
 			  LEFT JOIN users wu ON wu.id = w.actor_id
-			 WHERE r.lesson_id = $1 AND r.status <> 'draft'
+			 WHERE r.lesson_id = $1 AND r.status <> 'draft' AND ($3 OR r.status = 'approved')
 			 ORDER BY r.revision_number DESC
-			 LIMIT $2`, out.LessonID, MaxLessonRevisions)
+			 LIMIT $2`, out.LessonID, MaxLessonRevisions, out.Full)
 		if err != nil {
 			return err
 		}
@@ -247,13 +279,22 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 				&r.SubmittedAt, &r.ApprovedBy, &r.ApproverName, &r.ApprovedAt, &r.EverPublished, &r.Candidate,
 				&wActor, &wReason, &wAt, &wName)
 			r.Status = lessons.Status(status)
-			if err == nil && wActor != nil {
+			if err != nil {
+				return r, err
+			}
+			r.Withdrawn = wActor != nil
+			if !out.Full {
+				// Restoration needs no names, reasons or review details.
+				r.AuthorID, r.AuthorName, r.BaseRevisionID, r.SubmittedAt, r.ApprovedBy, r.ApproverName = 0, "", nil, nil, nil, nil
+				return r, nil
+			}
+			if wActor != nil {
 				r.Withdrawal = &WithdrawalRecord{LessonID: out.LessonID, RevisionID: r.ID, ActorID: *wActor, Reason: *wReason, WithdrawnAt: *wAt}
 				r.WithdrawnByName = *wName
 			}
-			return r, err
+			return r, nil
 		})
-		if err != nil {
+		if err != nil || !out.Full {
 			return err
 		}
 		rows, err = tx.Query(ctx, `

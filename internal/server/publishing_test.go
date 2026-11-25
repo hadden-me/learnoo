@@ -39,6 +39,7 @@ type publishQueueBody struct {
 }
 
 type lessonPublicationBody struct {
+	View                string `json:"view"`
 	LessonID            int64  `json:"lessonId"`
 	PublicID            string `json:"publicId"`
 	SubjectID           int64  `json:"subjectId"`
@@ -51,8 +52,8 @@ type lessonPublicationBody struct {
 		Number         int     `json:"number"`
 		Status         string  `json:"status"`
 		Title          string  `json:"title"`
-		AuthorID       int64   `json:"authorId"`
-		AuthorName     string  `json:"authorName"`
+		AuthorID       *int64  `json:"authorId"`
+		AuthorName     *string `json:"authorName"`
 		BaseRevisionID *int64  `json:"baseRevisionId"`
 		SubmittedAt    *string `json:"submittedAt"`
 		ApprovedBy     *int64  `json:"approvedBy"`
@@ -60,6 +61,7 @@ type lessonPublicationBody struct {
 		ApprovedAt     *string `json:"approvedAt"`
 		EverPublished  bool    `json:"everPublished"`
 		Candidate      bool    `json:"candidate"`
+		Withdrawn      bool    `json:"withdrawn"`
 		Withdrawal     *struct {
 			WithdrawnBy     int64  `json:"withdrawnBy"`
 			WithdrawnByName string `json:"withdrawnByName"`
@@ -97,6 +99,29 @@ func setDisplayName(e *env, id int64, name string) {
 	if _, err := e.db.Exec(context.Background(), `UPDATE users SET display_name = $2 WHERE id = $1`, id, name); err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+type publishReadBody struct {
+	Item struct {
+		RevisionID          int64  `json:"revisionId"`
+		LessonPublicID      string `json:"lessonPublicId"`
+		AuthorName          string `json:"authorName"`
+		ApproverName        string `json:"approverName"`
+		PublishedRevisionID *int64 `json:"publishedRevisionId"`
+		StaleBase           bool   `json:"staleBase"`
+	} `json:"item"`
+	Revision revisionBody `json:"revision"`
+}
+
+func (f withdrawFixture) publishRead(id int64) publishReadBody {
+	f.t.Helper()
+	w := f.api(f.publisher, http.MethodGet, publishRevisionPath(id), nil)
+	wantStatus(f.t, "publish read", w, http.StatusOK, "")
+	var b publishReadBody
+	if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil {
+		f.t.Fatal(err)
+	}
+	return b
 }
 
 func lessonPublicationPath(ref any) string { return fmt.Sprintf("/api/lessons/%v/publication", ref) }
@@ -148,6 +173,8 @@ func TestPublishingReadsRequirePermissions(t *testing.T) {
 	wantStatus(t, "admin list", f.api(f.admin, http.MethodGet, "/api/admin/lessons", nil), http.StatusOK, "")
 	wantStatus(t, "queue query", f.api(f.publisher, http.MethodGet, "/api/publish/queue?x=1", nil), http.StatusBadRequest, "invalid_request")
 	wantStatus(t, "list query", f.api(f.admin, http.MethodGet, "/api/admin/lessons?x=1", nil), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "revision query", f.api(f.publisher, http.MethodGet, publishRevisionPath(rev.ID)+"?x=1", nil), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "lesson query", f.api(f.admin, http.MethodGet, lessonPublicationPath(lesson)+"?x=1", nil), http.StatusBadRequest, "invalid_request")
 
 	// The stores recheck inside their transaction, independently of the
 	// middleware: callers without the permission are denied.
@@ -156,7 +183,7 @@ func TestPublishingReadsRequirePermissions(t *testing.T) {
 	if _, err := rs.PublishQueue(ctx, f.author.id); !errors.Is(err, review.ErrDenied) {
 		t.Errorf("store queue as author: %v", err)
 	}
-	if _, err := rs.PublishRevision(ctx, f.admin.id, rev.ID); !errors.Is(err, review.ErrDenied) {
+	if _, _, err := rs.PublishRevision(ctx, f.admin.id, rev.ID); !errors.Is(err, review.ErrDenied) {
 		t.Errorf("store revision as admin: %v", err)
 	}
 	if _, err := rs.LessonPublication(ctx, f.reviewer.id, fmt.Sprint(lesson)); !errors.Is(err, review.ErrDenied) {
@@ -197,9 +224,12 @@ func TestPublishQueueListsApprovedCandidates(t *testing.T) {
 		t.Fatalf("queue item: %+v", it)
 	}
 	// The publisher reads what they publish; nothing else.
-	got := decodeRevision(t, f.api(f.publisher, http.MethodGet, publishRevisionPath(first.ID), nil))
-	if got.ID != first.ID || got.Status != "approved" || !strings.Contains(string(got.Content), "First edition") {
-		t.Fatalf("publisher read: %+v", got)
+	// The publisher reads what they publish, with its queue facts (whatever
+	// the queue's bound): first publication, current pointer, stale base.
+	read := f.publishRead(first.ID)
+	if read.Revision.ID != first.ID || read.Revision.Status != "approved" || !strings.Contains(string(read.Revision.Content), "First edition") ||
+		read.Item.RevisionID != first.ID || read.Item.AuthorName != "TEST Autrice" || read.Item.PublishedRevisionID != nil || read.Item.StaleBase {
+		t.Fatalf("publisher read: %+v", read)
 	}
 	for what, id := range map[string]int64{"in review": inReview.ID, "withdrawn": withdrawn.ID, "missing": first.ID + 1000} {
 		wantStatus(t, "publisher read "+what, f.api(f.publisher, http.MethodGet, publishRevisionPath(id), nil), http.StatusNotFound, "not_found")
@@ -227,6 +257,9 @@ func TestPublishQueueListsApprovedCandidates(t *testing.T) {
 	if len(q.Revisions) != 1 || !q.Revisions[0].StaleBase || q.Revisions[0].PublishedRevisionID != nil {
 		t.Fatalf("stale queue item: %+v", q)
 	}
+	if read := f.publishRead(second.ID); !read.Item.StaleBase || read.Item.PublishedRevisionID != nil {
+		t.Fatalf("stale publish read: %+v", read.Item)
+	}
 	wantStatus(t, "publish stale", f.api(f.publisher, http.MethodPost, publishPath(second.ID), map[string]any{}), http.StatusConflict, "stale_base")
 }
 
@@ -247,23 +280,23 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 	onlyReview := f.submittedLesson(f.author, "Only in review")
 
 	byID := f.lessonPublication(f.admin, lesson)
-	byPublic := f.lessonPublication(f.publisher, byID.PublicID)
+	byPublic := f.lessonPublication(f.admin, byID.PublicID)
 	a, _ := json.Marshal(byID)
 	b, _ := json.Marshal(byPublic)
 	if string(a) != string(b) {
 		t.Fatalf("by ID and by public ID differ:\n%s\n%s", a, b)
 	}
 	if byID.LessonID != lesson || byID.SubjectCode != "simulated-math" || byID.Language != "fr" || byID.Archived ||
-		byID.PublishedRevisionID == nil || *byID.PublishedRevisionID != first.ID || len(byID.Revisions) != 2 {
+		byID.PublishedRevisionID == nil || *byID.PublishedRevisionID != first.ID || len(byID.Revisions) != 2 || byID.View != "administrator" {
 		t.Fatalf("lesson: %s", a)
 	}
 	r2, r1 := byID.Revisions[0], byID.Revisions[1]
 	if r2.ID != second.ID || r2.Number != 2 || r2.Status != "approved" || !r2.EverPublished || r2.Candidate ||
-		r2.Withdrawal == nil || r2.Withdrawal.Reason != "TEST erreur" || r2.Withdrawal.WithdrawnByName != "TEST Admin" ||
+		!r2.Withdrawn || r2.Withdrawal == nil || r2.Withdrawal.Reason != "TEST erreur" || r2.Withdrawal.WithdrawnByName != "TEST Admin" ||
 		r2.BaseRevisionID == nil || *r2.BaseRevisionID != first.ID {
 		t.Fatalf("second: %+v", r2)
 	}
-	if r1.ID != first.ID || !r1.EverPublished || r1.Withdrawal != nil || r1.ApproverName == nil || r1.ApprovedAt == nil || r1.SubmittedAt == nil {
+	if r1.ID != first.ID || !r1.EverPublished || r1.Withdrawn || r1.Withdrawal != nil || r1.AuthorName == nil || r1.ApproverName == nil || r1.ApprovedAt == nil || r1.SubmittedAt == nil {
 		t.Fatalf("first: %+v", r1)
 	}
 	var actions []string
@@ -279,6 +312,33 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 	if h := byID.History[0]; h.ActorName != "TEST Éditeur" || h.Reason != nil || *h.PublishedRevisionID != first.ID {
 		t.Fatalf("restoration event: %+v", h)
 	}
+	// Publishers get only what restoration needs: no names, reasons,
+	// history, or revisions that are in review or were sent back.
+	third := f.successorRev(lesson, "Third in review")
+	if full := f.lessonPublication(f.admin, lesson); len(full.Revisions) != 3 || full.Revisions[0].ID != third.ID {
+		t.Fatalf("administrator view with a revision in review: %+v", full.Revisions)
+	}
+	w := f.api(f.publisher, http.MethodGet, lessonPublicationPath(lesson), nil)
+	wantStatus(t, "publisher view", w, http.StatusOK, "")
+	for _, secret := range []string{"TEST erreur", "TEST urgence", "TEST Admin", "TEST Éditeur", "Simulated Student", "Third in review"} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Errorf("publisher view reveals %q: %s", secret, w.Body)
+		}
+	}
+	pv := decodeInto[lessonPublicationBody](t, w)
+	if pv.View != "publisher" || len(pv.History) != 0 || len(pv.Revisions) != 2 || *pv.PublishedRevisionID != first.ID {
+		t.Fatalf("publisher view: %+v", pv)
+	}
+	p2, p1 := pv.Revisions[0], pv.Revisions[1]
+	if p2.ID != second.ID || !p2.Withdrawn || p2.Withdrawal != nil || p2.AuthorID != nil || p2.AuthorName != nil || p2.ApproverName != nil ||
+		p2.ApprovedBy != nil || p2.SubmittedAt != nil || p2.BaseRevisionID != nil || p2.ApprovedAt == nil || !p2.EverPublished ||
+		p1.ID != first.ID || p1.Withdrawn || !p1.EverPublished || p1.Title != "First edition" || p1.Candidate {
+		t.Fatalf("publisher revisions: %+v", pv.Revisions)
+	}
+	if lp, err := review.NewStore(f.db).LessonPublication(context.Background(), f.publisher.id, fmt.Sprint(lesson)); err != nil || lp.Full || lp.History != nil && len(lp.History) != 0 {
+		t.Fatalf("store publisher view: %+v %v", lp, err)
+	}
+
 	// Drafts are never listed.
 	draft := f.createLesson(f.author, "Draft only")
 	if lp := f.lessonPublication(f.admin, draft.LessonID); len(lp.Revisions) != 0 || len(lp.History) != 0 {
@@ -288,7 +348,7 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 		wantStatus(t, "ref "+ref, f.api(f.admin, http.MethodGet, lessonPublicationPath(ref), nil), http.StatusNotFound, "not_found")
 	}
 
-	w := f.api(f.admin, http.MethodGet, "/api/admin/lessons", nil)
+	w = f.api(f.admin, http.MethodGet, "/api/admin/lessons", nil)
 	wantStatus(t, "admin list", w, http.StatusOK, "")
 	wantPrivateNoStore(t, "admin list", w)
 	list := decodeInto[adminLessonsBody](t, w)
@@ -307,4 +367,33 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 		*list.Lessons[0].PendingRevisionID != onlyReview.ID || list.Lessons[0].PublishedRevisionID != nil || list.Lessons[0].Title != "Only in review" {
 		t.Fatalf("admin list with candidate: %+v", list)
 	}
+}
+
+// An archived lesson's approved revision is never offered for publication
+// or restoration (archival has no code path yet; set directly).
+func TestArchivedLessonIsNotPublishable(t *testing.T) {
+	f := newWithdraw(t)
+	pending := f.approvedRev(f.submittedLesson(f.author, "Pending then archived"))
+	first, second := f.firstAndSecond()
+	if q := f.publishQueue(); len(q.Revisions) != 1 || q.Revisions[0].RevisionID != pending.ID {
+		t.Fatalf("queue before archival: %+v", q)
+	}
+	for _, l := range []int64{pending.LessonID, first.LessonID} {
+		if _, err := f.db.Exec(context.Background(), `UPDATE lessons SET archived_at = now() WHERE id = $1`, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if q := f.publishQueue(); len(q.Revisions) != 0 {
+		t.Fatalf("queue lists an archived lesson: %+v", q)
+	}
+	wantStatus(t, "publish read archived", f.api(f.publisher, http.MethodGet, publishRevisionPath(pending.ID), nil), http.StatusNotFound, "not_found")
+	// The publication view says archived, which hides restore offers in the
+	// Studio; the server refuses restoration anyway.
+	for _, u := range []apiUser{f.publisher, f.admin} {
+		if lp := f.lessonPublication(u, first.LessonID); !lp.Archived {
+			t.Fatalf("archived flag: %+v", lp)
+		}
+	}
+	wantStatus(t, "restore archived", f.api(f.publisher, http.MethodPost, restorePath(first.ID),
+		map[string]any{"expectedPublishedRevisionId": second.ID}), http.StatusConflict, "archived")
 }

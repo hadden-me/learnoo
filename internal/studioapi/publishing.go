@@ -55,9 +55,25 @@ type publishQueueItemJSON struct {
 	StaleBase           bool      `json:"staleBase"`
 }
 
-func (h *Handlers) publishQueue(w http.ResponseWriter, r *http.Request) {
+func toQueueItemJSON(it review.PublishQueueItem) publishQueueItemJSON {
+	return publishQueueItemJSON{RevisionID: it.RevisionID, LessonID: it.LessonID, LessonPublicID: it.LessonPublicID,
+		Number: it.Number, Title: it.Title, Language: it.Language, SubjectID: it.SubjectID, SubjectCode: it.SubjectCode,
+		AuthorID: it.AuthorID, AuthorName: it.AuthorName, ApprovedBy: it.ApprovedBy, ApproverName: it.ApproverName,
+		ApprovedAt: it.ApprovedAt, BaseRevisionID: it.BaseRevisionID, PublishedRevisionID: it.PublishedRevisionID,
+		StaleBase: it.Stale()}
+}
+
+// noQuery refuses any query parameter on endpoints that take none.
+func noQuery(w http.ResponseWriter, r *http.Request) bool {
 	if len(r.URL.RawQuery) > 0 {
 		badRequest(w, "This endpoint takes no query parameters.")
+		return false
+	}
+	return true
+}
+
+func (h *Handlers) publishQueue(w http.ResponseWriter, r *http.Request) {
+	if !noQuery(w, r) {
 		return
 	}
 	items, err := h.Review.PublishQueue(r.Context(), actor(r))
@@ -67,29 +83,31 @@ func (h *Handlers) publishQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]publishQueueItemJSON, len(items))
 	for i, it := range items {
-		out[i] = publishQueueItemJSON{RevisionID: it.RevisionID, LessonID: it.LessonID, LessonPublicID: it.LessonPublicID,
-			Number: it.Number, Title: it.Title, Language: it.Language, SubjectID: it.SubjectID, SubjectCode: it.SubjectCode,
-			AuthorID: it.AuthorID, AuthorName: it.AuthorName, ApprovedBy: it.ApprovedBy, ApproverName: it.ApproverName,
-			ApprovedAt: it.ApprovedAt, BaseRevisionID: it.BaseRevisionID, PublishedRevisionID: it.PublishedRevisionID,
-			StaleBase: it.Stale()}
+		out[i] = toQueueItemJSON(it)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Revisions []publishQueueItemJSON `json:"revisions"`
 	}{out})
 }
 
+// publishRevision answers {"item": queue item, "revision": revision object}.
 func (h *Handlers) publishRevision(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseID(r.PathValue("revisionId"))
-	if !ok {
-		notFound(w)
+	if !noQuery(w, r) {
 		return
 	}
-	rev, err := h.Review.PublishRevision(r.Context(), actor(r), id)
+	id, ok := parseID(r.PathValue("revisionId"))
+	if !ok {
+		id = 0 // the store checks the permission first, then answers 404
+	}
+	item, rev, err := h.Review.PublishRevision(r.Context(), actor(r), id)
 	if err != nil {
 		h.writeReadError(w, "publish revision", err)
 		return
 	}
-	h.writeRevision(w, http.StatusOK, rev)
+	writeJSON(w, http.StatusOK, struct {
+		Item     publishQueueItemJSON `json:"item"`
+		Revision revisionJSON         `json:"revision"`
+	}{toQueueItemJSON(item), toRevisionJSON(rev)})
 }
 
 type withdrawalInfoJSON struct {
@@ -104,8 +122,8 @@ type lessonRevisionJSON struct {
 	Number         int                 `json:"number"`
 	Status         lessons.Status      `json:"status"`
 	Title          string              `json:"title"`
-	AuthorID       int64               `json:"authorId"`
-	AuthorName     string              `json:"authorName"`
+	AuthorID       *int64              `json:"authorId"`
+	AuthorName     *string             `json:"authorName"`
 	BaseRevisionID *int64              `json:"baseRevisionId"`
 	SubmittedAt    *time.Time          `json:"submittedAt"`
 	ApprovedBy     *int64              `json:"approvedBy"`
@@ -113,6 +131,7 @@ type lessonRevisionJSON struct {
 	ApprovedAt     *time.Time          `json:"approvedAt"`
 	EverPublished  bool                `json:"everPublished"`
 	Candidate      bool                `json:"candidate"`
+	Withdrawn      bool                `json:"withdrawn"`
 	Withdrawal     *withdrawalInfoJSON `json:"withdrawal"`
 }
 
@@ -127,6 +146,8 @@ type pointerEventJSON struct {
 }
 
 type lessonPublicationJSON struct {
+	// View is "administrator" (full) or "publisher" (what restoration needs).
+	View                string               `json:"view"`
 	LessonID            int64                `json:"lessonId"`
 	PublicID            string               `json:"publicId"`
 	SubjectID           int64                `json:"subjectId"`
@@ -139,6 +160,9 @@ type lessonPublicationJSON struct {
 }
 
 func (h *Handlers) lessonPublication(w http.ResponseWriter, r *http.Request) {
+	if !noQuery(w, r) {
+		return
+	}
 	// A malformed reference is a 404 like a missing lesson; the store checks
 	// the permission first either way.
 	lp, err := h.Review.LessonPublication(r.Context(), actor(r), r.PathValue("lesson"))
@@ -146,14 +170,22 @@ func (h *Handlers) lessonPublication(w http.ResponseWriter, r *http.Request) {
 		h.writeReadError(w, "lesson publication", err)
 		return
 	}
-	out := lessonPublicationJSON{LessonID: lp.LessonID, PublicID: lp.PublicID, SubjectID: lp.SubjectID,
+	view := "publisher"
+	if lp.Full {
+		view = "administrator"
+	}
+	out := lessonPublicationJSON{View: view, LessonID: lp.LessonID, PublicID: lp.PublicID, SubjectID: lp.SubjectID,
 		SubjectCode: lp.SubjectCode, Language: lp.Language, Archived: lp.Archived, PublishedRevisionID: lp.PublishedRevisionID,
 		Revisions: make([]lessonRevisionJSON, len(lp.Revisions)), History: make([]pointerEventJSON, len(lp.History))}
 	for i, rv := range lp.Revisions {
 		out.Revisions[i] = lessonRevisionJSON{ID: rv.ID, Number: rv.Number, Status: rv.Status, Title: rv.Title,
-			AuthorID: rv.AuthorID, AuthorName: rv.AuthorName, BaseRevisionID: rv.BaseRevisionID, SubmittedAt: rv.SubmittedAt,
+			BaseRevisionID: rv.BaseRevisionID, SubmittedAt: rv.SubmittedAt,
 			ApprovedBy: rv.ApprovedBy, ApproverName: rv.ApproverName, ApprovedAt: rv.ApprovedAt,
-			EverPublished: rv.EverPublished, Candidate: rv.Candidate}
+			EverPublished: rv.EverPublished, Candidate: rv.Candidate, Withdrawn: rv.Withdrawn}
+		if lp.Full {
+			id, name := rv.AuthorID, rv.AuthorName
+			out.Revisions[i].AuthorID, out.Revisions[i].AuthorName = &id, &name
+		}
 		if wd := rv.Withdrawal; wd != nil {
 			out.Revisions[i].Withdrawal = &withdrawalInfoJSON{WithdrawnBy: wd.ActorID, WithdrawnByName: rv.WithdrawnByName,
 				Reason: wd.Reason, WithdrawnAt: wd.WithdrawnAt}
@@ -183,8 +215,7 @@ type adminLessonJSON struct {
 }
 
 func (h *Handlers) adminLessons(w http.ResponseWriter, r *http.Request) {
-	if len(r.URL.RawQuery) > 0 {
-		badRequest(w, "This endpoint takes no query parameters.")
+	if !noQuery(w, r) {
 		return
 	}
 	list, err := h.Review.AdminLessons(r.Context(), actor(r))
