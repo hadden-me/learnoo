@@ -88,7 +88,7 @@ func TestPublicationAndAuditAreAtomic(t *testing.T) {
 	rev := e.submitted(e.author, e.subject, "Published")
 	before := e.state(rev)
 	wantGuard(t, "audit of an unapproved revision", e.inTx(auditSQL(rev.LessonID, rev.ID, "NULL", publisher), pointerSQL(rev.LessonID, fmt.Sprint(rev.ID))),
-		"only an approved revision")
+		"is not an approved revision of lesson")
 	if _, err := e.review.Approve(e.ctx, reviewer, rev.ID, ""); err != nil {
 		t.Fatal(err)
 	}

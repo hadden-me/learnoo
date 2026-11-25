@@ -281,6 +281,11 @@ func TestPublishingStillRequiresApproval(t *testing.T) {
 	requested := f.submitted("Changes requested")
 	f.mustRequestChanges(requested.ID)
 	wantSQLState(t, "publish changes requested", f.publish(requested.LessonID, requested.ID), "LRN01")
+	// Raw pointer updates without an audit row reach the 0004 approved-only
+	// guard first.
+	for name, r := range map[string]lessons.Revision{"draft": draft, "in review": inReview, "changes requested": requested} {
+		wantGuard(t, "raw pointer to "+name, f.exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, r.ID, r.LessonID), approvedOnly)
+	}
 	for _, id := range []int64{draft.ID, inReview.ID, requested.ID} {
 		if f.closedAt(id) != nil {
 			t.Fatalf("rejected publication closed revision %d", id)

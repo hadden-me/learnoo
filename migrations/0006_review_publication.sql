@@ -197,7 +197,8 @@ BEGIN
     EXECUTE format('SELECT status FROM %I.lesson_revisions WHERE id = $1 AND lesson_id = $2 FOR SHARE', TG_TABLE_SCHEMA)
        INTO st USING NEW.revision_id, NEW.lesson_id;
     IF st IS DISTINCT FROM 'approved' THEN
-        RAISE EXCEPTION 'only an approved revision of this lesson can be published' USING ERRCODE = 'LRN01';
+        RAISE EXCEPTION 'publication audit: revision % is not an approved revision of lesson %', NEW.revision_id, NEW.lesson_id
+            USING ERRCODE = 'LRN01';
     END IF;
     EXECUTE format('SELECT EXISTS (
                         SELECT 1 FROM %1$I.user_permissions p JOIN %1$I.users u ON u.id = p.user_id

@@ -190,20 +190,36 @@ func TestTranslations(t *testing.T) {
 	}
 }
 
+// approvedOnly is the message of the 0004 pointer guard
+// (zz_guard_lessons_published_approved). It fires before the 0006 audit
+// guard on the pointer (trigger name order), so a raw pointer update without
+// an audit row exercises it alone.
+const approvedOnly = "only an approved revision of this lesson can be published"
+
 func TestPublishedPointerRequiresApprovedRevision(t *testing.T) {
 	f := newFixture(t)
 	publish := f.publish
+	raw := func(lesson, rev int64) error {
+		return f.exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev, lesson)
+	}
 	rev := f.lesson("Pointer")
 	wantSQLState(t, "draft", publish(rev.LessonID, rev.ID), "LRN01")
+	wantGuard(t, "draft, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
 	wantSQLState(t, "in review", publish(rev.LessonID, rev.ID), "LRN01")
+	wantGuard(t, "in review, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 	f.mustRequestChanges(rev.ID)
 	wantSQLState(t, "changes requested", publish(rev.LessonID, rev.ID), "LRN01")
+	wantGuard(t, "changes requested, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 
 	other := f.submitted("Other")
 	f.mustApprove(other.ID)
 	wantSQLState(t, "approved revision of another lesson", publish(rev.LessonID, other.ID), "LRN01")
+	wantGuard(t, "approved revision of another lesson, raw pointer", raw(rev.LessonID, other.ID), approvedOnly)
 	wantSQLState(t, "unknown revision", publish(rev.LessonID, 999999), "LRN01")
+	wantGuard(t, "unknown revision, raw pointer", raw(rev.LessonID, 999999), approvedOnly)
+	// Without an audit row even an approved revision is refused, by the 0006 guard.
+	wantGuard(t, "approved, raw pointer", raw(other.LessonID, other.ID), "requires a publication audit row")
 	if err := publish(other.LessonID, other.ID); err != nil {
 		t.Fatalf("approved revision rejected: %v", err)
 	}
