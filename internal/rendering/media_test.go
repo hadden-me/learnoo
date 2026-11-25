@@ -113,8 +113,37 @@ func TestFixturesIgnoreMediaURL(t *testing.T) {
 		if err != nil || a != b {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if !strings.Contains(string(a.Body), `width="640" height="360" loading="lazy"><figcaption>`) && name == "complex-numbers" {
-			t.Fatalf("fixture image markup changed: %s", a.Body)
+		// Issue #57: the alt text is never repeated as a caption.
+		if name == "complex-numbers" && !strings.Contains(string(a.Body), `width="640" height="360" loading="lazy"></figure>`) {
+			t.Fatalf("fixture image without caption: %s", a.Body)
 		}
+	}
+}
+
+// Issue #57: alternative text and caption are separate. A figure caption is
+// rendered only from the optional caption, never from the alt text, for
+// fixture and uploaded images alike.
+func TestAltTextIsNotRepeatedAsCaption(t *testing.T) {
+	doc := mediaDoc(
+		Node{Type: "image", Src: "/static/complex-plane.svg", Alt: "Plan"},
+		Node{Type: "image", Src: "media:4", Alt: "Schéma"},
+		Node{Type: "image", Src: "/static/complex-plane.svg", Alt: "Plan annoté", Caption: "Le plan complexe"},
+	)
+	parts, err := RenderLesson(doc, MediaPrefix("/api/media/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(parts.Body)
+	if strings.Count(got, "<figcaption>") != 1 || !strings.Contains(got, "<figcaption>Le plan complexe</figcaption>") {
+		t.Fatalf("captions: %s", got)
+	}
+	for _, alt := range []string{"Plan", "Schéma", "Plan annoté"} {
+		if strings.Contains(got, ">"+alt+"<") {
+			t.Errorf("alt %q repeated as text: %s", alt, got)
+		}
+	}
+	page, err := Render(Document{SchemaVersion: 1, Status: "unreviewed", Language: "fr", Title: "TEST", Blocks: doc.Blocks[:1]})
+	if err != nil || strings.Contains(string(page), "<figcaption>") {
+		t.Fatalf("renderer page: %v %s", err, page)
 	}
 }
