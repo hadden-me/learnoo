@@ -1,11 +1,14 @@
 import { createContext, useContext } from 'react';
 import type { Api, Session } from './api/client';
+import type { Spaces } from './spaces';
 
 export interface Studio {
   api: Api;
   session: Session;
   /** False when the server refused the author listing (403): the account cannot author. */
   isAuthor: boolean;
+  /** The spaces the server lets this account use (spaces.ts). */
+  spaces: Spaces;
   /** True after a 401, or after another account signed in: no writes; edits stay on screen until the author resumes. */
   expired: boolean;
   /** The browser's session belongs to another account than this page's. */

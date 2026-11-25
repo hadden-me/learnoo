@@ -17,8 +17,9 @@ import (
 // own lessons, and the canonical preview.
 //
 // The catalogue is read by authors and by reviewers of any subject (403
-// otherwise). The lesson listing and the preview need the author
-// permission; the listing rechecks it inside its transaction. Every
+// otherwise). The lesson listing needs the author permission and rechecks
+// it inside its transaction; the preview is open to every account with
+// Studio access (author, publisher, administrator or any reviewer). Every
 // response is private and never stored.
 
 // privateNoStore is the Cache-Control of the Studio endpoints.
@@ -39,7 +40,13 @@ func (h *Handlers) registerStudio(mux *http.ServeMux) {
 	chain("GET /api/catalogue/subjects", catalogueReader, h.listSubjects)
 	chain("GET /api/catalogue/subjects/{code}/chapters", catalogueReader, h.listChapters)
 	chain("GET /api/lessons/mine", author, h.listOwned)
-	chain("POST /api/preview", author, h.preview)
+	// Every account with Studio access (the /studio page rule) may preview:
+	// reviewers, publishers and administrators read submitted revisions
+	// through it. It renders the posted document and stores nothing.
+	studioAccess := func(next http.Handler) http.Handler {
+		return h.Perms.RequireReviewerOrAny([]permissions.Permission{permissions.Author, permissions.Publisher, permissions.Administrator}, next)
+	}
+	chain("POST /api/preview", studioAccess, h.preview)
 }
 
 // ---- catalogue ----

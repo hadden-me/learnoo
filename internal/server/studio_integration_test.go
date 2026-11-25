@@ -342,8 +342,12 @@ func TestPreviewAuthorizationAndValidation(t *testing.T) {
 	doc := map[string]json.RawMessage{"content": readerDoc("TEST Aperçu", "fr")}
 	path := "/api/preview"
 	wantStatus(t, "anonymous", f.api(apiUser{}, http.MethodPost, path, doc), http.StatusUnauthorized, "unauthenticated")
-	for name, u := range map[string]apiUser{"student": f.student, "reviewer": f.reviewer, "publisher": f.publisher, "admin": f.admin} {
-		wantStatus(t, name, f.api(u, http.MethodPost, path, doc), http.StatusForbidden, "forbidden")
+	wantStatus(t, "student", f.api(f.student, http.MethodPost, path, doc), http.StatusForbidden, "forbidden")
+	// Every account with Studio access previews (issue #66 second slice):
+	// reviewers, publishers and administrators read submitted revisions
+	// through it.
+	for _, u := range []apiUser{f.reviewer, f.publisher, f.admin} {
+		previewOf(t, f.api(u, http.MethodPost, path, doc))
 	}
 	noCSRF := apiUser{id: f.author.id, cookie: f.author.cookie}
 	wantStatus(t, "no CSRF token", f.api(noCSRF, http.MethodPost, path, doc), http.StatusForbidden, "")

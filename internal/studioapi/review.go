@@ -77,6 +77,7 @@ type queueItemJSON struct {
 	SubjectID   int64     `json:"subjectId"`
 	ChapterID   *int64    `json:"chapterId"`
 	AuthorID    int64     `json:"authorId"`
+	AuthorName  string    `json:"authorName"`
 	SubmittedAt time.Time `json:"submittedAt"`
 }
 
@@ -113,7 +114,7 @@ func (h *Handlers) reviewQueue(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		out = append(out, queueItemJSON{RevisionID: it.RevisionID, LessonID: it.LessonID, Number: it.Number,
 			Title: it.Title, Language: it.Language, SubjectID: it.SubjectID, ChapterID: it.ChapterID,
-			AuthorID: it.AuthorID, SubmittedAt: it.SubmittedAt})
+			AuthorID: it.AuthorID, AuthorName: it.AuthorName, SubmittedAt: it.SubmittedAt})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revisions": out})
 }

@@ -54,6 +54,18 @@ func TestBrowserReaderServer(t *testing.T) {
 	// account signing in on the same browser must never receive a stale tab's writes).
 	second := f.newUser("test-author-two", f.subject, permissions.Author)
 	f.setName(second.id, "TEST Auteur Deux")
+	// Studio accounts for the editorial journey (tests/browser-reader/
+	// editorial.spec.mjs), all simulated and labelled TEST, with the test
+	// password: test-author, test-reviewer (reviewer of test-math),
+	// test-publisher and test-admin come from newReaderOptions; added here
+	// are a second reviewer of test-math, a reviewer of another subject only,
+	// and an author who also reviews test-math (self-review is refused).
+	f.setName(f.publisher.id, "TEST Éditrice Sonia")
+	f.setName(f.admin.id, "TEST Admin Lina")
+	other := f.newSubject("test-physique")
+	f.setName(f.newUser("test-reviewer-b", f.subject, permissions.Reviewer).id, "TEST Relectrice Nadia")
+	f.setName(f.newUser("test-reviewer-physique", other, permissions.Reviewer).id, "TEST Relecteur Physique")
+	f.setName(f.newUser("test-author-reviewer", f.subject, permissions.Author, permissions.Reviewer).id, "TEST Autrice relectrice")
 	ch := f.chapter(f.subject, "test-chapter")
 	f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
 	f.publish(f.approved(0, readerDoc("TEST درس تجريبي", "ar",
