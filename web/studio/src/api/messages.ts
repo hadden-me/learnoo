@@ -44,9 +44,15 @@ const MESSAGES: Record<string, string> = {
 
 const HEIF_TYPES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'];
 
-/** A HEIC/HEIF photo, which the server refuses (`unsupported_heic`). Browsers may leave the type empty, so the extension counts too. */
-export const isHeif = (file: { type: string; name: string }): boolean =>
-  HEIF_TYPES.includes(file.type.toLowerCase()) || /\.(heic|heif)$/i.test(file.name);
+/**
+ * A HEIC/HEIF photo, which the server refuses (`unsupported_heic`). The extension counts only when the browser
+ * gives no type (empty or application/octet-stream); a file it identifies as another type is left to the other checks.
+ */
+export const isHeif = (file: { type: string; name: string }): boolean => {
+  const type = file.type.toLowerCase();
+  if (HEIF_TYPES.includes(type)) return true;
+  return (type === '' || type === 'application/octet-stream') && /\.(heic|heif)$/i.test(file.name);
+};
 
 /** A French sentence for the user; includes the validator's reason for invalid content. */
 export function describeError(error: unknown): string {

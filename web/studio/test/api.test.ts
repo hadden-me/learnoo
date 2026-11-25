@@ -134,6 +134,10 @@ describe('API client', () => {
     expect(isHeif({ type: 'image/HEIF', name: 'photo' })).toBe(true);
     expect(isHeif({ type: '', name: 'IMG_0001.heic' })).toBe(true);
     expect(isHeif({ type: 'image/jpeg', name: 'IMG_0001.jpg' })).toBe(false);
+    expect(isHeif({ type: 'application/octet-stream', name: 'IMG_0001.HEIF' })).toBe(true);
+    // A typed file is judged by its type, not its name.
+    expect(isHeif({ type: 'image/jpeg', name: 'converted.heic' })).toBe(false);
+    expect(isHeif({ type: 'image/png', name: 'photo.heif' })).toBe(false);
   });
 });
 
