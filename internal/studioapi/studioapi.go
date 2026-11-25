@@ -19,7 +19,6 @@ import (
 	"mime"
 	"net/http"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -131,13 +130,15 @@ type createLessonRequest struct {
 	fieldsJSON
 }
 
+// ExpectedVersion is a pointer only to tell a missing key from 0; api:"nonnull"
+// makes strictDecode refuse null for it like any other required value.
 type saveRequest struct {
-	ExpectedVersion *int `json:"expectedVersion"`
+	ExpectedVersion *int `json:"expectedVersion" api:"nonnull"`
 	fieldsJSON
 }
 
 type submitRequest struct {
-	ExpectedVersion *int `json:"expectedVersion"`
+	ExpectedVersion *int `json:"expectedVersion" api:"nonnull"`
 }
 
 // Responses.
@@ -196,7 +197,8 @@ var (
 
 // decodeJSON reads a strict, size-limited JSON body into v: exactly one JSON
 // object, whose top-level keys are each in allowed (case-sensitive) and
-// appear once, with nothing after it. It writes the error response and
+// appear once, with nothing after it, and whose values follow strictDecode's
+// null and type rules. It writes the error response and
 // returns false on failure.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any, allowed []string) bool {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -219,51 +221,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any, allowed []string)
 		return false
 	}
 	return true
-}
-
-// strictDecode implements decodeJSON's rules on data. Error messages name
-// only keys from the request, never Go types.
-func strictDecode(data []byte, v any, allowed []string) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return errors.New("expected one JSON object")
-	}
-	seen := map[string]bool{}
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return errors.New("malformed JSON")
-		}
-		key, _ := tok.(string)
-		if !slices.Contains(allowed, key) {
-			return fmt.Errorf("unknown field %q", truncateKey(key))
-		}
-		if seen[key] {
-			return fmt.Errorf("duplicate field %q", key)
-		}
-		seen[key] = true
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
-			return errors.New("malformed JSON")
-		}
-	}
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
-		return errors.New("malformed JSON")
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return errors.New("unexpected data after the JSON object")
-	}
-	// Keys are now known to be exact and unique; decode the values.
-	full := json.NewDecoder(bytes.NewReader(data))
-	full.DisallowUnknownFields()
-	if err := full.Decode(v); err != nil {
-		var typeErr *json.UnmarshalTypeError
-		if errors.As(err, &typeErr) && typeErr.Field != "" {
-			return fmt.Errorf("field %q has the wrong type", typeErr.Field)
-		}
-		return errors.New("a field has the wrong type")
-	}
-	return nil
 }
 
 // containsNUL reports whether any JSON string (key or value) in data

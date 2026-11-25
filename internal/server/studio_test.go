@@ -628,6 +628,13 @@ func TestStudioInvalidRequestsStoreNothing(t *testing.T) {
 		"unknown field":      {lesson(map[string]any{"title": "Not a field"}), "", 400, "invalid_request"},
 		"missing content":    {map[string]any{"subjectId": f.subject, "language": "fr"}, "", 400, "invalid_request"},
 		"null content":       {lesson(map[string]any{"content": nil}), "", 400, "invalid_request"},
+		"null prerequisites": {lesson(map[string]any{"prerequisites": nil}), "", 400, "invalid_request"},
+		"null media list":    {lesson(map[string]any{"mediaIds": nil}), "", 400, "invalid_request"},
+		"null media element": {lesson(map[string]any{"mediaIds": []any{nil}}), "", 400, "invalid_request"},
+		"null subject":       {lesson(map[string]any{"subjectId": nil}), "", 400, "invalid_request"},
+		"null language":      {lesson(map[string]any{"language": nil}), "", 400, "invalid_request"},
+		"fractional media":   {[]byte(`{"subjectId":1,"language":"fr","content":{},"mediaIds":[1.0]}`), "", 400, "invalid_request"},
+		"fractional subject": {[]byte(`{"subjectId":1.0,"language":"fr","content":{}}`), "", 400, "invalid_request"},
 		"missing subject":    {map[string]any{"language": "fr", "content": testDoc("Fine", "fr")}, "", 400, "invalid_request"},
 		"malformed JSON":     {[]byte(`{"subjectId": 1,`), "", 400, "invalid_request"},
 		"two JSON values":    {[]byte(`{} {}`), "", 400, "invalid_request"},
@@ -652,11 +659,13 @@ func TestStudioInvalidRequestsStoreNothing(t *testing.T) {
 		status int
 		code   string
 	}{
-		"invalid content":   {map[string]any{"expectedVersion": 1, "content": bad}, 422, "invalid_content"},
-		"language mismatch": {map[string]any{"expectedVersion": 1, "content": testDoc("Ar", "ar")}, 422, "language_mismatch"},
-		"unknown media":     {map[string]any{"expectedVersion": 1, "content": testDoc("M", "fr"), "mediaIds": []int64{424242}}, 422, "unknown_media"},
-		"missing version":   {map[string]any{"content": testDoc("V", "fr")}, 400, "invalid_request"},
-		"oversized":         {map[string]any{"expectedVersion": 1, "content": big}, 413, "too_large"},
+		"invalid content":    {map[string]any{"expectedVersion": 1, "content": bad}, 422, "invalid_content"},
+		"language mismatch":  {map[string]any{"expectedVersion": 1, "content": testDoc("Ar", "ar")}, 422, "language_mismatch"},
+		"unknown media":      {map[string]any{"expectedVersion": 1, "content": testDoc("M", "fr"), "mediaIds": []int64{424242}}, 422, "unknown_media"},
+		"missing version":    {map[string]any{"content": testDoc("V", "fr")}, 400, "invalid_request"},
+		"null version":       {map[string]any{"expectedVersion": nil, "content": testDoc("V", "fr")}, 400, "invalid_request"},
+		"null prerequisites": {map[string]any{"expectedVersion": 1, "content": testDoc("V", "fr"), "prerequisites": nil}, 400, "invalid_request"},
+		"oversized":          {map[string]any{"expectedVersion": 1, "content": big}, 413, "too_large"},
 	} {
 		wantStatus(t, "save "+name, f.api(f.author, http.MethodPut, revPath(source.ID), c.body), c.status, c.code)
 	}
@@ -1142,6 +1151,8 @@ func TestStudioStrictJSON(t *testing.T) {
 		"duplicate key":       `{"expectedVersion":1,"expectedVersion":1}`,
 		"array":               `[{"expectedVersion":1}]`,
 		"wrong type":          `{"expectedVersion":"1"}`,
+		"null version":        `{"expectedVersion":null}`,
+		"fractional version":  `{"expectedVersion":1.0}`,
 		"unknown key":         `{"expectedVersion":1,"x":1}`,
 	} {
 		w := f.api(f.author, http.MethodPost, revPath(rev.ID)+"/submit", []byte(body))
@@ -1149,6 +1160,12 @@ func TestStudioStrictJSON(t *testing.T) {
 		if strings.Contains(errorMessage(t, w), "Go ") || strings.Contains(errorMessage(t, w), "studioapi") {
 			t.Fatalf("%s: message leaks Go details: %s", name, w.Body)
 		}
+	}
+	// Errors name the JSON key, never the Go field (issue #51).
+	w := f.api(f.author, http.MethodPut, revPath(rev.ID), []byte(`{"expectedVersion":1,"content":`+string(doc)+`,"mediaIds":[1.0]}`))
+	wantStatus(t, "fractional media id", w, http.StatusBadRequest, "invalid_request")
+	if msg := errorMessage(t, w); !strings.Contains(msg, `"mediaIds"`) || strings.Contains(msg, "fieldsJSON") || strings.Contains(msg, "int64") {
+		t.Fatalf("fractional media id: message %q", msg)
 	}
 	for name, body := range map[string]string{
 		"case-folded content key": `{"expectedVersion":1,"Content":` + string(doc) + `}`,
