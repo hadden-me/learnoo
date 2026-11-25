@@ -1,5 +1,4 @@
-// Package users stores accounts. It holds no roles or permissions: those
-// wait for the recorded role-model decision (LRN-005 permission slice).
+// Package users stores accounts. Permissions live in internal/permissions.
 package users
 
 import (
@@ -46,8 +45,14 @@ func NormalizeEmail(email string) (string, error) {
 	return e, nil
 }
 
-// Create inserts an account with an already-computed password hash.
-func Create(ctx context.Context, db *pgxpool.Pool, email, displayName, passwordHash string) (User, error) {
+// Querier is satisfied by *pgxpool.Pool and pgx.Tx.
+type Querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Create inserts an account with an already-computed password hash. db may
+// be a pool or a transaction.
+func Create(ctx context.Context, db Querier, email, displayName, passwordHash string) (User, error) {
 	e, err := NormalizeEmail(email)
 	if err != nil {
 		return User{}, err
@@ -86,4 +91,25 @@ func Credentials(ctx context.Context, db *pgxpool.Pool, normalizedEmail string) 
 	}
 	u.Disabled = disabledAt != nil
 	return u, hash, nil
+}
+
+// ByEmail returns the account with the given address (normalized first),
+// or ErrNotFound.
+func ByEmail(ctx context.Context, db Querier, email string) (User, error) {
+	e, err := NormalizeEmail(email)
+	if err != nil {
+		return User{}, err
+	}
+	var u User
+	var disabledAt *time.Time
+	err = db.QueryRow(ctx, `SELECT id, email, display_name, created_at, disabled_at FROM users WHERE email = $1`, e).
+		Scan(&u.ID, &u.Email, &u.DisplayName, &u.CreatedAt, &disabledAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("load user: %w", err)
+	}
+	u.Disabled = disabledAt != nil
+	return u, nil
 }
