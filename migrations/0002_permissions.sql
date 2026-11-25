@@ -59,7 +59,11 @@ CREATE TABLE permission_audit (
     CONSTRAINT permission_audit_operator_label CHECK (
         char_length(operator_label) BETWEEN 1 AND 200
         AND operator_label = btrim(operator_label)
-        AND operator_label !~ '[[:cntrl:]]')
+        -- No control (Cc), format (Cf: invisible and bidirectional controls)
+        -- or line/paragraph separator (Zl, Zp) characters, as of Unicode 15,
+        -- listed by code point so the check does not depend on the locale.
+        -- OperatorAs in internal/permissions rejects at least these.
+        AND operator_label !~ E'[\\u0001-\\u001F\\u007F-\\u009F\\u00AD\\u0600-\\u0605\\u061C\\u06DD\\u070F\\u0890-\\u0891\\u08E2\\u180E\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u2064\\u2066-\\u206F\\uFEFF\\uFFF9-\\uFFFB\\U000110BD\\U000110CD\\U00013430-\\U0001343F\\U0001BCA0-\\U0001BCA3\\U0001D173-\\U0001D17A\\U000E0001\\U000E0020-\\U000E007F]')
 );
 
 CREATE INDEX permission_audit_target_idx ON permission_audit (target_user_id, occurred_at);

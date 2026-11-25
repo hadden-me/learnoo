@@ -21,15 +21,15 @@ const (
 	serverPath      = modulePath + "/internal/server"
 )
 
-// Operator actors (permissions.Operator, permissions.OperatorAs) skip
-// authorization; they are reserved for local operator tools
-// (docs/DECISIONS.md "Operator trust boundary"). These tests type-check the
-// HTTP layer, internal/server and every package of this module it imports
-// (except internal/permissions, which defines them), and fail if any of them
-// refers to either.
+// Operator actors skip authorization; they are reserved for local operator
+// tools (docs/DECISIONS.md "Operator trust boundary"), and
+// permissions.OperatorAs is the only way to build one. These tests
+// type-check the HTTP layer, internal/server and every package of this module
+// it imports (except internal/permissions, which defines it), and fail if any
+// of them refers to it.
 
 // operatorIdents are the permissions identifiers that yield operator actors.
-var operatorIdents = map[string]bool{"Operator": true, "OperatorAs": true}
+var operatorIdents = map[string]bool{"OperatorAs": true}
 
 type scanPackage struct {
 	path, dir string
@@ -142,17 +142,14 @@ func TestOperatorScanDetectsUses(t *testing.T) {
 	for name, src := range map[string]string{
 		"direct": `package probe
 import "` + permissionsPath + `"
-var a = permissions.Operator`,
+var a, _ = permissions.OperatorAs("x")`,
 		"alias": `package probe
 import p "` + permissionsPath + `"
-func f() any { return p.Operator }`,
+func f() any { a, _ := p.OperatorAs("x"); return a }`,
 		"dot": `package probe
 import . "` + permissionsPath + `"
-var a = Operator`,
-		"labelled": `package probe
-import "` + permissionsPath + `"
-var a, _ = permissions.OperatorAs("x")`,
-		"labelled value": `package probe
+var a, _ = OperatorAs("x")`,
+		"value": `package probe
 import p "` + permissionsPath + `"
 var f = p.OperatorAs`,
 	} {

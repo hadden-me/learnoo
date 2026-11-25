@@ -30,6 +30,17 @@ var testArgon2 = auth.Argon2Params{MemoryKiB: 1024, Iterations: 1, Lanes: 1, Sal
 
 const testPassword = "simulated-password-1"
 
+// testOperatorLabel labels operator, the operator actor used by these tests.
+const testOperatorLabel = "test"
+
+var operator = func() permissions.Actor {
+	a, err := permissions.OperatorAs(testOperatorLabel)
+	if err != nil {
+		panic(err)
+	}
+	return a
+}()
+
 type env struct {
 	t     *testing.T
 	db    *pgxpool.Pool
@@ -67,7 +78,7 @@ func (e *env) subject(code string) int64 {
 func (e *env) userOfType(name string, t permissions.AccountType) int64 {
 	e.t.Helper()
 	id := e.user(name)
-	if err := e.store.GrantDefaults(e.ctx, permissions.Operator, id, t); err != nil {
+	if err := e.store.GrantDefaults(e.ctx, operator, id, t); err != nil {
 		e.t.Fatal(err)
 	}
 	return id
@@ -136,7 +147,7 @@ func TestReviewerIsScopedPerSubject(t *testing.T) {
 	math := e.subject("simulated-math")
 	physics := e.subject("simulated-physics")
 	teacher := e.userOfType("teacher", permissions.Teacher)
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, teacher, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, teacher, math); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.RequireReviewer(e.ctx, teacher, math); err != nil {
@@ -153,7 +164,7 @@ func TestReviewerIsScopedPerSubject(t *testing.T) {
 		t.Fatalf("Require(reviewer) without subject allowed: %v", err)
 	}
 	// Revocation takes effect immediately.
-	if _, err := e.store.RevokeReviewer(e.ctx, permissions.Operator, teacher, math); err != nil {
+	if _, err := e.store.RevokeReviewer(e.ctx, operator, teacher, math); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.RequireReviewer(e.ctx, teacher, math); !errors.Is(err, permissions.ErrDenied) {
@@ -166,7 +177,7 @@ func TestNoPermissionImpliesAnother(t *testing.T) {
 	math := e.subject("simulated-math")
 
 	reviewer := e.user("reviewer")
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, reviewer, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, reviewer, math); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range allGlobal {
@@ -176,7 +187,7 @@ func TestNoPermissionImpliesAnother(t *testing.T) {
 	}
 
 	publisher := e.user("publisher")
-	if _, err := e.store.Grant(e.ctx, permissions.Operator, publisher, permissions.Publisher); err != nil {
+	if _, err := e.store.Grant(e.ctx, operator, publisher, permissions.Publisher); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.RequireReviewer(e.ctx, publisher, math); !errors.Is(err, permissions.ErrDenied) {
@@ -194,7 +205,7 @@ func TestNoPermissionImpliesAnother(t *testing.T) {
 
 	// A teacher with a reviewer assignment still cannot publish.
 	teacher := e.userOfType("teacher", permissions.Teacher)
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, teacher, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, teacher, math); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.Require(e.ctx, teacher, permissions.Publisher); !errors.Is(err, permissions.ErrDenied) {
@@ -206,7 +217,7 @@ func TestDisabledAccountsHaveNoPermissions(t *testing.T) {
 	e := newEnv(t)
 	math := e.subject("simulated-math")
 	admin := e.userOfType("admin", permissions.Admin)
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, admin, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, admin, math); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.db.Exec(e.ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, admin); err != nil {
@@ -233,7 +244,7 @@ func TestOnlyAdministratorsChangePermissions(t *testing.T) {
 	admin := e.userOfType("admin", permissions.Admin)
 	teacher := e.userOfType("teacher", permissions.Teacher)
 	publisher := e.user("publisher")
-	if _, err := e.store.Grant(e.ctx, permissions.Operator, publisher, permissions.Publisher); err != nil {
+	if _, err := e.store.Grant(e.ctx, operator, publisher, permissions.Publisher); err != nil {
 		t.Fatal(err)
 	}
 	student := e.user("student")
@@ -323,12 +334,12 @@ func TestGrantsAndRevokesAreAudited(t *testing.T) {
 		t.Fatalf("audit = %+v, want %+v", got, want)
 	}
 
-	// Operator changes are audited with no actor.
-	if _, err := e.store.Grant(e.ctx, permissions.Operator, target, permissions.Author); err != nil {
+	// Operator changes are audited with a label and no actor.
+	if _, err := e.store.Grant(e.ctx, operator, target, permissions.Author); err != nil {
 		t.Fatal(err)
 	}
 	log, _ = e.store.Audit(e.ctx, target)
-	if last := log[len(log)-1]; last.ActorID != nil || last.OperatorLabel != permissions.UnattributedOperator || last.Permission != permissions.Author {
+	if last := log[len(log)-1]; last.ActorID != nil || last.OperatorLabel != testOperatorLabel || last.Permission != permissions.Author {
 		t.Fatalf("operator audit row: %+v", last)
 	}
 	// Defaults are audited one row per permission.
@@ -372,14 +383,14 @@ func TestSchemaConstraints(t *testing.T) {
 	if _, err := e.db.Exec(e.ctx, `INSERT INTO subjects (code) VALUES ('Bad Code')`); err == nil {
 		t.Error("malformed subject code accepted")
 	}
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, 999999); !errors.Is(err, permissions.ErrUnknownSubject) {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, u, 999999); !errors.Is(err, permissions.ErrUnknownSubject) {
 		t.Errorf("unknown subject: %v", err)
 	}
-	if _, err := e.store.Grant(e.ctx, permissions.Operator, 999999, permissions.Author); !errors.Is(err, permissions.ErrUnknownUser) {
+	if _, err := e.store.Grant(e.ctx, operator, 999999, permissions.Author); !errors.Is(err, permissions.ErrUnknownUser) {
 		t.Errorf("unknown user: %v", err)
 	}
 	// A subject with reviewers cannot be deleted out from under them.
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, u, math); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.db.Exec(e.ctx, `DELETE FROM subjects WHERE id = $1`, math); err == nil {
@@ -395,7 +406,7 @@ func TestMiddlewareDeniesByDefault(t *testing.T) {
 	e.userOfType("student", permissions.Student)
 	e.userOfType("teacher", permissions.Teacher)
 	reviewer := e.userOfType("reviewer", permissions.Teacher)
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, reviewer, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, reviewer, math); err != nil {
 		t.Fatal(err)
 	}
 	e.userOfType("admin", permissions.Admin)
@@ -460,7 +471,7 @@ func TestMiddlewareDeniesByDefault(t *testing.T) {
 	}
 
 	// Revocation applies to the next request in an existing session.
-	if _, err := e.store.Revoke(e.ctx, permissions.Operator, reviewer, permissions.Author); err != nil {
+	if _, err := e.store.Revoke(e.ctx, operator, reviewer, permissions.Author); err != nil {
 		t.Fatal(err)
 	}
 	if got := get("/t/author", tokens["reviewer"]); got != 403 {
@@ -510,12 +521,12 @@ func TestTxChecksHoldGrantsUntilCommit(t *testing.T) {
 			name:  "revoke publisher",
 			check: func(tx pgx.Tx, u int64) error { return permissions.RequireTx(e.ctx, tx, u, permissions.Publisher) },
 			grant: func(u int64) {
-				if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Publisher); err != nil {
+				if _, err := e.store.Grant(e.ctx, operator, u, permissions.Publisher); err != nil {
 					t.Fatal(err)
 				}
 			},
 			remove: func(u int64) error {
-				_, err := e.store.Revoke(e.ctx, permissions.Operator, u, permissions.Publisher)
+				_, err := e.store.Revoke(e.ctx, operator, u, permissions.Publisher)
 				return err
 			},
 		},
@@ -523,12 +534,12 @@ func TestTxChecksHoldGrantsUntilCommit(t *testing.T) {
 			name:  "revoke reviewer",
 			check: func(tx pgx.Tx, u int64) error { return permissions.RequireReviewerTx(e.ctx, tx, u, math) },
 			grant: func(u int64) {
-				if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+				if _, err := e.store.GrantReviewer(e.ctx, operator, u, math); err != nil {
 					t.Fatal(err)
 				}
 			},
 			remove: func(u int64) error {
-				_, err := e.store.RevokeReviewer(e.ctx, permissions.Operator, u, math)
+				_, err := e.store.RevokeReviewer(e.ctx, operator, u, math)
 				return err
 			},
 		},
@@ -536,7 +547,7 @@ func TestTxChecksHoldGrantsUntilCommit(t *testing.T) {
 			name:  "disable account (publisher)",
 			check: func(tx pgx.Tx, u int64) error { return permissions.RequireTx(e.ctx, tx, u, permissions.Publisher) },
 			grant: func(u int64) {
-				if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Publisher); err != nil {
+				if _, err := e.store.Grant(e.ctx, operator, u, permissions.Publisher); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -549,7 +560,7 @@ func TestTxChecksHoldGrantsUntilCommit(t *testing.T) {
 			name:  "disable account (reviewer)",
 			check: func(tx pgx.Tx, u int64) error { return permissions.RequireReviewerTx(e.ctx, tx, u, math) },
 			grant: func(u int64) {
-				if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+				if _, err := e.store.GrantReviewer(e.ctx, operator, u, math); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -600,7 +611,7 @@ func TestTxChecksDenyByDefault(t *testing.T) {
 	e := newEnv(t)
 	math := e.subject("simulated-math")
 	admin := e.userOfType("admin", permissions.Admin)
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, admin, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, admin, math); err != nil {
 		t.Fatal(err)
 	}
 	physics := e.subject("simulated-physics")
@@ -660,7 +671,7 @@ func TestConcurrentAdministratorsCannotRevokeEachOther(t *testing.T) {
 		a := e.user("admin-a" + strconv.Itoa(i))
 		b := e.user("admin-b" + strconv.Itoa(i))
 		for _, u := range []int64{a, b} {
-			if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Administrator); err != nil {
+			if _, err := e.store.Grant(e.ctx, operator, u, permissions.Administrator); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -712,10 +723,10 @@ func TestAuditTimeMatchesGrantTime(t *testing.T) {
 	e := newEnv(t)
 	math := e.subject("simulated-math")
 	u := e.user("u")
-	if _, err := e.store.Grant(e.ctx, permissions.Operator, u, permissions.Author); err != nil {
+	if _, err := e.store.Grant(e.ctx, operator, u, permissions.Author); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.GrantReviewer(e.ctx, permissions.Operator, u, math); err != nil {
+	if _, err := e.store.GrantReviewer(e.ctx, operator, u, math); err != nil {
 		t.Fatal(err)
 	}
 	var mismatches int
@@ -740,7 +751,7 @@ func TestRevokeUnknownTargets(t *testing.T) {
 	math := e.subject("simulated-math")
 	admin := e.userOfType("admin", permissions.Admin)
 	u := e.user("u")
-	for _, actor := range []permissions.Actor{permissions.Operator, permissions.UserActor(admin)} {
+	for _, actor := range []permissions.Actor{operator, permissions.UserActor(admin)} {
 		if _, err := e.store.Revoke(e.ctx, actor, 999999, permissions.Author); !errors.Is(err, permissions.ErrUnknownUser) {
 			t.Errorf("revoke unknown user: %v", err)
 		}
@@ -788,7 +799,7 @@ func TestOperatorLabelsAreAudited(t *testing.T) {
 	}{
 		{func() (bool, error) { return e.store.Grant(e.ctx, named, target, permissions.Author) }, false, "simulated-op@simulated-host"},
 		{func() (bool, error) { return e.store.GrantReviewer(e.ctx, named, target, math) }, false, "simulated-op@simulated-host"},
-		{func() (bool, error) { return e.store.Grant(e.ctx, permissions.Operator, target, permissions.Publisher) }, false, permissions.UnattributedOperator},
+		{func() (bool, error) { return e.store.Grant(e.ctx, operator, target, permissions.Publisher) }, false, testOperatorLabel},
 		{func() (bool, error) { return e.store.Revoke(e.ctx, local, target, permissions.Publisher) }, false, permissions.LocalOperatorLabel()},
 		{func() (bool, error) { return e.store.RevokeReviewer(e.ctx, permissions.UserActor(admin), target, math) }, true, ""},
 	}
@@ -828,6 +839,21 @@ func TestOperatorLabelsAreAudited(t *testing.T) {
 	}
 }
 
+// forbiddenLabelRunes are format (Cf) characters, including invisible and
+// bidirectional controls, and line/paragraph separators (Zl, Zp) that would
+// let an audit label display as a different identity. Go and the database
+// must both reject them.
+var forbiddenLabelRunes = []rune{
+	0x00AD, 0x0600, 0x0601, 0x0602, 0x0603, 0x0604, 0x0605, 0x061C, 0x06DD, 0x070F,
+	0x180E, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+	0x2028, 0x2029, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064,
+	0x2066, 0x2067, 0x2068, 0x2069, 0x206A, 0x206B, 0x206C, 0x206D, 0x206E, 0x206F,
+	0xFEFF, 0xFFF9, 0xFFFA, 0xFFFB, 0x110BD, 0x1D173, 0xE0001, 0xE0041,
+}
+
+// acceptedLabels are ordinary non-ASCII labels both layers must accept.
+var acceptedLabels = []string{"alice@host", "élève@hôte", "علي@host"}
+
 func TestInvalidOperatorLabels(t *testing.T) {
 	for name, label := range map[string]string{
 		"empty":        "",
@@ -843,6 +869,16 @@ func TestInvalidOperatorLabels(t *testing.T) {
 	} {
 		if _, err := permissions.OperatorAs(label); !errors.Is(err, permissions.ErrInvalidOperatorLabel) {
 			t.Errorf("%s: want ErrInvalidOperatorLabel, got %v", name, err)
+		}
+	}
+	for _, r := range forbiddenLabelRunes {
+		if _, err := permissions.OperatorAs("op" + string(r) + "x"); !errors.Is(err, permissions.ErrInvalidOperatorLabel) {
+			t.Errorf("U+%04X: want ErrInvalidOperatorLabel, got %v", r, err)
+		}
+	}
+	for _, label := range acceptedLabels {
+		if _, err := permissions.OperatorAs(label); err != nil {
+			t.Errorf("%q rejected: %v", label, err)
 		}
 	}
 	for _, label := range []string{"a", strings.Repeat("é", permissions.MaxOperatorLabel), "op user@host.example"} {
@@ -867,6 +903,16 @@ func TestAuditActorConstraint(t *testing.T) {
 	} {
 		if _, err := e.db.Exec(e.ctx, insert, args...); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+	for _, r := range append([]rune{0x01, 0x1F, 0x7F, 0x85, 0x9F}, forbiddenLabelRunes...) {
+		if _, err := e.db.Exec(e.ctx, insert, none, "op"+string(r)+"x", u); err == nil {
+			t.Errorf("U+%04X accepted", r)
+		}
+	}
+	for _, label := range acceptedLabels {
+		if _, err := e.db.Exec(e.ctx, insert, none, label, u); err != nil {
+			t.Errorf("%q rejected: %v", label, err)
 		}
 	}
 	for name, args := range map[string][]any{
