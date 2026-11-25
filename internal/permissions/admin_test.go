@@ -341,17 +341,21 @@ func TestCrossActorRevokesDoNotDeadlock(t *testing.T) {
 		}
 		close(start)
 		wg.Wait()
-		ok := 0
+		// The loser ran after the winner committed: it is no longer an
+		// administrator, so it is denied (never a deadlock, and never the
+		// last-administrator refusal, which would mean it was authorized).
+		ok, denied := 0, 0
 		for _, err := range errs {
 			switch {
 			case err == nil:
 				ok++
-			case errors.Is(err, permissions.ErrDenied), errors.Is(err, permissions.ErrLastAdministrator):
+			case errors.Is(err, permissions.ErrDenied) && !errors.Is(err, permissions.ErrLastAdministrator):
+				denied++
 			default:
 				t.Fatalf("iteration %d: unexpected error %v", i, err)
 			}
 		}
-		if ok != 1 || e.activeAdmins() != 1 {
+		if ok != 1 || denied != 1 || e.activeAdmins() != 1 {
 			t.Fatalf("iteration %d: %d succeeded, %d active administrators (%v)", i, ok, e.activeAdmins(), errs)
 		}
 		for _, id := range []int64{a, b} {
