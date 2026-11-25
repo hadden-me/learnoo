@@ -333,6 +333,7 @@ func wantRefused(t *testing.T, db *pgxpool.Pool, what, code, sql string, args ..
 const (
 	insufficientPrivilege = "42501"
 	guardRefusal          = "LRN01" // SQLSTATE raised by the editorial guards
+	appendOnly            = "P0001" // plain RAISE EXCEPTION of the audit append-only triggers
 )
 
 func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
@@ -436,6 +437,13 @@ func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
 	wantRefused(t, rt, "report a withdrawn revision", guardRefusal,
 		`INSERT INTO error_reports (lesson_id, revision_id, reporter_id, message) VALUES ($1, $2, $3, 'TEST')`,
 		s.second.LessonID, s.second.ID, s.student.id)
+	// Permission and account status audits are append-only (0002, 0003);
+	// the flow above wrote rows to both.
+	wantRefused(t, rt, "rewrite permission audit", appendOnly, `UPDATE permission_audit SET action = action`)
+	wantRefused(t, rt, "delete permission audit", appendOnly, `DELETE FROM permission_audit`)
+	wantRefused(t, rt, "truncate permission audit", insufficientPrivilege, `TRUNCATE permission_audit`)
+	wantRefused(t, rt, "delete account status audit", appendOnly, `DELETE FROM account_status_audit`)
+	wantRefused(t, rt, "truncate account status audit", insufficientPrivilege, `TRUNCATE account_status_audit`)
 	if after := s.withdrawState(); after != before {
 		t.Fatalf("refused statements changed state:\n%s\n%s", before, after)
 	}
