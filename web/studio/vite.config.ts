@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { scopeReaderCss } from './tools/scope-css';
 
 // The Studio's preview shows the server's canonical lesson HTML with the
 // reader's own stylesheets. Those are page-wide (body, main, h1, button…),
@@ -11,14 +12,6 @@ import react from '@vitejs/plugin-react';
 // itself; `:root` rules are dropped.
 const READER_CSS = ['../../internal/rendering/static/site.css', '../../internal/reader/static/reader.css'].map((p) => fileURLToPath(new URL(p, import.meta.url)));
 const VIRTUAL = 'virtual:reader-lesson.css';
-
-export function scopeReaderCss(css: string, scope: string): string {
-  const rules = css
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|\n)\s*:root\s*\{[^}]*\}/g, '$1')
-    .replace(/(^|[\n,}])(\s*)(body|main)(\s*[{,])/g, '$1$2&$4');
-  return `${scope} {\n${rules}\n}\n`;
-}
 
 function readerLessonStyles(): Plugin {
   return {
