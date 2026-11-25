@@ -1,12 +1,13 @@
 // Package studioapi exposes the Studio ↔ server endpoints for lesson drafts
-// and media (LRN-006 slice 3), documented in docs/API.md.
+// and media (LRN-006 slice 3) and for review and publication (LRN-007,
+// review.go), documented in docs/API.md.
 //
-// Every route requires a session and the global author permission, checked
-// on the server by permissions.Middleware before any lookup; lesson writes
-// recheck it inside their transaction (lessons.Store). Unsafe methods also
-// need the session's CSRF token. Revisions belong to their author: another
-// author receives the same 404 as for an ID that does not exist, so revision
-// IDs cannot be probed. Review, publication and reader access are later work.
+// Draft and media routes require a session and the global author
+// permission, checked on the server by permissions.Middleware before any
+// lookup; lesson writes recheck it inside their transaction (lessons.Store).
+// Unsafe methods also need the session's CSRF token. Revisions belong to
+// their author: another author receives the same 404 as for an ID that does
+// not exist, so revision IDs cannot be probed. Reader access is later work.
 package studioapi
 
 import (
@@ -28,6 +29,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
+	"github.com/hadden-me/learnoo/internal/review"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -53,6 +55,7 @@ type Config struct {
 	Perms   *permissions.Middleware
 	Lessons *lessons.Store
 	Media   *media.Store
+	Review  *review.Store
 	Log     *slog.Logger
 }
 
@@ -86,6 +89,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	route("DELETE /api/revisions/{revisionId}", h.discard)
 	route("POST /api/media", h.uploadMedia)
 	route("GET /api/media/{mediaId}", h.serveMedia)
+	h.registerReview(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or
@@ -163,6 +167,10 @@ type revisionJSON struct {
 	UpdatedAt      time.Time       `json:"updatedAt"`
 	SubmittedAt    *time.Time      `json:"submittedAt"`
 	MediaIDs       []int64         `json:"mediaIds"`
+	// The review decision (null until decided) and, for approved
+	// revisions, the approving reviewer.
+	Review     *decisionJSON `json:"review"`
+	ApprovedBy *int64        `json:"approvedBy"`
 }
 
 func toRevisionJSON(r lessons.Revision) revisionJSON {
@@ -176,6 +184,7 @@ func toRevisionJSON(r lessons.Revision) revisionJSON {
 		Prerequisites: r.Prerequisites, Content: json.RawMessage(r.Content), SchemaVersion: r.SchemaVersion,
 		Language: r.Language, SubjectID: r.SubjectID, ChapterID: r.ChapterID, Version: r.Version,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, SubmittedAt: r.SubmittedAt, MediaIDs: ids,
+		Review: toDecisionJSON(r.Decision), ApprovedBy: r.ApprovedBy(),
 	}
 }
 
