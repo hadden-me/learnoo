@@ -256,11 +256,12 @@ func TestReviewCycleThroughPublication(t *testing.T) {
 	var queue struct {
 		Revisions []struct {
 			RevisionID, LessonID, AuthorID, SubjectID int64
-			Title                                     string
+			Title, AuthorName                         string
 		}
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &queue); err != nil || len(queue.Revisions) != 1 ||
-		queue.Revisions[0].RevisionID != rev.ID || queue.Revisions[0].AuthorID != f.author.id || queue.Revisions[0].Title != "Première version" {
+		queue.Revisions[0].RevisionID != rev.ID || queue.Revisions[0].AuthorID != f.author.id || queue.Revisions[0].Title != "Première version" ||
+		queue.Revisions[0].AuthorName != "Simulated Student" {
 		t.Fatalf("queue %s", w.Body)
 	}
 	got := decodeReviewed(t, f.api(f.reviewer, http.MethodGet, reviewPath(rev.ID), nil))

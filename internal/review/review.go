@@ -316,14 +316,16 @@ func (s *Store) ReviewRevision(ctx context.Context, actor, revisionID int64) (le
 
 // QueueItem is one revision awaiting review.
 type QueueItem struct {
-	RevisionID  int64
-	LessonID    int64
-	Number      int
-	Title       string
-	Language    string
-	SubjectID   int64
-	ChapterID   *int64
-	AuthorID    int64
+	RevisionID int64
+	LessonID   int64
+	Number     int
+	Title      string
+	Language   string
+	SubjectID  int64
+	ChapterID  *int64
+	AuthorID   int64
+	// AuthorName is the author's display name (shown to reviewers in the Studio).
+	AuthorName  string
 	SubmittedAt time.Time
 }
 
@@ -345,8 +347,9 @@ func (s *Store) ReviewQueue(ctx context.Context, actor, subjectID int64) ([]Queu
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT r.id, r.lesson_id, r.revision_number, r.title, r.language, r.subject_id, r.chapter_id,
-			       r.author_id, r.submitted_at
+			       r.author_id, au.display_name, r.submitted_at
 			  FROM lesson_revisions r
+			  JOIN users au ON au.id = r.author_id
 			  JOIN reviewer_assignments a ON a.subject_id = r.subject_id AND a.user_id = $1
 			  JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL
 			 WHERE r.status = 'in_review' AND r.author_id <> $1 AND ($2 = 0 OR r.subject_id = $2)
@@ -358,7 +361,7 @@ func (s *Store) ReviewQueue(ctx context.Context, actor, subjectID int64) ([]Queu
 		items, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (QueueItem, error) {
 			var q QueueItem
 			err := row.Scan(&q.RevisionID, &q.LessonID, &q.Number, &q.Title, &q.Language, &q.SubjectID,
-				&q.ChapterID, &q.AuthorID, &q.SubmittedAt)
+				&q.ChapterID, &q.AuthorID, &q.AuthorName, &q.SubmittedAt)
 			return q, err
 		})
 		return err
