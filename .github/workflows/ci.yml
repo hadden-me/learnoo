@@ -104,6 +104,11 @@ jobs:
         working-directory: web/studio
         run: npm run build
 
+      # The deployment rehearsal tests (LRN-010) run deploy/*.sh with the
+      # runner's PostgreSQL client tools; fail early and clearly without them.
+      - name: PostgreSQL client tools
+        run: psql --version && pg_dump --version && pg_restore --version
+
       - name: Go tests
         run: go test ./...
 
@@ -127,3 +132,27 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # LRN-010: the application image builds (no push, no registry, no secrets).
+  image:
+    name: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the application image
+        run: docker build --tag learnoo:ci .
+
+      - name: Image runs as non-root and ships only the server
+        run: |
+          test "$(docker image inspect learnoo:ci --format '{{.Config.User}}')" = "65532:65532"
+          cid="$(docker create learnoo:ci)"
+          files="$(docker export "$cid" | tar -t)"
+          docker rm "$cid" >/dev/null
+          echo "$files" | grep -qx 'usr/local/bin/learnoo-server'
+          if echo "$files" | grep -q renderer; then echo "renderer found in image" >&2; exit 1; fi
+
