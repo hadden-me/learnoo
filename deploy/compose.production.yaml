@@ -128,6 +128,13 @@ services:
       LEARNOO_DATABASE_PASSWORD_FILE: /run/secrets/db_runtime_password
       LEARNOO_ADDR: 0.0.0.0:8090
       LEARNOO_ALLOW_NON_LOOPBACK: "1"
+      # Client addresses behind the reverse proxy (docs/DEPLOYMENT.md). Empty
+      # = forwarding headers ignored and every client shares the proxy's
+      # address in the throttles.
+      LEARNOO_TRUSTED_PROXIES: ${LEARNOO_TRUSTED_PROXIES:-}
+      LEARNOO_CLIENT_ADDRESS_HEADER: ${LEARNOO_CLIENT_ADDRESS_HEADER:-X-Forwarded-For}
+      # Used by `run --rm app invite-student` to print public links.
+      LEARNOO_PUBLIC_BASE_URL: ${LEARNOO_PUBLIC_BASE_URL:-}
       LEARNOO_MEDIA_DIR: /var/lib/learnoo/media
     secrets: [db_runtime_password]
     volumes:

@@ -93,7 +93,7 @@ Request: `{"email": "student@example.test", "password": "…"}`. Email is trimme
 - `200` session object and a new session cookie. Any session cookie sent with the request is revoked first: the token always rotates at login.
 - `401 invalid_credentials`, `400`, `415`, `403 cross_origin_rejected`, `429 rate_limited`.
 
-Throttling (sliding 15-minute window, counted before the password is checked, enforced for existing and non-existent accounts alike): more than 5 attempts for one email address, or more than 30 from one client address, return `429` even with the correct password. A successful login clears that email's counter. The client address is the TCP peer; proxy headers are not trusted until deployment defines the proxy chain.
+Throttling (sliding 15-minute window, counted before the password is checked, enforced for existing and non-existent accounts alike): more than 5 attempts for one email address, or more than 30 from one client address, return `429` even with the correct password. A successful login clears that email's counter. The client address is the TCP peer, or, when the peer is a configured trusted proxy, the address derived from `X-Forwarded-For` or `CF-Connecting-IP` ([DEPLOYMENT.md](DEPLOYMENT.md#client-addresses-behind-the-proxy)); this applies to every per-address throttle.
 
 ### `POST /api/auth/logout`
 
@@ -455,7 +455,7 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 
 ### Invitation throttling
 
-Each invitation page view and form submission counts one attempt per client address (TCP peer, as for login) in the login throttle table under its own key scope. More than 20 attempts in the sliding 15-minute window return a `429` page with `Retry-After`. Tokens are 256-bit random values, so the limit protects the server rather than the tokens. Acceptance also signs in through the login service, so it counts one login attempt for the new account.
+Each invitation page view and form submission counts one attempt per client address (as for login) in the login throttle table under its own key scope. More than 20 attempts in the sliding 15-minute window return a `429` page with `Retry-After`. Tokens are 256-bit random values, so the limit protects the server rather than the tokens. Acceptance also signs in through the login service, so it counts one login attempt for the new account.
 
 ### Title search
 
