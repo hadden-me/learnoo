@@ -1,7 +1,8 @@
 // Studio shell: session, navigation, sign-out and the "session expired" /
-// "another account signed in" states. Pages are chosen by the client route (router.ts). The next slice
-// adds reviewer, publisher and administrator spaces next to "Mes leçons",
-// each shown only to accounts the server lets use it.
+// "another account signed in" states. Pages are chosen by the client route
+// (router.ts). Next to "Mes leçons", the reviewer, publisher, administrator
+// and error-report spaces (editorial/) are shown only to accounts the server
+// lets use them (spaces.ts); the server enforces every rule regardless.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ACCOUNT_CHANGED, Api, isApiError, type Session } from './api/client';
 import { describeError } from './api/messages';
@@ -13,6 +14,10 @@ import { findUserRecovery, purgeRecovery, RECOVERY_MAX_AGE_MS, suspendRecovery }
 import { LessonList } from './pages/LessonList';
 import { NewLesson } from './pages/NewLesson';
 import { EditorPage } from './pages/EditorPage';
+import { discoverSpaces, type Spaces } from './spaces';
+import { SpaceNav, StudioHome, editorialPage } from './editorial/spacesUi';
+import { isEditorialRoute } from './editorialRoutes';
+import './editorial/editorial.css';
 
 /** The sign-in page accepts only /studio paths of plain segments as `next` (API.md). */
 export function loginURL(pathname: string): string {
@@ -21,7 +26,7 @@ export function loginURL(pathname: string): string {
   return `/login?next=${encodeURIComponent(next)}`;
 }
 
-type Boot = { state: 'loading' } | { state: 'ready'; session: Session; isAuthor: boolean } | { state: 'error'; message: string };
+type Boot = { state: 'loading' } | { state: 'ready'; session: Session; spaces: Spaces } | { state: 'error'; message: string };
 
 export function App() {
   const [problem, setProblem] = useState<'expired' | 'account' | null>(null);
@@ -60,15 +65,9 @@ export function App() {
     (async () => {
       try {
         const session = await api.session();
-        let isAuthor = true;
-        try {
-          await api.myLessons();
-        } catch (error) {
-          if (isApiError(error, 'forbidden')) isAuthor = false;
-          else throw error;
-        }
+        const spaces = await discoverSpaces(api);
         booted.current = true;
-        setBoot({ state: 'ready', session, isAuthor });
+        setBoot({ state: 'ready', session, spaces });
       } catch (error) {
         if (!isApiError(error, 'unauthenticated')) setBoot({ state: 'error', message: describeError(error) });
       }
@@ -92,7 +91,7 @@ export function App() {
       </main>
     );
 
-  const studio: Studio = { api, session: boot.session, isAuthor: boot.isAuthor, expired: problem !== null, accountChanged: problem === 'account' };
+  const studio: Studio = { api, session: boot.session, isAuthor: boot.spaces.author, spaces: boot.spaces, expired: problem !== null, accountChanged: problem === 'account' };
   return (
     <StudioContext.Provider value={studio}>
       <Shell onRenewed={() => setProblem(null)} />
@@ -147,19 +146,12 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   }, [studio.api, userId]);
 
   let page: ReactNode;
-  if (!studio.isAuthor) page = <NoAuthoring />;
+  if (isEditorialRoute(route)) page = editorialPage(route, studio.spaces);
+  else if (!studio.isAuthor) page = route.name === 'notFound' ? <NotFound /> : <StudioHome spaces={studio.spaces} />;
   else if (route.name === 'lessons') page = <LessonList />;
   else if (route.name === 'new') page = <NewLesson />;
   else if (route.name === 'edit') page = <EditorPage key={route.lessonId} lessonId={route.lessonId} />;
-  else
-    page = (
-      <main className="page" id="main">
-        <h1 tabIndex={-1}>Page introuvable</h1>
-        <p>
-          <Link to={`${BASE}/`}>Revenir à mes leçons</Link>
-        </p>
-      </main>
-    );
+  else page = <NotFound />;
 
   return (
     <div className="studio">
@@ -176,6 +168,7 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
               Mes leçons
             </Link>
           )}
+          <SpaceNav spaces={studio.spaces} route={route} />
         </nav>
         <div className="account">
           <span className="who">{studio.session.user.displayName}</span>
@@ -262,12 +255,13 @@ function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
   );
 }
 
-function NoAuthoring() {
+function NotFound() {
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Studio</h1>
-      <p>Votre compte n’a pas la permission auteur : vous ne pouvez pas rédiger de leçons.</p>
-      <p className="hint">Les espaces de relecture et de publication seront ajoutés à cette page dans une prochaine version.</p>
+      <h1 tabIndex={-1}>Page introuvable</h1>
+      <p>
+        <Link to={`${BASE}/`}>Revenir à l’accueil du Studio</Link>
+      </p>
     </main>
   );
 }
