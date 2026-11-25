@@ -70,7 +70,7 @@ func (c *cli) count(sql string) int {
 func (c *cli) snapshot() string {
 	c.t.Helper()
 	var parts []string
-	for _, table := range []string{"users", "user_permissions", "reviewer_assignments", "permission_audit", "subjects", "sessions", "account_status_audit"} {
+	for _, table := range []string{"users", "user_permissions", "reviewer_assignments", "permission_audit", "subjects", "chapters", "catalogue_audit", "sessions", "account_status_audit"} {
 		parts = append(parts, fmt.Sprintf("%s=%d", table, c.count("SELECT count(*) FROM "+table)))
 	}
 	var disabled int
@@ -80,9 +80,7 @@ func (c *cli) snapshot() string {
 
 func (c *cli) subject(code string) {
 	c.t.Helper()
-	if _, err := c.pool.Exec(context.Background(), `INSERT INTO subjects (code) VALUES ($1)`, code); err != nil {
-		c.t.Fatal(err)
-	}
+	dbtest.AddSubject(c.t, c.pool, code)
 }
 
 func wantOut(t *testing.T, out, want string) {
@@ -96,7 +94,7 @@ func TestBootstrapAdminCommand(t *testing.T) {
 	c := newCLI(t)
 	out := c.ok(cliPassword, "bootstrap-admin", "-email", "Admin@Example.test", "-name", "Simulated Admin")
 	wantOut(t, out, "created administrator")
-	if got := c.snapshot(); got != "users=1 user_permissions=3 reviewer_assignments=0 permission_audit=3 subjects=0 sessions=0 account_status_audit=0 disabled=0" {
+	if got := c.snapshot(); got != "users=1 user_permissions=3 reviewer_assignments=0 permission_audit=3 subjects=0 chapters=0 catalogue_audit=0 sessions=0 account_status_audit=0 disabled=0" {
 		t.Fatalf("after bootstrap: %s", got)
 	}
 	if n := c.count(`SELECT count(*) FROM permission_audit WHERE actor_id IS NULL AND action = 'grant' AND subject_id IS NULL`); n != 3 {

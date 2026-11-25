@@ -81,3 +81,50 @@ func Migrated(t testing.TB) *pgxpool.Pool {
 	}
 	return pool
 }
+
+// Querier runs a single-row query (a pool, connection or transaction).
+type Querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// TestOperatorLabel is the operator label of catalogue entries made by tests.
+const TestOperatorLabel = "test-operator@test-host"
+
+// SubjectSQL inserts a subject (code $1) with its catalogue_audit row
+// (operator label $2) in one statement and returns the subject's ID.
+const SubjectSQL = `
+	WITH s AS (INSERT INTO subjects (code) VALUES ($1) RETURNING id)
+	INSERT INTO catalogue_audit (operator_label, action, subject_id)
+	SELECT $2, 'add_subject', id FROM s RETURNING subject_id`
+
+// ChapterSQL inserts a chapter (subject $1, code $2) with its
+// catalogue_audit row (operator label $3) and returns the chapter's ID.
+const ChapterSQL = `
+	WITH c AS (INSERT INTO chapters (subject_id, code) VALUES ($1, $2) RETURNING id, subject_id)
+	INSERT INTO catalogue_audit (operator_label, action, subject_id, chapter_id)
+	SELECT $3, 'add_chapter', subject_id, id FROM c RETURNING chapter_id`
+
+// AddSubject inserts a subject with its catalogue_audit row in one statement,
+// as the database requires (migrations/0010), and returns its ID. Tests that
+// need the operator command path use internal/catalogue instead.
+func AddSubject(t testing.TB, q Querier, code string) int64 {
+	t.Helper()
+	var id int64
+	err := q.QueryRow(context.Background(), SubjectSQL, code, TestOperatorLabel).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// AddChapter inserts a chapter of subject with its catalogue_audit row and
+// returns its ID.
+func AddChapter(t testing.TB, q Querier, subject int64, code string) int64 {
+	t.Helper()
+	var id int64
+	err := q.QueryRow(context.Background(), ChapterSQL, subject, code, TestOperatorLabel).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}

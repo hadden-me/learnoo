@@ -20,6 +20,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/users"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -67,7 +68,7 @@ func (e *env) user(name string) int64 {
 func (e *env) subject(code string) int64 {
 	e.t.Helper()
 	var id int64
-	if err := e.db.QueryRow(e.ctx, `INSERT INTO subjects (code) VALUES ($1) RETURNING id`, code).Scan(&id); err != nil {
+	if err := e.db.QueryRow(e.ctx, dbtest.SubjectSQL, code, dbtest.TestOperatorLabel).Scan(&id); err != nil {
 		e.t.Fatal(err)
 	}
 	return id
@@ -375,11 +376,14 @@ func TestSchemaConstraints(t *testing.T) {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	if _, err := e.db.Exec(e.ctx, `INSERT INTO subjects (code) VALUES ('simulated-math')`); err == nil {
-		t.Error("duplicate subject code accepted")
-	}
-	if _, err := e.db.Exec(e.ctx, `INSERT INTO subjects (code) VALUES ('Bad Code')`); err == nil {
-		t.Error("malformed subject code accepted")
+	// With the audit row present (dbtest.SubjectSQL), only the targeted
+	// constraint can refuse the row.
+	for code, want := range map[string]string{"simulated-math": "23505", "Bad Code": "23514"} {
+		_, err := e.db.Exec(e.ctx, dbtest.SubjectSQL, code, dbtest.TestOperatorLabel)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != want {
+			t.Errorf("subject code %q: err %v, want SQLSTATE %s", code, err, want)
+		}
 	}
 	if _, err := e.store.GrantReviewer(e.ctx, operator, u, 999999); !errors.Is(err, permissions.ErrUnknownSubject) {
 		t.Errorf("unknown subject: %v", err)
