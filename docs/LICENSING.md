@@ -9,3 +9,5 @@ Planning feedback, issue discussions, and expressions of interest are welcome. A
 Standard PolyForm Noncommercial was not adopted because its educational-institution exception conflicts with the project's requirements. AGPL was not adopted because it allows commercial use. No custom license draft or CC license is currently granted.
 
 Third-party materials and dependencies retain their own terms. The supplied brand image must not be treated as a blanket grant of rights to others. Any future monetized distribution of contributed work requires sufficient permission from the relevant rights holders.
+
+The owner reconfirmed the noncommercial requirement on 2026-11-25. [Contribution terms preparation](CONTRIBUTION_TERMS.md) records the drafting requirements, existing-PR acceptance process and merge gates. It grants no additional rights and does not finalize the license.
