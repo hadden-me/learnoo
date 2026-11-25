@@ -69,3 +69,26 @@ test('reader preserves inline punctuation, warning contrast roles and Arabic hea
  expect(rhythm).toBeCloseTo(1.25, 2);
  await context.close();
 });
+test('loading a video replaces the button and its notice with the player',async({page,request,baseURL})=>{
+ // The canonical preview of a lesson with a chosen video, served same-origin
+ // with its CSP; YouTube itself is stubbed so the test stays offline.
+ const doc=structuredClone(fixture);doc.blocks=[{type:'youtube',title:'Vidéo de test',videoId:'TESTvideo01'}];
+ const preview=await request.post('/preview',{data:doc});expect(preview.ok()).toBe(true);
+ const body=await preview.text();const headers=preview.headers();
+ await page.route(`${baseURL}/video-test`,route=>route.fulfill({status:200,headers,body}));
+ const external=[];page.on('request',r=>{if(new URL(r.url()).origin!==new URL(baseURL).origin)external.push(r.url());});
+ await page.route('https://www.youtube-nocookie.com/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>stub</title>'}));
+ await page.goto('/video-test');
+ const video=page.locator('section.video');
+ await expect(video.locator('.video-notice')).toHaveText('La vidéo ne se charge qu’après votre choix.');
+ expect(external).toEqual([]);
+ await video.getByRole('button',{name:'Charger la vidéo YouTube'}).focus();await page.keyboard.press('Enter');
+ const iframe=video.locator('iframe');
+ await expect(iframe).toHaveAttribute('src','https://www.youtube-nocookie.com/embed/TESTvideo01');
+ await expect(iframe).toBeFocused();
+ await expect(video.getByText('La vidéo ne se charge qu’après votre choix.')).toHaveCount(0);
+ await expect(video.locator('.video-control, .video-load')).toHaveCount(0);
+ await expect(video.locator('h3')).toHaveText('Vidéo de test');
+ expect(external.length).toBeGreaterThan(0);
+ expect(external.every(u=>u.startsWith('https://www.youtube-nocookie.com/embed/'))).toBe(true);
+});

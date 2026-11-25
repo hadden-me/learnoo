@@ -41,6 +41,21 @@ test('student reader at mobile width with RTL and math', async ({ page, baseURL,
   expect(await noOverflow(page)).toBe(true);
   await page.screenshot({ path: 'test-results/reader-lesson-mobile.png', fullPage: true });
 
+  // Nothing external loads until the student asks for the video; then the
+  // player replaces both the button and its notice (issue #54). YouTube is
+  // stubbed so the test stays offline.
+  expect(external).toEqual([]);
+  await page.route('https://www.youtube-nocookie.com/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>stub</title>' }));
+  const video = page.locator('section.video');
+  await video.getByRole('button', { name: 'Charger la vidéo YouTube' }).click();
+  await expect(video.locator('iframe')).toHaveAttribute('src', 'https://www.youtube-nocookie.com/embed/TESTvideo01');
+  await expect(video.locator('iframe')).toBeFocused();
+  await expect(video.getByText('La vidéo ne se charge qu’après votre choix.')).toHaveCount(0);
+  await expect(video.locator('.video-control, .video-load')).toHaveCount(0);
+  expect(external.length).toBeGreaterThan(0);
+  expect(external.every(u => u.startsWith('https://www.youtube-nocookie.com/embed/'))).toBe(true);
+  external.length = 0;
+
   // Report an error (LRN-015): the form stays closed until asked for; an
   // empty report is refused with the form reopened, then a report is sent.
   await expect(page.getByLabel('Décrivez l’erreur')).toBeHidden();
