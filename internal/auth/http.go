@@ -171,15 +171,7 @@ func (h *Handlers) login(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, "login", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     CookieName,
-		Value:    token,
-		Path:     "/",
-		Expires:  sess.AbsoluteExpiresAt,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	SetSessionCookie(w, token, sess)
 	writeJSON(w, http.StatusOK, toJSON(sess))
 }
 
@@ -203,6 +195,33 @@ func (h *Handlers) internal(w http.ResponseWriter, op string, err error) {
 	h.log.Error("auth failure", "op", op, "err", err)
 	writeError(w, http.StatusInternalServerError, "internal", "Something went wrong. Try again later.")
 }
+
+// SetSessionCookie sets the hardened session cookie for a new session
+// (Secure, HttpOnly, SameSite=Lax, host-only through the __Host- prefix).
+func SetSessionCookie(w http.ResponseWriter, token string, sess Session) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     CookieName,
+		Value:    token,
+		Path:     "/",
+		Expires:  sess.AbsoluteExpiresAt,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// ClearSessionCookie expires the session cookie in the browser.
+func ClearSessionCookie(w http.ResponseWriter) { clearCookie(w) }
+
+// SessionToken returns the cookie token of the session attached by
+// Middleware, for logout from server-rendered pages.
+func SessionToken(ctx context.Context) (string, bool) {
+	s, ok := ctx.Value(ctxKey{}).(sessionCtx)
+	return s.token, ok
+}
+
+// ClientAddr is the TCP peer address used for throttling (see clientAddr).
+func ClientAddr(r *http.Request) string { return clientAddr(r) }
 
 func clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{

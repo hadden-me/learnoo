@@ -10,6 +10,7 @@
 //	server disable-user -email E                   disable an account and revoke its sessions
 //	server enable-user -email E                    re-enable a disabled account
 //	server show-user -email E                      status, permissions, reviewer subjects and audit
+//	server invite-student -email E [-ttl D]        print a one-time Student invitation link
 //
 // Operator commands act as permissions.OperatorAs(permissions.LocalOperatorLabel()):
 // anyone with write access to the database is trusted, and the audit records
@@ -38,6 +39,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database"
+	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/server"
@@ -86,8 +88,10 @@ func run(args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) err
 		return changeStatus(ctx, "enable", args, stdout)
 	case "show-user":
 		return showUser(ctx, args, stdout)
+	case "invite-student":
+		return inviteStudent(ctx, args, stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user or show-user)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user or invite-student)", cmd)
 	}
 }
 
@@ -575,4 +579,41 @@ func openMigrated(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("%w (run: server migrate)", err)
 	}
 	return pool, nil
+}
+
+// inviteStudent issues a single-use Student invitation (no permissions) and
+// prints its link once. Only the token's hash is stored, so the link cannot
+// be shown again. The invitation is recorded with the local operator label.
+// Nothing secret is read from the command line.
+func inviteStudent(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("invite-student", flag.ContinueOnError)
+	email := fs.String("email", "", "invited student's email (required)")
+	ttl := fs.Duration("ttl", invitations.DefaultTTL, "how long the link stays valid (1h to 720h)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || fs.NArg() > 0 {
+		return errors.New("invite-student needs -email (and optionally -ttl); it takes no other arguments")
+	}
+	addr := os.Getenv("LEARNOO_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+	if err := requireLoopback(addr); err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	token, inv, err := invitations.NewStore(pool, nil).Issue(ctx, *email, permissions.LocalOperatorLabel(), *ttl)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "invitation %d for %s, valid until %s, issued by %s\n",
+		inv.ID, inv.Email, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.OperatorLabel)
+	fmt.Fprintln(stdout, "one-time link (shown only now; send it privately, do not paste it into shared logs or issues):")
+	fmt.Fprintf(stdout, "http://%s/invite/%s\n", addr, token)
+	return nil
 }

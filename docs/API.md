@@ -2,7 +2,7 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API and LRN-007 review and publication.** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, and the [review and publication endpoints](#review-and-publication-lrn-007). Reader endpoints do not exist yet.
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, and the LRN-008 reader.** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), and the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON).
 
 ## Conventions
 
@@ -415,6 +415,47 @@ Body `{"expectedPublishedRevisionId": 12}` (or `null` for an unpublished lesson)
 - `200` pointer change object with `action` `restore`.
 - `409 never_published` (an approved revision that was never published goes through [publication](#post-apirevisionsrevisionidpublish) and its base check; see the open question in DECISIONS.md), `409 withdrawn | not_approved | already_current | stale_pointer | archived | ineligible`, `404`, `403`, `400`, `415`. Restoration racing a publication or another restoration: exactly one applies and is audited once; the other gets `409 stale_pointer` or `409 stale_base`.
 
+## Student reader (LRN-008)
+
+Server-rendered HTML pages in French (interface language), in `internal/reader`. Decisions: [DECISIONS.md](DECISIONS.md#student-reader-lrn-008). They are not part of the JSON contract above: errors are HTML pages, forms are `application/x-www-form-urlencoded` (bodies over 8 KiB are refused), and redirects use `303 See Other`.
+
+### Headers and access
+
+- Every response from a reader route, including redirects, error pages, session-lookup failures and `/static/` files, sends `Cache-Control: private, no-store` and `Vary: Cookie`. Responses produced before a reader route is reached (the cross-origin `403 cross_origin_rejected`, and the server's JSON `404 not_found` catch-all for unknown paths and for unsupported methods on reader paths, such as `PUT /learn`) carry the server-wide `Cache-Control: no-store` and `Vary: Cookie` instead; they contain no lesson data. Neither shared caches nor the browser may store any of them. (Static assets are therefore not cached yet; fingerprinted, cacheable public assets belong to deployment work, LRN-010.)
+- Pages send `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`. Lesson pages add `script-src 'self'`, `font-src 'self'`, `style-src-attr 'unsafe-inline'` (inline style attributes produced by KaTeX) and `frame-src https://www.youtube-nocookie.com` (the click-to-load video). No inline scripts.
+- Anonymous `GET`/`HEAD` on `/learn…` pages: `303` to `/login?next=<path>`, whether or not the lesson exists. Anonymous `POST` on `/learn…`: `401` page. Neither contains lesson data.
+- Unsafe methods pass Go's cross-origin protection (`403 cross_origin_rejected` JSON body, as for the API). Authenticated form posts also need the session's CSRF token in the form field `csrf_token` (the same value as `csrfToken`); missing or wrong: `403` page. A token in the query string is ignored.
+- Any signed-in account can read; no permission is needed or granted. Invited students hold no permission and get `403`/`404` from the Studio and review APIs.
+- URLs carry only identifiers: subject and chapter codes, the lesson's random `public_id` (UUID), and the search query on `/learn/search`. Invitation tokens appear only in the invitation link (`Referrer-Policy: no-referrer` on that page); the form posts the token in its body.
+
+### Routes
+
+| Route | Session | Result |
+| --- | --- | --- |
+| `GET /login?next=/learn/…` | — | Sign-in form. Signed-in users are redirected to `next` |
+| `POST /login` | — | Fields `email`, `password`, `next`. Same service as `POST /api/auth/login`: same throttle (`429` page with `Retry-After`), same enumeration-safe failure (`401` page), new rotated session cookie, `303` to `next`. `next` must be `/learn` or a `/learn/…` path of plain segments; anything else (other paths, hosts, `//`, queries, `..`) becomes `/learn` |
+| `POST /logout` | required | Field `csrf_token`. Deletes the session, clears the cookie, `303` to `/login` |
+| `GET /invite/{token}` | — | Invitation form showing the invited email, or a `404` page with one message for unknown, malformed, expired and used tokens. Throttled |
+| `POST /invite` | — | Fields `token`, `display_name`, `password`, `password_confirm`. Validation errors: `422` form (the display name is kept, passwords are not). Success: creates the Student account, marks the invitation used, signs in, `303` to `/learn`. Invalid token: the same `404` page. Throttled |
+| `GET /learn` | required | Dashboard: the user's bookmarks (newest first, at most 500; lessons no longer published are listed as unavailable), subjects with published lessons, search box |
+| `GET /learn/subjects/{code}` | required | The subject's published lessons grouped by the published revision's chapter (chapters by code; "Sans chapitre" last; lessons by title). `404` if the subject has no published lesson |
+| `GET /learn/lessons/{publicId}` | required | Published lesson: breadcrumb, title, author and approving-reviewer credit (display names), bookmark button, objective and the canonical body from `rendering.RenderBlocks`. `404` page for unknown, malformed (only lower-case UUIDs), never-published, unpublished and archived lessons alike |
+| `POST /learn/lessons/{publicId}/bookmark` | required + `csrf_token` | Bookmarks a published lesson (idempotent), `303` back to the lesson (or to `/learn` with `return=dashboard`). `404` if not published; `409` page at 500 bookmarks |
+| `POST /learn/lessons/{publicId}/unbookmark` | required + `csrf_token` | Removes the bookmark, published or not (idempotent), `303` as above |
+| `GET /learn/search?q=…` | required | Title search over published lessons, see below |
+| `GET /static/{path}` | — / required | Public: `tokens.css`, `site.css`, `reader.css`, `math.js`, `vendor/katex/…` (generic code, no lesson content). Lesson media (today only the renderer's fixture image `complex-plane.svg`) needs a session. Anything else, directories, and media without a session: `404` |
+
+### Invitation throttling
+
+Each invitation page view and form submission counts one attempt per client address (TCP peer, as for login) in the login throttle table under its own key scope. More than 20 attempts in the sliding 15-minute window return a `429` page with `Retry-After`. Tokens are 256-bit random values, so the limit protects the server rather than the tokens. Acceptance also signs in through the login service, so it counts one login attempt for the new account.
+
+### Title search
+
+- The query is trimmed, control characters are dropped and whitespace runs collapse to one space. It must then be 2 to 100 characters, and still at least 2 characters after folding (below), so a query of only harakat, tatweel or combining accents is refused rather than matching every title; otherwise the page asks for a valid query and runs no search.
+- Matching is a substring match on the published revision's title. Both sides go through the SQL function `reader_fold` (migration 0008): Unicode NFD, combining marks removed (French accents, Arabic harakat, hamza and madda marks, superscript alef, tatweel), lower case, `œ`→`oe`, `æ`→`ae`. The folding does not depend on the database locale (it gives the same keys under `C` and `en_US.UTF-8`): ASCII is lowered with `lower(… COLLATE "C")`, and the other capitals it folds are listed explicitly (the Latin-1 and Latin Extended-A letters without a canonical decomposition, such as `Œ`, `Æ`, `Ø`, `Ł`, and the basic Greek capitals, with final `ς` folded to `σ`); capitals of other scripts, and capitals such as `ẞ`, are left unchanged under every locale (Cyrillic `Б` does not match `б`). So `equations` finds "Équations", `الدوال` finds "الدَّوَالّ" and `الاسية` finds "الأسية". Other Arabic letter variants (`ى`/`ي`, `ة`/`ه`) are not unified.
+- The query is a bound parameter used with `strpos`, never SQL text or a `LIKE` pattern, so `%`, `_`, quotes and backslashes match literally.
+- At most 50 results, ordered by folded title. There is no index for substring search: it scans the published lessons, which is fine for the pilot's size; a trigram index needs the `pg_trgm` extension and is left to later.
+
 ## Not yet defined
 
-Registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader pages and reader media access (LRN-008); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2).
+Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2).

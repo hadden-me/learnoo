@@ -27,6 +27,10 @@ jobs:
       # if the database is unavailable. Disposable CI-only service; no secret.
       LEARNOO_TEST_DATABASE_URL: postgres://learnoo@127.0.0.1:5432/learnoo_test?sslmode=disable
       LEARNOO_REQUIRE_DB_TESTS: "1"
+    # The postgres image initializes its cluster with the en_US.utf8 locale.
+    # Locale-sensitive SQL (reader_fold, migration 0008) is also tested in
+    # databases the test creates with LC_CTYPE 'C' and 'en_US.UTF-8'
+    # (internal/reader/fold_test.go), which needs the service role's CREATEDB.
     services:
       postgres:
         image: postgres:16.13
@@ -111,6 +115,9 @@ jobs:
 
       - name: Browser tests
         run: npm run test:browser
+
+      - name: Reader browser tests
+        run: npm run test:reader
 
       - name: Upload browser test results on failure
         if: failure()

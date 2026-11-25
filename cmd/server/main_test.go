@@ -109,3 +109,74 @@ func TestServeRequiresAbsoluteMediaDir(t *testing.T) {
 		}
 	}
 }
+
+func TestInviteStudentValidatesBeforeTouchingDatabase(t *testing.T) {
+	t.Setenv("LEARNOO_DATABASE_URL", "")
+	t.Setenv("LEARNOO_ADDR", "")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"missing email":  {[]string{"invite-student"}, "needs -email"},
+		"extra argument": {[]string{"invite-student", "-email", "a@example.test", "secret"}, "no other arguments"},
+		"bad ttl":        {[]string{"invite-student", "-email", "a@example.test", "-ttl", "soon"}, "invalid value"},
+		"no database":    {[]string{"invite-student", "-email", "a@example.test"}, "LEARNOO_DATABASE_URL is not set"},
+	} {
+		err := run(tc.args, strings.NewReader(""), io.Discard, log)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", name, err, tc.want)
+		}
+	}
+	t.Setenv("LEARNOO_ADDR", "0.0.0.0:8090")
+	if err := run([]string{"invite-student", "-email", "a@example.test"}, nil, io.Discard, log); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("public address: %v", err)
+	}
+}
+
+func TestInviteStudentPrintsOneTimeLink(t *testing.T) {
+	pool := dbtest.Migrated(t)
+	var schema string
+	if err := pool.QueryRow(context.Background(), `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	url := dbtest.URL(t)
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	t.Setenv("LEARNOO_DATABASE_URL", url+sep+"search_path="+schema)
+	t.Setenv("LEARNOO_ADDR", "")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var out bytes.Buffer
+	if err := run([]string{"invite-student", "-email", "Invited@Example.test", "-ttl", "2h"}, nil, &out, log); err != nil {
+		t.Fatal(err)
+	}
+	prefix := "http://" + defaultAddr + "/invite/"
+	var token string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			token = strings.TrimPrefix(line, prefix)
+		}
+	}
+	if len(token) != 43 || !strings.Contains(out.String(), "invited@example.test") {
+		t.Fatalf("unexpected output: %s", out.String())
+	}
+	var stored, label string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT encode(token_hash, 'hex') || email || operator_label, operator_label FROM student_invitations
+		 WHERE expires_at - created_at = interval '2 hours'`).Scan(&stored, &label); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, token) || !strings.Contains(label, "@") {
+		t.Fatalf("token stored or label missing: %q", label)
+	}
+	// An existing account cannot be invited.
+	out.Reset()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO users (email, display_name, password_hash) VALUES ('taken@example.test', 'T', '$argon2id$x')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"invite-student", "-email", "taken@example.test"}, nil, &out, log); err == nil || out.Len() != 0 {
+		t.Fatalf("existing account: %v %q", err, out.String())
+	}
+}
