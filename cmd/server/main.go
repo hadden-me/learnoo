@@ -11,6 +11,8 @@
 //	server enable-user -email E                    re-enable a disabled account
 //	server show-user -email E                      status, permissions, reviewer subjects and audit
 //	server invite-student -email E [-ttl D]        print a one-time Student invitation link
+//	server add-subject -code C                     add a catalogue subject (audited)
+//	server add-chapter -subject S -code C          add a chapter to a subject (audited)
 //	server verify-restore [-strict]                check a restored database and media directory
 //	server probe [-path P]                         container health check: GET P on LEARNOO_ADDR
 //
@@ -44,6 +46,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/backupcheck"
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/clientip"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/invitations"
@@ -97,12 +100,16 @@ func run(args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) err
 		return showUser(ctx, args, stdout)
 	case "invite-student":
 		return inviteStudent(ctx, args, stdout)
+	case "add-subject":
+		return addSubject(ctx, args, stdout)
+	case "add-chapter":
+		return addChapter(ctx, args, stdout)
 	case "verify-restore":
 		return verifyRestore(ctx, args, stdout)
 	case "probe":
 		return probe(ctx, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user, invite-student, verify-restore or probe)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user, invite-student, add-subject, add-chapter, verify-restore or probe)", cmd)
 	}
 }
 
@@ -196,9 +203,21 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 		return err
 	}
 	defer mediaStore.Close()
+	var opts []server.Option
+	studio, err := openStudio()
+	if err != nil {
+		return err
+	}
+	if studio != nil {
+		defer studio.Close()
+		opts = append(opts, server.WithStudio(studio.FS()))
+		log.Info("serving the Studio", "dir", studio.Name())
+	} else {
+		log.Warn("LEARNOO_STUDIO_DIR is not set: /studio is not served")
+	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           clientip.Middleware(resolver, server.New(pool, svc, mediaStore, log)),
+		Handler:           clientip.Middleware(resolver, server.New(pool, svc, mediaStore, log, opts...)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -231,6 +250,29 @@ func mediaDirectory() (string, error) {
 		return "", fmt.Errorf("LEARNOO_MEDIA_DIR %q must be an absolute path", dir)
 	}
 	return filepath.Clean(dir), nil
+}
+
+// openStudio opens LEARNOO_STUDIO_DIR, the built Studio bundle
+// (web/studio/dist; /opt/learnoo/studio in the image), as an os.Root so
+// served paths cannot leave it. Unset means the Studio is not served. A set
+// value must be an absolute directory containing index.html.
+func openStudio() (*os.Root, error) {
+	dir := os.Getenv("LEARNOO_STUDIO_DIR")
+	if dir == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(dir) {
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR %q must be an absolute path", dir)
+	}
+	root, err := os.OpenRoot(filepath.Clean(dir))
+	if err != nil {
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR: %w", err)
+	}
+	if fi, err := root.Stat("index.html"); err != nil || !fi.Mode().IsRegular() {
+		root.Close()
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR %q has no index.html (build it: cd web/studio && npm run build)", dir)
+	}
+	return root, nil
 }
 
 // requireLoopback keeps the server off public interfaces by default, also in
@@ -663,6 +705,84 @@ func inviteStudent(ctx context.Context, args []string, stdout io.Writer) error {
 		inv.ID, inv.Email, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.OperatorLabel)
 	fmt.Fprintln(stdout, "one-time link (shown only now; send it privately, do not paste it into shared logs or issues):")
 	fmt.Fprintf(stdout, "%s/invite/%s\n", base, token)
+	return nil
+}
+
+// addSubject adds a catalogue subject identified by its code. Names,
+// ordering and the pilot catalogue are LRN-014; nothing is seeded. The
+// addition is audited with the local operator label.
+func addSubject(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("add-subject", flag.ContinueOnError)
+	code := fs.String("code", "", "subject code: lower-case letters, digits and hyphens (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *code == "" || fs.NArg() > 0 {
+		return errors.New("add-subject needs -code and takes no other arguments")
+	}
+	if !catalogue.ValidCode(*code) {
+		return fmt.Errorf("subject code %q: %w", *code, catalogue.ErrInvalidCode)
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sj, created, err := catalogue.NewStore(pool).AddSubject(ctx, actor, *code)
+	if err != nil {
+		return err
+	}
+	if !created {
+		fmt.Fprintf(stdout, "no change: subject %s already exists (id %d)\n", sj.Code, sj.ID)
+		return nil
+	}
+	fmt.Fprintf(stdout, "added subject %s (id %d)\n", sj.Code, sj.ID)
+	return nil
+}
+
+// addChapter adds a chapter, identified by its code, to an existing subject.
+// The addition is audited with the local operator label.
+func addChapter(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("add-chapter", flag.ContinueOnError)
+	subject := fs.String("subject", "", "code of an existing subject (required)")
+	code := fs.String("code", "", "chapter code: lower-case letters, digits and hyphens (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *subject == "" || *code == "" || fs.NArg() > 0 {
+		return errors.New("add-chapter needs -subject and -code and takes no other arguments")
+	}
+	if !catalogue.ValidCode(*subject) {
+		return fmt.Errorf("subject code %q: %w", *subject, catalogue.ErrInvalidCode)
+	}
+	if !catalogue.ValidCode(*code) {
+		return fmt.Errorf("chapter code %q: %w", *code, catalogue.ErrInvalidCode)
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sj, ch, created, err := catalogue.NewStore(pool).AddChapter(ctx, actor, *subject, *code)
+	if errors.Is(err, catalogue.ErrNotFound) {
+		return fmt.Errorf("unknown subject code %q (add it with add-subject)", *subject)
+	}
+	if err != nil {
+		return err
+	}
+	if !created {
+		fmt.Fprintf(stdout, "no change: chapter %s already exists in subject %s (id %d)\n", ch.Code, sj.Code, ch.ID)
+		return nil
+	}
+	fmt.Fprintf(stdout, "added chapter %s to subject %s (id %d)\n", ch.Code, sj.Code, ch.ID)
 	return nil
 }
 

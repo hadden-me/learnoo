@@ -56,6 +56,12 @@ func newEnv(t *testing.T) *env {
 // newEnvConfig is newEnv with the auth policy adjusted by configure.
 func newEnvConfig(t *testing.T, configure func(*auth.Config)) *env {
 	t.Helper()
+	return newEnvOptions(t, configure)
+}
+
+// newEnvOptions is newEnvConfig with server options (such as the Studio bundle).
+func newEnvOptions(t *testing.T, configure func(*auth.Config), opts ...server.Option) *env {
+	t.Helper()
 	db := dbtest.Migrated(t)
 	cfg := auth.DefaultConfig
 	cfg.Argon2 = testArgon2
@@ -73,7 +79,7 @@ func newEnvConfig(t *testing.T, configure func(*auth.Config)) *env {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ms.Close() })
-	e := &env{t: t, db: db, h: server.New(db, svc, ms, log), clock: c, cfg: cfg}
+	e := &env{t: t, db: db, h: server.New(db, svc, ms, log, opts...), clock: c, cfg: cfg}
 	e.createUser(testEmail, testPassword)
 	return e
 }

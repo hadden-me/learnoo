@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
 )
@@ -150,7 +151,7 @@ func (e *env) uploadBytes(u apiUser, ctype string, data []byte) *httptest.Respon
 func (e *env) newSubject(code string) int64 {
 	e.t.Helper()
 	var id int64
-	if err := e.db.QueryRow(context.Background(), `INSERT INTO subjects (code) VALUES ($1) RETURNING id`, code).Scan(&id); err != nil {
+	if err := e.db.QueryRow(context.Background(), dbtest.SubjectSQL, code, dbtest.TestOperatorLabel).Scan(&id); err != nil {
 		e.t.Fatal(err)
 	}
 	return id
@@ -159,7 +160,7 @@ func (e *env) newSubject(code string) int64 {
 func (e *env) chapter(subject int64, code string) int64 {
 	e.t.Helper()
 	var id int64
-	if err := e.db.QueryRow(context.Background(), `INSERT INTO chapters (subject_id, code) VALUES ($1, $2) RETURNING id`, subject, code).Scan(&id); err != nil {
+	if err := e.db.QueryRow(context.Background(), dbtest.ChapterSQL, subject, code, dbtest.TestOperatorLabel).Scan(&id); err != nil {
 		e.t.Fatal(err)
 	}
 	return id

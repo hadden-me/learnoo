@@ -11,6 +11,8 @@ const proxy = {
 };
 
 export default defineConfig({
+  // The application server serves the built bundle under /studio/ (docs/DEVELOPMENT.md).
+  base: '/studio/',
   plugins: [react()],
   server: { host: '127.0.0.1', port, strictPort: true, proxy, fs: { allow: ['.', '../design', '../../internal/rendering/fixtures'] } },
   preview: { host: '127.0.0.1', port, strictPort: true, proxy },

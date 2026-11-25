@@ -110,9 +110,13 @@ func headers(next http.Handler) http.Handler {
 	})
 }
 
-// nextPattern limits post-login redirects to reader paths made of plain
-// segments: no scheme, host, query or "//".
-var nextPattern = regexp.MustCompile(`^/learn(/[A-Za-z0-9._~-]+)*$`)
+// nextPattern limits post-login redirects to reader and Studio paths made
+// of plain segments: no scheme, host, query or "//".
+var nextPattern = regexp.MustCompile(`^/(?:learn|studio)(/[A-Za-z0-9._~-]+)*$`)
+
+// SafeNext returns next if it is a reader or Studio path the sign-in page
+// may redirect to, and /learn otherwise.
+func SafeNext(next string) string { return safeNext(next) }
 
 func safeNext(next string) string {
 	if nextPattern.MatchString(next) && !strings.Contains(next, "/..") && !strings.Contains(next, "/./") {
@@ -224,6 +228,12 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, na
 	if r.Method != http.MethodHead {
 		_, _ = buf.WriteTo(w)
 	}
+}
+
+// ErrorPage renders the reader's error page (used by the Studio shell for
+// its 403 page). The caller sets the response's cache and CSP headers.
+func (h *Handlers) ErrorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {
+	h.errorPage(w, r, status, heading, message)
 }
 
 func (h *Handlers) errorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {
@@ -479,8 +489,7 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 
 type lessonData struct {
 	Lesson
-	Dir    string
-	Body   template.HTML
+	Parts  rendering.LessonParts
 	Report reportForm
 }
 
@@ -494,12 +503,7 @@ type reportForm struct {
 }
 
 // Dir returns the base direction of a lesson language.
-func Dir(lang string) string {
-	if lang == "ar" {
-		return "rtl"
-	}
-	return "ltr"
-}
+func Dir(lang string) string { return rendering.Dir(lang) }
 
 func (h *Handlers) lesson(w http.ResponseWriter, r *http.Request) {
 	h.showLesson(w, r, http.StatusOK, reportForm{})
@@ -517,7 +521,9 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 		h.internal(w, r, "lesson", err)
 		return
 	}
-	body, err := rendering.RenderBlocks(l.Document)
+	// The same parts as the Studio preview (POST /api/preview): heading,
+	// objective and body come from the published document.
+	parts, err := rendering.RenderLesson(l.Document)
 	if err != nil {
 		h.internal(w, r, "render lesson", err)
 		return
@@ -525,7 +531,7 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 	form.Max = reports.MaxMessage
 	w.Header().Set("Content-Security-Policy", cspLesson)
 	h.render(w, r, status, "lesson", view{Title: l.Title, Lesson: true,
-		Data: lessonData{Lesson: l, Dir: Dir(l.Language), Body: body, Report: form}})
+		Data: lessonData{Lesson: l, Parts: parts, Report: form}})
 }
 
 // revisionField accepts a positive decimal revision number.

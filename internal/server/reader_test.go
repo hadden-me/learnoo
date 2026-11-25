@@ -20,6 +20,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/reader"
 	"github.com/hadden-me/learnoo/internal/rendering"
 	"github.com/hadden-me/learnoo/internal/review"
+	"github.com/hadden-me/learnoo/internal/server"
 )
 
 // Student reader (LRN-008) through the real server handler. Every lesson is
@@ -44,7 +45,12 @@ func newReader(t *testing.T) readerFixture {
 
 // newReaderConfig is newReader with the auth policy adjusted by configure.
 func newReaderConfig(t *testing.T, configure func(*auth.Config)) readerFixture {
-	e := newEnvConfig(t, configure)
+	return newReaderOptions(t, configure)
+}
+
+// newReaderOptions is newReaderConfig with server options.
+func newReaderOptions(t *testing.T, configure func(*auth.Config), opts ...server.Option) readerFixture {
+	e := newEnvOptions(t, configure, opts...)
 	subject := e.newSubject("test-math")
 	f := readerFixture{env: e, subject: subject,
 		author:    e.newUser("test-author", subject, permissions.Author),

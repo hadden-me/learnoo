@@ -4,11 +4,13 @@ package server
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
@@ -17,33 +19,62 @@ import (
 	"github.com/hadden-me/learnoo/internal/reports"
 	"github.com/hadden-me/learnoo/internal/review"
 	"github.com/hadden-me/learnoo/internal/studioapi"
+	"github.com/hadden-me/learnoo/internal/studioweb"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Option configures New.
+type Option func(*options)
+
+type options struct {
+	studio fs.FS
+}
+
+// WithStudio serves the built Studio bundle (web/studio/dist) from files
+// under /studio (internal/studioweb). Without it /studio is not routed.
+func WithStudio(files fs.FS) Option {
+	return func(o *options) { o.studio = files }
+}
+
 // New returns the root handler: routes wrapped in origin-based CSRF
 // protection and security headers. mediaStore holds uploaded images.
-func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog.Logger) http.Handler {
+func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog.Logger, opts ...Option) http.Handler {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	mux := http.NewServeMux()
 	authH := auth.NewHandlers(svc, log)
 	authH.Register(mux)
 	studioapi.New(studioapi.Config{
-		DB:      db,
-		Auth:    authH,
-		Perms:   permissions.NewMiddleware(permissions.NewStore(db), log),
-		Lessons: lessons.NewStore(db, nil),
-		Media:   mediaStore,
-		Review:  review.NewStore(db),
-		Reports: reports.NewStore(db),
-		Log:     log,
+		DB:        db,
+		Auth:      authH,
+		Perms:     permissions.NewMiddleware(permissions.NewStore(db), log),
+		Lessons:   lessons.NewStore(db, nil),
+		Media:     mediaStore,
+		Review:    review.NewStore(db),
+		Reports:   reports.NewStore(db),
+		Catalogue: catalogue.NewStore(db),
+		Log:       log,
 	}).Register(mux)
-	reader.New(reader.Config{
+	readerH := reader.New(reader.Config{
 		Auth:        authH,
 		Service:     svc,
 		Store:       reader.NewStore(db),
 		Invitations: invitations.NewStore(db, nil),
 		Reports:     reports.NewStore(db),
 		Log:         log,
-	}).Register(mux)
+	})
+	readerH.Register(mux)
+	if o.studio != nil {
+		studioweb.New(studioweb.Config{
+			Auth:      authH,
+			Perms:     permissions.NewStore(db),
+			Files:     o.studio,
+			ErrorPage: readerH.ErrorPage,
+			Log:       log,
+		}).Register(mux)
+	}
 	// Liveness: the process serves HTTP. No dependency is checked, so a
 	// database outage does not make an orchestrator restart the app.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

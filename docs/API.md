@@ -2,12 +2,12 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader and LRN-015 error reports.** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), and [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API.
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports and the Studio integration (issue #65).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
 
 ## Conventions
 
 - JSON bodies, UTF-8. Request bodies must use `Content-Type: application/json` (the only exception is the raw image body of `POST /api/media`). Studio endpoints accept exactly one JSON object whose top-level keys are spelled exactly as documented (case-sensitive) and appear once; unknown, case-variant or duplicate keys, values of the wrong type, anything after the object and malformed JSON are rejected with `400 invalid_request`. `null` is accepted only where a field is documented as accepting it (such as `chapterId` and `translationOf`); it is `400` for every other field, including `content`, `prerequisites`, `mediaIds` (and its elements), `subjectId`, `language` and `expectedVersion`. Integer fields accept only integer literals that fit (`1.0`, `1e0` and `"1"` are `400`). Error messages name the JSON key, never an implementation type. The login endpoint applies the same key rules (see below).
-- Every response carries `Cache-Control: no-store` (media responses: `private, no-store`) and `Vary: Cookie`; authenticated responses must never be stored by shared caches.
+- Every response carries `Cache-Control: no-store` (media responses, the [Studio integration](#studio-integration-issue-65) endpoints and `/studio`: `private, no-store`) and `Vary: Cookie`; authenticated responses must never be stored by shared caches.
 - Session: cookie `__Host-learnoo_session` (`HttpOnly; Secure; SameSite=Lax; Path=/`, no `Domain`). The value is opaque; clients never read it. Browsers accept `Secure` cookies on `http://localhost` and `http://127.0.0.1` only.
 - CSRF, two layers:
   1. Every unsafe method (`POST`, `PUT`, `PATCH`, `DELETE`) from a browser is rejected when `Sec-Fetch-Site` or `Origin` shows a cross-origin request (Go `http.CrossOriginProtection`). This also prevents login CSRF.
@@ -29,7 +29,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 403 | `cross_origin_rejected` | Cross-origin unsafe request |
 | 403 | `forbidden` | Signed in, but lacks the required permission (or it could not be verified) |
 | 403 | `self_review` | A reviewer tried to approve or request changes on their own revision (administrators included) |
-| 404 | `not_found` | Unknown route; a lesson, revision, media or error report ID that does not exist, is malformed, or (revisions) belongs to another author, or (error reports) belongs to a subject the caller does not review |
+| 404 | `not_found` | Unknown route; a catalogue subject code, lesson, revision, media or error report ID that does not exist, is malformed, or (revisions) belongs to another author, or (error reports) belongs to a subject the caller does not review |
 | 408 | `upload_timeout` | The upload body did not arrive within the server's read timeout. No `Retry-After`: retry on a better connection or with a smaller image |
 | 409 | `version_conflict` | `expectedVersion` is stale: the draft changed since it was loaded. Nothing was written |
 | 409 | `not_draft` | The revision was submitted and can no longer change, be submitted again or be discarded |
@@ -53,7 +53,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
-| 422 | `invalid_content` | The document fails schema v1 validation, or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
+| 422 | `invalid_content` | The document fails schema v1 validation (drafts and `POST /api/preview` alike), or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
 | 422 | `language_mismatch` | The document's `language` differs from the lesson's |
 | 422 | `unknown_subject` / `unknown_chapter` / `unknown_media` | Referenced subject, chapter (of this subject) or media asset does not exist |
 | 422 | `reason_required` / `invalid_reason` | Withdrawal or unpublication without a reason, or with one over 2000 characters or not valid text |
@@ -438,8 +438,8 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 
 | Route | Session | Result |
 | --- | --- | --- |
-| `GET /login?next=/learn/…` | — | Sign-in form. Signed-in users are redirected to `next` |
-| `POST /login` | — | Fields `email`, `password`, `next`. Same service as `POST /api/auth/login`: same throttle (`429` page with `Retry-After`), same enumeration-safe failure (`401` page), new rotated session cookie, `303` to `next`. `next` must be `/learn` or a `/learn/…` path of plain segments; anything else (other paths, hosts, `//`, queries, `..`) becomes `/learn` |
+| `GET /login?next=/learn/…` | — | Sign-in form (`next` may also be a `/studio` path). Signed-in users are redirected to `next` |
+| `POST /login` | — | Fields `email`, `password`, `next`. Same service as `POST /api/auth/login`: same throttle (`429` page with `Retry-After`), same enumeration-safe failure (`401` page), new rotated session cookie, `303` to `next`. `next` must be `/learn`, `/studio` or a `/learn/…` or `/studio/…` path of plain segments; anything else (other paths, hosts, `//`, queries, `..`) becomes `/learn` |
 | `POST /logout` | required | Field `csrf_token`. Deletes the session, clears the cookie, `303` to `/login` |
 | `GET /invite/{token}` | — | Invitation form showing the invited email, or a `404` page with one message for unknown, malformed, expired and used tokens. Throttled |
 | `POST /invite` | — | Fields `token`, `display_name`, `password`, `password_confirm`. Validation errors: `422` form (the display name is kept, passwords are not). Success: creates the Student account, marks the invitation used, signs in, `303` to `/learn`. Invalid token: the same `404` page. Throttled |
@@ -506,6 +506,73 @@ The report object. `404 not_found` for missing, malformed and other-subject IDs 
 
 Body `{"note": "Corrigé dans la révision 3."}` (strict JSON, `note` required). The note follows the `message` rules above (1 to 2000 characters after trimming). In one transaction the report row is locked, the caller rechecked, an append-only resolution (report, actor, action, note, transaction time) inserted and the status set to `resolved` or `dismissed`. `200` with the report object; `422 note_required | invalid_note`; `404 not_found`; `409 not_open` if already resolved or dismissed (of concurrent resolutions exactly one applies); `409 retry` on a deadlock or serialization failure. A report is closed once and cannot be reopened; its text and the resolution never change.
 
+## Studio integration (issue #65)
+
+What the Studio needs from the authenticated application, so that neither `localStorage` nor the loopback renderer experiment is part of the authoring flow. Decisions: [DECISIONS.md](DECISIONS.md#studio-integration-issue-65). Every endpoint below needs a session (`401 unauthenticated`), runs the [conventions](#conventions) (strict JSON, CSRF on `POST`) and answers with `Cache-Control: private, no-store`.
+
+| Endpoint | Who may call it |
+| --- | --- |
+| `GET /api/catalogue/subjects` | `author`, or a reviewer of any subject. Everyone else (students, publisher-only and administrator-only accounts): `403 forbidden` |
+| `GET /api/catalogue/subjects/{code}/chapters` | As above. The permission check runs first, so a student gets `403` for known and unknown codes alike |
+| `GET /api/lessons/mine` | `author` (checked by the middleware and again inside the listing's transaction). Lists only the caller's own lessons; administrators get no exception |
+| `POST /api/preview` | `author` |
+
+### Catalogue
+
+Subjects and chapters are identified by codes (1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen) and carry the IDs that `POST /api/lessons` (`subjectId`) and draft fields (`chapterId`) take. Lists are ordered by code and bounded to 1000 entries. Display names, a curriculum ordering and seed data are LRN-014: there are no names yet, and nothing is seeded (operators add entries with `add-subject` and `add-chapter`, [DEVELOPMENT.md](DEVELOPMENT.md#provisioning-teachers-and-the-catalogue)).
+
+`GET /api/catalogue/subjects`:
+
+```json
+{"subjects": [{"id": 1, "code": "maths"}, {"id": 2, "code": "physique"}]}
+```
+
+`GET /api/catalogue/subjects/{code}/chapters`: `404 not_found` for an unknown or malformed code.
+
+```json
+{"subject": {"id": 1, "code": "maths"}, "chapters": [{"id": 4, "code": "complexes"}, {"id": 3, "code": "suites"}]}
+```
+
+Lists are always arrays, never `null`.
+
+### `GET /api/lessons/mine`
+
+The caller's lessons (`lessons.created_by`), most recently updated first (by the latest revision's `updatedAt`, or the lesson's creation when it has no revision), at most 500. Another author's lessons never appear, whatever the caller's other permissions.
+
+```json
+{"lessons": [{
+  "id": 7, "publicId": "0b6f…", "subjectId": 1, "subjectCode": "maths", "language": "fr",
+  "translationGroupId": "5c1e…", "archived": false, "publishedRevisionId": 18,
+  "createdAt": "2026-11-20T09:00:00Z", "hasFeedback": true, "feedbackRevisionId": 20,
+  "latestRevision": {"id": 21, "number": 3, "status": "draft", "title": "Les nombres complexes",
+    "chapterId": 4, "chapterCode": "complexes", "version": 5, "updatedAt": "2026-11-25T10:12:00Z"}
+}]}
+```
+
+- `latestRevision` is the highest-numbered revision whatever its status (`draft`, `in_review`, `changes_requested`, `approved`), or `null` when the lesson's only draft was discarded. Its full content and review comment come from [`GET /api/revisions/{revisionId}`](#get-apirevisionsrevisionid).
+- `hasFeedback` is `true` when the author has reviewer feedback to act on: the lesson's most recent review decision requested changes and no later revision has been submitted. It stays `true` while the successor draft (started with `POST /api/lessons/{lessonId}/drafts`) is edited, and turns `false` once a later revision is submitted. `feedbackRevisionId` names the revision that carries the feedback (read its `review.comment` with `GET /api/revisions/{revisionId}`), `null` when `hasFeedback` is `false`.
+- `publishedRevisionId` is the lesson's current published revision, `null` if none (never published, unpublished or withdrawn).
+
+### `POST /api/preview`
+
+Body `{"content": {…schema v1 document…}}` (strict JSON, `content` required and not `null`, at most 256 KiB as for drafts). The document is validated exactly as a draft save validates it (valid UTF-8, no NUL, the canonical schema v1 decoder and its 128 KiB document limit) and rendered by the production renderer (`internal/rendering`), never by the renderer experiment. Nothing is stored.
+
+`200`:
+
+```json
+{"html": "<h1 lang=\"fr\" dir=\"ltr\">…</h1><p class=\"objective\" …>…</p><article class=\"lesson-body\" …>…</article>"}
+```
+
+`html` is the reader's markup for the same document, byte for byte: the lesson heading, the objective paragraph (absent without an objective) and the `article` holding the lesson body, as on `/learn/lessons/{publicId}`. Math is emitted as `.math` elements for the client to typeset with the locally hosted KaTeX, as the reader does; the YouTube block is the same click-to-load button. Errors: `400 invalid_request`, `413 too_large`, `415 unsupported_media_type`, `422 invalid_content` with the validator's message.
+
+### Studio pages: `GET /studio` and `GET /studio/{path…}`
+
+The built Studio bundle (`web/studio/dist`, built with Vite `base: '/studio/'`), served from `LEARNOO_STUDIO_DIR` ([DEVELOPMENT.md](DEVELOPMENT.md#studio-in-the-application), [DEPLOYMENT.md](DEPLOYMENT.md#build)). Not routed when that variable is unset.
+
+- Access: a session and `author`, `publisher` or `administrator`, or a reviewer assignment for any subject. Without a session, page requests are redirected (`303`) to `/login?next=/studio…`; signed-in users without access (students) get the HTML `403` page. Asset requests (a last path segment containing a dot) answer `404 not_found` in both cases, so file names are not revealed.
+- Files: an existing regular file of the bundle is served with its content type; a missing file, a hidden file (segment starting with `.`), a directory, or any path leaving the bundle (including through a symbolic link) is `404`. Every other path under `/studio/` is a client route and gets `index.html`. The distinction is the last path segment only: **Studio client routes must never contain a dot in their last segment** (`/studio/lessons/12` is a route; `/studio/lessons/v1.2` would be looked up as a file and answer `404`). The `Accept` header is not used.
+- Headers: `Cache-Control: private, no-store` (assets included, see DECISIONS.md), `Vary: Cookie`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, no `Last-Modified` or `ETag`, and `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`. The Vite build emits only an external module script and stylesheet, so no inline script is allowed; the editor does not inject a `<style>` element (TipTap `injectCSS: false`, base rules in the Studio stylesheet), so none is allowed either; inline style attributes are, for the editor and KaTeX, as on the reader's lesson page.
+
 ## Not yet defined
 
-Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
+Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet); catalogue names, ordering and seed data (LRN-014); the Studio frontend's use of these endpoints (separate issue); a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).

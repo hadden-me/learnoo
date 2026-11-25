@@ -7,7 +7,7 @@ const live = new Set<Editor>();
 
 /** Every editor is destroyed after its test by destroyEditors (test/setup.ts). */
 export function createEditor(): Editor {
-  const editor = new Editor({ element: document.createElement('div'), extensions: lessonExtensions });
+  const editor = new Editor({ element: document.createElement('div'), extensions: lessonExtensions, injectCSS: false });
   live.add(editor);
   editor.on('destroy', () => live.delete(editor));
   return editor;

@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hadden-me/learnoo/internal/server"
 )
 
 // TestBrowserReaderServer is a fixture server, not a test. It runs only when
@@ -18,7 +20,9 @@ import (
 // seeds TEST lessons into an isolated schema of the test database, writes a
 // one-time student invitation token to LEARNOO_BROWSER_READER_TOKEN_FILE and
 // serves the application on that loopback address until SIGTERM/SIGINT, then
-// drops the schema. No real accounts, lessons or credentials are involved.
+// drops the schema. With LEARNOO_BROWSER_STUDIO_DIR (the built web/studio/dist)
+// it also serves the Studio at /studio, as `serve` does with
+// LEARNOO_STUDIO_DIR. No real accounts, lessons or credentials are involved.
 func TestBrowserReaderServer(t *testing.T) {
 	addr := os.Getenv("LEARNOO_BROWSER_READER_ADDR")
 	if addr == "" {
@@ -32,7 +36,19 @@ func TestBrowserReaderServer(t *testing.T) {
 	if tokenFile == "" {
 		t.Fatal("LEARNOO_BROWSER_READER_TOKEN_FILE is not set")
 	}
-	f := newReader(t)
+	var opts []server.Option
+	if dir := os.Getenv("LEARNOO_BROWSER_STUDIO_DIR"); dir != "" {
+		root, err := os.OpenRoot(dir)
+		if err != nil {
+			t.Fatalf("LEARNOO_BROWSER_STUDIO_DIR: %v (build it: cd web/studio && npm run build)", err)
+		}
+		defer root.Close()
+		if _, err := root.Stat("index.html"); err != nil {
+			t.Fatalf("LEARNOO_BROWSER_STUDIO_DIR has no index.html (build it: cd web/studio && npm run build): %v", err)
+		}
+		opts = append(opts, server.WithStudio(root.FS()))
+	}
+	f := newReaderOptions(t, nil, opts...)
 	ch := f.chapter(f.subject, "test-chapter")
 	f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
 	f.publish(f.approved(0, readerDoc("TEST درس تجريبي", "ar",

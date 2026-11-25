@@ -59,7 +59,7 @@ func newEnv(t *testing.T) *env {
 func (e *env) newSubject(code string) int64 {
 	e.t.Helper()
 	var id int64
-	if err := e.db.QueryRow(e.ctx, `INSERT INTO subjects (code) VALUES ($1) RETURNING id`, code).Scan(&id); err != nil {
+	if err := e.db.QueryRow(e.ctx, dbtest.SubjectSQL, code, dbtest.TestOperatorLabel).Scan(&id); err != nil {
 		e.t.Fatal(err)
 	}
 	return id
