@@ -50,9 +50,18 @@ var testArgon2 = auth.Argon2Params{MemoryKiB: 1024, Iterations: 1, Lanes: 1, Sal
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvConfig(t, nil)
+}
+
+// newEnvConfig is newEnv with the auth policy adjusted by configure.
+func newEnvConfig(t *testing.T, configure func(*auth.Config)) *env {
+	t.Helper()
 	db := dbtest.Migrated(t)
 	cfg := auth.DefaultConfig
 	cfg.Argon2 = testArgon2
+	if configure != nil {
+		configure(&cfg)
+	}
 	c := &clock{t: time.Date(2026, 11, 24, 9, 0, 0, 0, time.UTC)}
 	svc, err := auth.New(db, cfg, c.Now)
 	if err != nil {

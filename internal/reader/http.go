@@ -16,11 +16,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/rendering"
+	"github.com/hadden-me/learnoo/internal/reports"
 	"github.com/hadden-me/learnoo/internal/users"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 //go:embed templates/*.html static/*
@@ -45,12 +48,18 @@ const csrfField = "csrf_token"
 
 const maxFormBytes = 8 << 10
 
+// maxReportFormBytes bounds the error report form: 2000 characters of up to
+// 4 UTF-8 bytes each, percent-encoded (3 bytes per byte), plus the other
+// fields.
+const maxReportFormBytes = 32 << 10
+
 // Config wires the reader to the application.
 type Config struct {
 	Auth        *auth.Handlers
 	Service     *auth.Service
 	Store       *Store
 	Invitations *invitations.Store
+	Reports     *reports.Store
 	Log         *slog.Logger
 }
 
@@ -64,7 +73,7 @@ type Handlers struct {
 func New(cfg Config) *Handlers {
 	base := template.Must(template.New("").Funcs(template.FuncMap{"dir": Dir}).ParseFS(files, "templates/layout.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "search", "error"} {
+	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "reported", "search", "error"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(files, "templates/"+name+".html"))
 	}
 	return &Handlers{Config: cfg, pages: pages}
@@ -86,6 +95,8 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	page("GET /learn/lessons/{publicId}", h.requireUser(h.lesson))
 	page("POST /learn/lessons/{publicId}/bookmark", h.requireUser(h.requireCSRF(h.addBookmark)))
 	page("POST /learn/lessons/{publicId}/unbookmark", h.requireUser(h.requireCSRF(h.removeBookmark)))
+	page("POST /learn/lessons/{publicId}/report", h.requireUser(h.requireCSRFBody(maxReportFormBytes, h.report, h.reportTooLarge)))
+	page("GET /learn/lessons/{publicId}/reported", h.requireUser(h.reported))
 	mux.Handle("GET /static/{path...}", headers(h.Auth.Middleware(http.HandlerFunc(h.static))))
 }
 
@@ -128,21 +139,47 @@ func (h *Handlers) requireUser(next http.HandlerFunc) http.HandlerFunc {
 
 // parseForm reads a bounded application/x-www-form-urlencoded body.
 func parseForm(w http.ResponseWriter, r *http.Request) bool {
+	return parseFormLimit(w, r, maxFormBytes) == nil
+}
+
+// errNotForm means the body is not application/x-www-form-urlencoded.
+var errNotForm = errors.New("not a form body")
+
+// parseFormLimit reads a form body of at most limit bytes. A larger body
+// returns an *http.MaxBytesError.
+func parseFormLimit(w http.ResponseWriter, r *http.Request, limit int64) error {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mt != "application/x-www-form-urlencoded" {
-		return false
+		return errNotForm
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-	return r.ParseForm() == nil
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	return r.ParseForm()
 }
 
 // requireCSRF checks the session's CSRF token in the form body. Go's
 // cross-origin protection (internal/server) has already rejected
 // cross-origin form posts; this is the second, session-bound layer.
 func (h *Handlers) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
+	return h.requireCSRFBody(maxFormBytes, next, nil)
+}
+
+// requireCSRFBody is requireCSRF for a form body of at most limit bytes.
+// A larger body is never accepted: its CSRF token cannot be checked and
+// next does not run. If tooLarge is set, it answers instead of the generic
+// 403 page; it must not change state.
+func (h *Handlers) requireCSRFBody(limit int64, next, tooLarge http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := auth.SessionFrom(r.Context())
-		if !ok || !parseForm(w, r) || !validCSRF(r.PostForm.Get(csrfField), sess.CSRFToken) {
+		var err error
+		if ok {
+			err = parseFormLimit(w, r, limit)
+		}
+		var big *http.MaxBytesError
+		if ok && tooLarge != nil && errors.As(err, &big) {
+			tooLarge(w, r)
+			return
+		}
+		if !ok || err != nil || !validCSRF(r.PostForm.Get(csrfField), sess.CSRFToken) {
 			h.errorPage(w, r, http.StatusForbidden, "Requête refusée", "La requête n’a pas pu être vérifiée. Rechargez la page et réessayez.")
 			return
 		}
@@ -442,8 +479,18 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 
 type lessonData struct {
 	Lesson
-	Dir  string
-	Body template.HTML
+	Dir    string
+	Body   template.HTML
+	Report reportForm
+}
+
+// reportForm is the state of the "Signaler une erreur" form on the lesson
+// page: empty and closed, or reopened with the student's text and an error.
+type reportForm struct {
+	Open    bool
+	Message string
+	Error   string
+	Max     int
 }
 
 // Dir returns the base direction of a lesson language.
@@ -455,6 +502,12 @@ func Dir(lang string) string {
 }
 
 func (h *Handlers) lesson(w http.ResponseWriter, r *http.Request) {
+	h.showLesson(w, r, http.StatusOK, reportForm{})
+}
+
+// showLesson renders the published lesson page with the report form in the
+// given state.
+func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int, form reportForm) {
 	l, err := h.Store.Lesson(r.Context(), userID(r.Context()), r.PathValue("publicId"))
 	if errors.Is(err, ErrNotFound) {
 		h.notFound(w, r)
@@ -469,9 +522,107 @@ func (h *Handlers) lesson(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "render lesson", err)
 		return
 	}
+	form.Max = reports.MaxMessage
 	w.Header().Set("Content-Security-Policy", cspLesson)
-	h.render(w, r, http.StatusOK, "lesson", view{Title: l.Title, Lesson: true,
-		Data: lessonData{Lesson: l, Dir: Dir(l.Language), Body: body}})
+	h.render(w, r, status, "lesson", view{Title: l.Title, Lesson: true,
+		Data: lessonData{Lesson: l, Dir: Dir(l.Language), Body: body, Report: form}})
+}
+
+// revisionField accepts a positive decimal revision number.
+var revisionField = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
+
+// report files an error report on the published revision the student was
+// reading (LRN-015). Every accepted submission counts against the
+// per-account and per-address throttle, valid or not.
+func (h *Handlers) report(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("publicId")
+	if !ValidPublicID(id) {
+		h.notFound(w, r)
+		return
+	}
+	err := h.Service.ThrottleErrorReport(r.Context(), userID(r.Context()), auth.ClientAddr(r))
+	var limited *auth.RateLimitedError
+	switch {
+	case errors.As(err, &limited):
+		h.rateLimited(w, r, limited)
+		return
+	case err != nil:
+		h.internal(w, r, "throttle error report", err)
+		return
+	}
+	raw := r.PostForm.Get("revision")
+	if len(r.PostForm["revision"]) != 1 || len(r.PostForm["message"]) != 1 || !revisionField.MatchString(raw) {
+		h.errorPage(w, r, http.StatusBadRequest, "Requête invalide", "Le formulaire est incomplet. Rechargez la leçon et réessayez.")
+		return
+	}
+	number, _ := strconv.Atoi(raw)
+	message := r.PostForm.Get("message")
+	// Keep at most a little more than the limit when re-displaying text.
+	form := reportForm{Open: true, Message: truncateRunes(message, reports.MaxMessage+100)}
+	_, err = h.Reports.Create(r.Context(), userID(r.Context()), id, number, message)
+	switch {
+	case err == nil:
+		http.Redirect(w, r, "/learn/lessons/"+id+"/reported", http.StatusSeeOther)
+	case errors.Is(err, reports.ErrTextRequired):
+		form.Error = "Décrivez l’erreur avant d’envoyer le signalement."
+		h.showLesson(w, r, http.StatusUnprocessableEntity, form)
+	case errors.Is(err, reports.ErrInvalidText):
+		form.Error = "Le signalement doit contenir au plus " + strconv.Itoa(reports.MaxMessage) +
+			" caractères, sans caractères de contrôle ni de mise en forme de direction."
+		h.showLesson(w, r, http.StatusUnprocessableEntity, form)
+	case errors.Is(err, reports.ErrNotFound):
+		h.notFound(w, r)
+	case errors.Is(err, reports.ErrRevisionChanged):
+		// The published revision changed since it was displayed. Show the
+		// current version with the student's text kept; nothing was
+		// stored. A lesson that is no longer published gets 404.
+		form.Error = "La leçon a été modifiée depuis son affichage. Relisez-la, puis renvoyez votre signalement s’il s’applique encore."
+		h.showLesson(w, r, http.StatusConflict, form)
+	case errors.Is(err, reports.ErrRejected), isRetryable(err):
+		// A concurrent change or a database guard refused the report;
+		// nothing was stored and the request can be sent again.
+		form.Error = "Le signalement n’a pas pu être enregistré. Réessayez."
+		h.showLesson(w, r, http.StatusConflict, form)
+	default:
+		h.internal(w, r, "error report", err)
+	}
+}
+
+// reportTooLarge answers a report form body over maxReportFormBytes (text
+// pasted far beyond the limit). Nothing is stored or throttled, since the
+// CSRF token was not checked; it only shows the lesson again, read-only.
+// The truncated text cannot be kept.
+func (h *Handlers) reportTooLarge(w http.ResponseWriter, r *http.Request) {
+	if !ValidPublicID(r.PathValue("publicId")) {
+		h.notFound(w, r)
+		return
+	}
+	h.showLesson(w, r, http.StatusRequestEntityTooLarge, reportForm{Open: true,
+		Error: "Le texte est trop long (au plus " + strconv.Itoa(reports.MaxMessage) + " caractères). Il n’a pas pu être conservé : saisissez une version plus courte."})
+}
+
+// reported confirms a filed report. It shows no lesson data.
+func (h *Handlers) reported(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("publicId")
+	if !ValidPublicID(id) {
+		h.notFound(w, r)
+		return
+	}
+	h.render(w, r, http.StatusOK, "reported", view{Title: "Signalement envoyé", Data: id})
+}
+
+// isRetryable reports a deadlock (40P01) or serialization failure (40001):
+// the transaction rolled back and stored nothing.
+func isRetryable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 type searchData struct {

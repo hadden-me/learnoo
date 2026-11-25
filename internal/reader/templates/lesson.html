@@ -3,4 +3,11 @@
 <p class="credit">Rédigé par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Relu et approuvé par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}</p>
 <form method="post" action="/learn/lessons/{{.PublicID}}/{{if .Bookmarked}}unbookmark{{else}}bookmark{{end}}" class="bookmark"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button type="submit"{{if .Bookmarked}} class="secondary"{{end}}>{{if .Bookmarked}}Retirer des signets{{else}}Enregistrer{{end}}</button></form>
 {{if .Objectives}}<p class="objective" lang="{{.Language}}" dir="{{.Dir}}">{{.Objectives}}</p>{{end}}
-<article class="lesson-body" aria-label="Contenu de la leçon" lang="{{.Language}}" dir="{{.Dir}}">{{.Body}}</article>{{end}}{{end}}
+<article class="lesson-body" aria-label="Contenu de la leçon" lang="{{.Language}}" dir="{{.Dir}}">{{.Body}}</article>
+<details class="report"{{if .Report.Open}} open{{end}}><summary>Signaler une erreur</summary>
+<form method="post" action="/learn/lessons/{{.PublicID}}/report" class="form" novalidate>
+<input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{.RevisionNumber}}">
+{{with .Report.Error}}<div class="form-error" role="alert"><p id="report_error">{{.}}</p></div>{{end}}
+<div class="field"><label for="report_message">Décrivez l’erreur</label><span class="hint" id="report_hint">Indiquez le passage concerné et ce qui vous semble faux. Au plus {{.Report.Max}} caractères. Votre signalement est transmis à l’équipe de relecture avec votre compte ; la leçon n’est pas modifiée.</span><textarea id="report_message" name="message" rows="5" dir="auto" required aria-describedby="report_hint{{if .Report.Error}} report_error{{end}}">{{.Report.Message}}</textarea></div>
+<button type="submit" class="secondary">Envoyer le signalement</button>
+</form></details>{{end}}{{end}}

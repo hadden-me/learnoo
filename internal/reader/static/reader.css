@@ -9,12 +9,13 @@ button.secondary:hover:not(:disabled) { background: var(--learnoo-color-brand-so
 .field { display: grid; gap: var(--learnoo-space-2); }
 .field label, .field .label, .search label { font-weight: var(--learnoo-weight-emphasis); }
 .field .value { font-family: var(--learnoo-font-mono); overflow-wrap: anywhere; }
-input[type=text], input[type=email], input[type=password], input[type=search] {
+input[type=text], input[type=email], input[type=password], input[type=search], textarea {
   font: inherit; min-block-size: var(--learnoo-size-touch); inline-size: 100%;
   padding: var(--learnoo-space-2) var(--learnoo-space-3);
   color: var(--learnoo-color-ink); background: var(--learnoo-color-surface);
   border: 1px solid var(--learnoo-color-control-border); border-radius: var(--learnoo-radius-control);
 }
+textarea { resize: vertical; min-block-size: calc(var(--learnoo-size-touch) * 3); }
 input:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-offset: 2px; }
 .hint { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
 .error { font-size: var(--learnoo-text-small); color: var(--learnoo-color-danger); font-weight: var(--learnoo-weight-emphasis); }
@@ -31,6 +32,7 @@ input:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-off
 .credit { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); margin-block: 0 var(--learnoo-space-4); }
 .bookmark { margin-block: var(--learnoo-space-4); }
 .visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.report { margin-block: var(--learnoo-space-6); border-block-start: 1px solid var(--learnoo-color-border); padding-block-start: var(--learnoo-space-4); }
 .lesson-body { border-block-start: 1px solid var(--learnoo-color-border); margin-block-start: var(--learnoo-space-6); }
 @media (max-width: 40rem) {
   .reader nav { align-items: center; }

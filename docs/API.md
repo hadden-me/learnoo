@@ -2,7 +2,7 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, and the LRN-008 reader.** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), and the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON).
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader and LRN-015 error reports.** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), and [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 403 | `cross_origin_rejected` | Cross-origin unsafe request |
 | 403 | `forbidden` | Signed in, but lacks the required permission (or it could not be verified) |
 | 403 | `self_review` | A reviewer tried to approve or request changes on their own revision (administrators included) |
-| 404 | `not_found` | Unknown route; a lesson, revision or media ID that does not exist, is malformed, or (revisions) belongs to another author |
+| 404 | `not_found` | Unknown route; a lesson, revision, media or error report ID that does not exist, is malformed, or (revisions) belongs to another author, or (error reports) belongs to a subject the caller does not review |
 | 408 | `upload_timeout` | The upload body did not arrive within the server's read timeout. No `Retry-After`: retry on a better connection or with a smaller image |
 | 409 | `version_conflict` | `expectedVersion` is stale: the draft changed since it was loaded. Nothing was written |
 | 409 | `not_draft` | The revision was submitted and can no longer change, be submitted again or be discarded |
@@ -48,6 +48,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 409 | `not_published` | Unpublication of a lesson that has no published revision |
 | 409 | `never_published` | Restoration of a revision that was never published (publish it instead) |
 | 409 | `already_current` | Restoration of the revision that is already published |
+| 409 | `not_open` | Resolution or dismissal of an error report that was already resolved or dismissed (for example by a concurrent reviewer). Nothing was written |
 | 409 | `ineligible` | Restoration of a revision whose content no longer passes the current schema v1 validator, or whose media references do not resolve |
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
@@ -63,6 +64,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `trailing_data` | Data after the end of the image (polyglots, many phone photos); re-export the image or upload PNG |
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
+| 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |
@@ -417,7 +419,7 @@ Body `{"expectedPublishedRevisionId": 12}` (or `null` for an unpublished lesson)
 
 ## Student reader (LRN-008)
 
-Server-rendered HTML pages in French (interface language), in `internal/reader`. Decisions: [DECISIONS.md](DECISIONS.md#student-reader-lrn-008). They are not part of the JSON contract above: errors are HTML pages, forms are `application/x-www-form-urlencoded` (bodies over 8 KiB are refused), and redirects use `303 See Other`.
+Server-rendered HTML pages in French (interface language), in `internal/reader`. Decisions: [DECISIONS.md](DECISIONS.md#student-reader-lrn-008). They are not part of the JSON contract above: errors are HTML pages, forms are `application/x-www-form-urlencoded` (bodies over 8 KiB are refused; 32 KiB for the error report form), and redirects use `303 See Other`.
 
 ### Headers and access
 
@@ -442,6 +444,8 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 | `GET /learn/lessons/{publicId}` | required | Published lesson: breadcrumb, title, author and approving-reviewer credit (display names), bookmark button, objective and the canonical body from `rendering.RenderBlocks`. `404` page for unknown, malformed (only lower-case UUIDs), never-published, unpublished and archived lessons alike |
 | `POST /learn/lessons/{publicId}/bookmark` | required + `csrf_token` | Bookmarks a published lesson (idempotent), `303` back to the lesson (or to `/learn` with `return=dashboard`). `404` if not published; `409` page at 500 bookmarks |
 | `POST /learn/lessons/{publicId}/unbookmark` | required + `csrf_token` | Removes the bookmark, published or not (idempotent), `303` as above |
+| `POST /learn/lessons/{publicId}/report` | required + `csrf_token` | Files an [error report](#error-reports-lrn-015) on the published revision shown. Fields `message` and `revision`. `303` to the confirmation page; `422` lesson page with the form reopened (text kept) for invalid text; `409` lesson page showing the current revision (text kept) if the published revision changed, or with a generic "try again" message (text kept) after a concurrent conflict or guard refusal; `413` lesson page (form reopened, text not kept) for a body over 32 KiB, which is never accepted, stored or throttled; `400` page for missing or malformed fields; `404` if the lesson is not published; `429` page when throttled |
+| `GET /learn/lessons/{publicId}/reported` | required | Confirmation page with a link back to the lesson; shows no lesson data |
 | `GET /learn/search?q=…` | required | Title search over published lessons, see below |
 | `GET /static/{path}` | — / required | Public: `tokens.css`, `site.css`, `reader.css`, `math.js`, `vendor/katex/…` (generic code, no lesson content). Lesson media (today only the renderer's fixture image `complex-plane.svg`) needs a session. Anything else, directories, and media without a session: `404` |
 
@@ -456,6 +460,48 @@ Each invitation page view and form submission counts one attempt per client addr
 - The query is a bound parameter used with `strpos`, never SQL text or a `LIKE` pattern, so `%`, `_`, quotes and backslashes match literally.
 - At most 50 results, ordered by folded title. There is no index for substring search: it scans the published lessons, which is fine for the pilot's size; a trigram index needs the `pg_trgm` extension and is left to later.
 
+## Error reports (LRN-015)
+
+Decisions: [DECISIONS.md](DECISIONS.md#error-reports-lrn-015). A signed-in reader reports an error on the published revision they were reading; reviewers of the lesson's subject and administrators list, read, resolve and dismiss reports through the review API. Reports never change lesson content: a correction is a new revision that goes through review and publication.
+
+### Filing a report (reader)
+
+- The lesson page has a closed "Signaler une erreur" section (`<details>`, no JavaScript) holding a form that posts to `POST /learn/lessons/{publicId}/report` with `csrf_token`, `message` and `revision` (the lesson-scoped number of the published revision displayed, not its database ID). Each field must appear exactly once in the body.
+- Any signed-in, active account may report (CAHIER_DES_CHARGES §2.2: students, teachers, reviewers, administrators). Anonymous `401` page, CSRF `403` page and cross-origin `403 cross_origin_rejected`, as for bookmarks.
+- `message`: line breaks are normalized to LF and surrounding whitespace trimmed; it must then hold 1 to 2000 characters of valid UTF-8 with no control character other than LF (tabs included) and no bidirectional formatting (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069) or line/paragraph separator (U+2028, U+2029) characters. The database enforces the same rule. Invalid text: `422` lesson page, form reopened with the text and an error. The textarea has no `maxlength` (browsers count UTF-16 code units, not characters); the hint states the limit and the server enforces it.
+- The report names the revision shown: the server compares `revision` with the lesson's current published revision under a share lock on the lesson row, and a database guard repeats the check, so the stored `revision_id` is the displayed revision and is published at the report's commit. If it changed since the page was displayed: `409` lesson page showing the current revision, with the text kept; nothing is stored.
+- Throttling: every authenticated, CSRF-valid submission (valid or not) counts one attempt for the account and one for the client address, in the login throttle table under their own key scopes. More than 10 per account or 60 per address in the sliding 15-minute window return a `429` page with `Retry-After`; nothing is stored. Sign-in and invitation budgets are separate.
+- Success: `303` to `GET /learn/lessons/{publicId}/reported`. The reporter cannot list their reports or see their status.
+
+### Authorization (review API)
+
+Same conventions as above: no session `401 unauthenticated`; unsafe methods need the CSRF token and a same-origin request. Every route first requires a `reviewer` assignment for at least one subject or the `administrator` permission (`403 forbidden` before anything is looked up), so students, authors and publishers without either get `403`. Then, inside the transaction (grant and account rows share-locked): an active administrator sees and handles every report; a reviewer only reports on lessons of subjects they are actively assigned to; any other report is `404 not_found`, identical to a missing ID.
+
+### Report object
+
+```json
+{"id": 3, "lessonId": 4, "lessonPublicId": "0b9c…", "subjectId": 1, "revisionId": 12, "revisionNumber": 2,
+ "revisionTitle": "Nombres complexes", "currentlyPublished": true, "message": "Le signe de la ligne 2 est faux.",
+ "status": "open", "createdAt": "2026-11-24T09:00:00Z", "resolution": null}
+```
+
+- `revisionId`/`revisionNumber`/`revisionTitle` are the revision the reader displayed; `currentlyPublished` tells whether it is still the lesson's published, readable revision.
+- `message` is plain text with LF line breaks; clients must display it as text, never as HTML.
+- `status` is `open`, `resolved` or `dismissed`. `resolution` is `null` while open, then `{"action": "resolve" | "dismiss", "actorId": 7, "note": "…", "occurredAt": "…"}`.
+- The reporting account is stored but not returned.
+
+### `GET /api/review/error-reports`
+
+Optional query parameters, each at most once and nothing else: `status` (`open`, `resolved` or `dismissed`) and `subjectId` (a positive integer; for a reviewer it must be one of their subjects, else `404 not_found`). Lists visible reports, newest first, at most 200, no pagination: `{"reports": [ … ]}`. `400 invalid_request` for a malformed query.
+
+### `GET /api/review/error-reports/{reportId}`
+
+The report object. `404 not_found` for missing, malformed and other-subject IDs alike.
+
+### `POST /api/review/error-reports/{reportId}/resolve` and `…/dismiss`
+
+Body `{"note": "Corrigé dans la révision 3."}` (strict JSON, `note` required). The note follows the `message` rules above (1 to 2000 characters after trimming). In one transaction the report row is locked, the caller rechecked, an append-only resolution (report, actor, action, note, transaction time) inserted and the status set to `resolved` or `dismissed`. `200` with the report object; `422 note_required | invalid_note`; `404 not_found`; `409 not_open` if already resolved or dismissed (of concurrent resolutions exactly one applies); `409 retry` on a deadlock or serialization failure. A report is closed once and cannot be reopened; its text and the resolution never change.
+
 ## Not yet defined
 
-Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2).
+Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).

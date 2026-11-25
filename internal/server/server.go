@@ -14,6 +14,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/reader"
+	"github.com/hadden-me/learnoo/internal/reports"
 	"github.com/hadden-me/learnoo/internal/review"
 	"github.com/hadden-me/learnoo/internal/studioapi"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,6 +33,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Lessons: lessons.NewStore(db, nil),
 		Media:   mediaStore,
 		Review:  review.NewStore(db),
+		Reports: reports.NewStore(db),
 		Log:     log,
 	}).Register(mux)
 	reader.New(reader.Config{
@@ -39,6 +41,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Service:     svc,
 		Store:       reader.NewStore(db),
 		Invitations: invitations.NewStore(db, nil),
+		Reports:     reports.NewStore(db),
 		Log:         log,
 	}).Register(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

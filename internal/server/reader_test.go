@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
@@ -38,7 +39,12 @@ type readerFixture struct {
 }
 
 func newReader(t *testing.T) readerFixture {
-	e := newEnv(t)
+	return newReaderConfig(t, nil)
+}
+
+// newReaderConfig is newReader with the auth policy adjusted by configure.
+func newReaderConfig(t *testing.T, configure func(*auth.Config)) readerFixture {
+	e := newEnvConfig(t, configure)
 	subject := e.newSubject("test-math")
 	f := readerFixture{env: e, subject: subject,
 		author:    e.newUser("test-author", subject, permissions.Author),

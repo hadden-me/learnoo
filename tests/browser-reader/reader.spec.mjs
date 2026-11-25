@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { tokenFile } from '../../playwright.reader.config.mjs';
 
 // One flow at phone width: accept the TEST invitation, browse, read the mixed
-// French/Arabic lesson and the Arabic lesson with KaTeX, bookmark, search.
+// French/Arabic lesson and the Arabic lesson with KaTeX, report an error,
+// bookmark, search.
 // Desktop Chromium with a mobile viewport, not a physical phone.
 const password = 'browser-test-password-1';
 const noOverflow = page => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
@@ -39,6 +40,22 @@ test('student reader at mobile width with RTL and math', async ({ page, baseURL,
   await expect(page.getByText('Solution de test.')).toBeVisible();
   expect(await noOverflow(page)).toBe(true);
   await page.screenshot({ path: 'test-results/reader-lesson-mobile.png', fullPage: true });
+
+  // Report an error (LRN-015): the form stays closed until asked for; an
+  // empty report is refused with the form reopened, then a report is sent.
+  await expect(page.getByLabel('Décrivez l’erreur')).toBeHidden();
+  await page.getByText('Signaler une erreur').click();
+  await page.getByRole('button', { name: 'Envoyer le signalement' }).click();
+  await expect(page.getByRole('alert')).toContainText('Décrivez l’erreur avant');
+  await expect(page.getByLabel('Décrivez l’erreur')).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
+  await page.locator('details.report').screenshot({ path: 'test-results/reader-report-mobile.png' });
+  await page.getByLabel('Décrivez l’erreur').fill('TEST La solution de l’exercice semble inverser un signe.\nخطأ تجريبي');
+  await page.getByRole('button', { name: 'Envoyer le signalement' }).click();
+  await expect(page.getByRole('heading', { name: 'Signalement envoyé' })).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
+  await page.getByRole('link', { name: 'Revenir à la leçon' }).click();
+  await expect(page.locator('.katex').first()).toBeVisible();
 
   // Bookmark, then find it on the dashboard.
   await page.getByRole('button', { name: 'Enregistrer' }).click();

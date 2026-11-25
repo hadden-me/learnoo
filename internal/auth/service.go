@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/users"
@@ -33,19 +34,26 @@ type Config struct {
 	// InvitationLimit is the number of invitation lookups and acceptances
 	// per client address per window (LRN-008).
 	InvitationLimit int
+	// ErrorReportAccountLimit and ErrorReportAddressLimit are the number of
+	// error report submissions per signed-in account and per client address
+	// per window (LRN-015).
+	ErrorReportAccountLimit int
+	ErrorReportAddressLimit int
 	// Argon2 sets the cost of new hashes, including the dummy hash.
 	Argon2 Argon2Params
 }
 
 // DefaultConfig is the production policy.
 var DefaultConfig = Config{
-	IdleTimeout:     24 * time.Hour,
-	AbsoluteTimeout: 14 * 24 * time.Hour,
-	ThrottleWindow:  15 * time.Minute,
-	AccountLimit:    5,
-	AddressLimit:    30,
-	InvitationLimit: 20,
-	Argon2:          DefaultArgon2,
+	IdleTimeout:             24 * time.Hour,
+	AbsoluteTimeout:         14 * 24 * time.Hour,
+	ThrottleWindow:          15 * time.Minute,
+	AccountLimit:            5,
+	AddressLimit:            30,
+	InvitationLimit:         20,
+	ErrorReportAccountLimit: 10,
+	ErrorReportAddressLimit: 60,
+	Argon2:                  DefaultArgon2,
 }
 
 // touchInterval limits how often a session's idle expiry is extended.
@@ -209,6 +217,20 @@ type limitedKey struct {
 // its own key scope, so the two limits never count each other's attempts.
 func (s *Service) ThrottleInvitation(ctx context.Context, clientAddr string) error {
 	_, err := s.recordAttempt(ctx, s.now().UTC(), []limitedKey{{throttleKey("invitation-address", clientAddr), s.cfg.InvitationLimit}})
+	return err
+}
+
+// ThrottleErrorReport records an error report submission by userID from
+// clientAddr and returns *RateLimitedError when the account exceeded
+// Config.ErrorReportAccountLimit or the address exceeded
+// Config.ErrorReportAddressLimit in the window. Like ThrottleInvitation it
+// uses the login throttle table under its own key scopes, so error reports,
+// invitations and sign-in attempts never count each other's attempts.
+func (s *Service) ThrottleErrorReport(ctx context.Context, userID int64, clientAddr string) error {
+	_, err := s.recordAttempt(ctx, s.now().UTC(), []limitedKey{
+		{throttleKey("error-report-account", strconv.FormatInt(userID, 10)), s.cfg.ErrorReportAccountLimit},
+		{throttleKey("error-report-address", clientAddr), s.cfg.ErrorReportAddressLimit},
+	})
 	return err
 }
 

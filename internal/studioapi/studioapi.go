@@ -1,7 +1,8 @@
 // Package studioapi exposes the Studio ↔ server endpoints for lesson drafts
 // and media (LRN-006 slice 3), for review and publication (LRN-007,
 // review.go) and for withdrawal, unpublication and restoration (LRN-009,
-// withdraw.go), documented in docs/API.md.
+// withdraw.go), and for error reports (LRN-015, reports.go), documented in
+// docs/API.md.
 //
 // Draft and media routes require a session and the global author
 // permission, checked on the server by permissions.Middleware before any
@@ -30,6 +31,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
+	"github.com/hadden-me/learnoo/internal/reports"
 	"github.com/hadden-me/learnoo/internal/review"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,6 +59,7 @@ type Config struct {
 	Lessons *lessons.Store
 	Media   *media.Store
 	Review  *review.Store
+	Reports *reports.Store
 	Log     *slog.Logger
 }
 
@@ -92,6 +95,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	route("GET /api/media/{mediaId}", h.serveMedia)
 	h.registerReview(mux)
 	h.registerWithdrawal(mux)
+	h.registerReports(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or
