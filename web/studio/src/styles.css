@@ -168,6 +168,9 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .studio-solution { background: var(--learnoo-color-surface); border-inline-start-color: var(--learnoo-color-muted); }
 .studio-node-label { margin: 0; font-size: var(--learnoo-text-caption); font-weight: var(--learnoo-weight-emphasis); color: var(--learnoo-color-muted); user-select: none; }
 .studio-image img { max-width: 100%; height: auto; }
+.studio-image-uploaded img { max-height: 20rem; object-fit: contain; }
+.dialog label { display: grid; gap: var(--learnoo-space-1); margin-block: var(--learnoo-space-2); }
+.placing-preview { display: block; max-width: 100%; max-height: 10rem; object-fit: contain; border: 1px solid var(--learnoo-color-border); border-radius: 4px; }
 .ProseMirror-selectednode { outline: 3px solid var(--learnoo-color-focus); }
 .ProseMirror-gapcursor { display: none; pointer-events: none; position: absolute; }
 .ProseMirror-gapcursor::after { content: ''; display: block; position: absolute; top: -2px; width: 20px; border-top: 1px solid var(--learnoo-color-ink); }

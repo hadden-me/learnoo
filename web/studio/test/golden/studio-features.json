@@ -144,6 +144,12 @@
           ]
         }
       ]
+    },
+    {
+      "type": "image",
+      "src": "media:7",
+      "alt": "Image téléversée de test",
+      "caption": "Légende de test"
     }
   ]
 }

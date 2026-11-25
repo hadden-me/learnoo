@@ -2,7 +2,7 @@
 // map one-to-one to the schema v1 node types (schema/extensions.ts).
 import { useEditorState, type Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
-import { ALLOWED_IMAGES, YOUTUBE_ID } from '../schema/lesson';
+import { ALLOWED_IMAGES, YOUTUBE_ID, mediaId } from '../schema/lesson';
 
 export function Toolbar({ editor }: { editor: Editor }) {
   const state = useEditorState({
@@ -116,17 +116,25 @@ export function Inspector({ editor }: { editor: Editor }) {
       )}
       {atom?.type === 'image' && (
         <>
-          <label>
-            Ressource locale autorisée
-            <select value={String(atom.attrs.src)} onChange={(e) => set(atom.pos, 'src', e.target.value)}>
-              {ALLOWED_IMAGES.map((src) => (
-                <option key={src}>{src}</option>
-              ))}
-            </select>
-          </label>
+          {mediaId(String(atom.attrs.src)) === null ? (
+            <label>
+              Ressource locale autorisée
+              <select value={String(atom.attrs.src)} onChange={(e) => set(atom.pos, 'src', e.target.value)}>
+                {ALLOWED_IMAGES.map((src) => (
+                  <option key={src}>{src}</option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="hint">Image téléversée n° {mediaId(String(atom.attrs.src))} (référence immuable).</p>
+          )}
           <label>
             Texte alternatif (obligatoire)
-            <input dir="auto" maxLength={1000} value={String(atom.attrs.alt)} onChange={(e) => set(atom.pos, 'alt', e.target.value)} />
+            <input dir="auto" maxLength={1000} value={String(atom.attrs.alt)} aria-invalid={String(atom.attrs.alt).trim() === ''} onChange={(e) => set(atom.pos, 'alt', e.target.value)} />
+          </label>
+          <label>
+            Légende (facultative)
+            <input dir="auto" maxLength={1000} value={String(atom.attrs.caption ?? '')} onChange={(e) => set(atom.pos, 'caption', e.target.value)} />
           </label>
         </>
       )}

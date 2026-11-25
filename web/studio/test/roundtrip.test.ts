@@ -66,6 +66,8 @@ describe('editing produces the restricted format', () => {
     c().insertContent({ type: 'exercise', attrs: { title: 'Exercice technique' }, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Question.' }] }, { type: 'solution', content: [{ type: 'displayMath', attrs: { latex: 'x=1' } }] }] }).run();
     c().insertContent({ type: 'image', attrs: { src: '/static/complex-plane.svg', alt: 'Diagramme de test' } }).run();
     c().insertContent({ type: 'youtube', attrs: { title: 'Vidéo à choisir', videoId: '' } }).run();
+    // An uploaded image placed at the end of the document, as the "Placer dans le texte" dialog does.
+    c().insertContentAt(editor.state.doc.content.size, { type: 'image', attrs: { src: 'media:7', alt: 'Image téléversée de test', caption: 'Légende de test' } }).run();
     return editor;
   }
 

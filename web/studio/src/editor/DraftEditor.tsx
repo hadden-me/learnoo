@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
+import { NodeSelection } from '@tiptap/pm/state';
 import { ApiError, type Chapter, type Media, type Revision } from '../api/client';
 import { describeError } from '../api/messages';
 import { isUnloadAllowed, useStudio } from '../context';
@@ -17,7 +18,7 @@ import { RecoveryList } from '../ui/RecoveryList';
 import { addNavigationGuard } from '../router';
 import { lessonExtensions } from '../schema/extensions';
 import { prepareSource } from '../schema/importer';
-import type { Lang } from '../schema/lesson';
+import { MEDIA_PREFIX, mediaId, type Lang } from '../schema/lesson';
 import { describePaste, sanitizePastedHTML } from '../schema/paste';
 import { Dialog } from '../ui/Dialog';
 import { revisionToData } from './convert';
@@ -83,6 +84,9 @@ export function DraftEditor(props: DraftEditorProps) {
   const [dialog, setDialog] = useState<'submit' | 'discard' | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  /** The attached image being placed in the text, with the alt text and caption typed so far. */
+  const [placing, setPlacing] = useState<{ id: number; alt: string; caption: string } | null>(null);
+  const altRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<{ html: string; snapshot: string; at: Date } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -418,13 +422,37 @@ export function DraftEditor(props: DraftEditorProps) {
       const media = await api.uploadMedia(file);
       setMediaInfo((m) => ({ ...m, [media.id]: media }));
       setMediaIds((ids) => (ids.includes(media.id) ? ids : [...ids, media.id]));
-      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Enregistrez le brouillon pour la joindre à la révision.` });
+      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Placez-la dans le texte avec son texte alternatif, puis enregistrez le brouillon.` });
+      setPlacing({ id: media.id, alt: '', caption: '' });
     } catch (error) {
       setUploadError(`Téléversement refusé. ${describeError(error)}`);
     } finally {
       setUploading(false);
     }
   };
+
+  /** Inserts the attached image at the editor's cursor (or after the selected block). */
+  const placeImage = () => {
+    if (!editor || !placing || placing.alt.trim() === '') return;
+    const attrs = { src: `${MEDIA_PREFIX}${placing.id}`, alt: placing.alt.trim(), caption: placing.caption.trim() };
+    const { selection } = editor.state;
+    // A selected node (formula, image, video) is kept: the image goes after it instead of replacing it.
+    if (selection instanceof NodeSelection) editor.chain().focus().insertContentAt(selection.to, { type: 'image', attrs }).run();
+    else editor.chain().focus().insertContent({ type: 'image', attrs }).run();
+    setMediaIds((ids) => (ids.includes(placing.id) ? ids : [...ids, placing.id]));
+    setMessage({ text: `Image n° ${placing.id} placée dans le texte.` });
+    setPlacing(null);
+  };
+
+  // Attached images currently placed in the text (tick follows editor changes).
+  const embedded = useMemo(() => {
+    const found = new Set<number>();
+    editor?.state.doc.descendants((node) => {
+      const id = node.type.name === 'image' ? mediaId(String(node.attrs.src)) : null;
+      if (id !== null) found.add(id);
+    });
+    return found;
+  }, [editor, tick]);
 
   /* ---------- preview ---------- */
 
@@ -654,7 +682,7 @@ export function DraftEditor(props: DraftEditorProps) {
           <section className="media" aria-labelledby="media-heading">
             <h3 id="media-heading">Images jointes</h3>
             <p className="hint">
-              Le format de leçon actuel (schéma 1) ne permet pas encore de placer une image téléversée dans le texte. Les images sont jointes à la révision comme références immuables : enregistrées avec le brouillon, figées à la soumission et visibles des relecteurs. Elles ne sont pas encore montrées aux élèves (évolution suivie dans l’issue #77).
+              Téléversez une image puis placez-la dans le texte, à l’emplacement du curseur, avec un texte alternatif obligatoire. Les images sont jointes à la révision comme références immuables : enregistrées avec le brouillon, figées à la soumission, visibles des relecteurs, puis des élèves une fois la leçon publiée. Une image retirée du texte reste jointe jusqu’à ce que vous la retiriez de la révision.
             </p>
             {mediaIds.length > 0 ? (
               <ul className="media-list">
@@ -664,8 +692,17 @@ export function DraftEditor(props: DraftEditorProps) {
                     <span>
                       Image n° {id}
                       {mediaInfo[id] ? ` · ${mediaInfo[id].width} × ${mediaInfo[id].height}` : ''}
+                      {embedded.has(id) ? ' · placée dans le texte' : ' · non placée'}
                     </span>
-                    <button type="button" onClick={() => setMediaIds((ids) => ids.filter((x) => x !== id))}>
+                    <button type="button" onClick={() => setPlacing({ id, alt: '', caption: '' })}>
+                      Placer dans le texte
+                    </button>
+                    <button
+                      type="button"
+                      disabled={embedded.has(id)}
+                      title={embedded.has(id) ? 'Supprimez d’abord l’image du texte.' : undefined}
+                      onClick={() => setMediaIds((ids) => ids.filter((x) => x !== id))}
+                    >
                       Retirer de la révision
                     </button>
                   </li>
@@ -721,6 +758,37 @@ export function DraftEditor(props: DraftEditorProps) {
         </section>
       </div>
 
+      {placing && (
+        <Dialog
+          title={`Placer l’image n° ${placing.id} dans le texte`}
+          onCancel={() => setPlacing(null)}
+          initialFocus={altRef}
+          actions={[{ label: 'Placer l’image', kind: 'primary', disabled: placing.alt.trim() === '', onClick: placeImage }]}
+        >
+          <img className="placing-preview" src={`/api/media/${placing.id}`} alt="" />
+          <label>
+            Texte alternatif (obligatoire)
+            <input
+              ref={altRef}
+              dir="auto"
+              lang={language}
+              maxLength={1000}
+              required
+              aria-describedby={`${ids.upload}-alt-hint`}
+              value={placing.alt}
+              onChange={(e) => setPlacing({ ...placing, alt: e.target.value })}
+            />
+          </label>
+          <p id={`${ids.upload}-alt-hint`} className="hint">
+            Décrivez ce que l’image apporte à la leçon, pour les élèves qui ne la voient pas.
+          </p>
+          <label>
+            Légende (facultative, visible sous l’image)
+            <input dir="auto" lang={language} maxLength={1000} value={placing.caption} onChange={(e) => setPlacing({ ...placing, caption: e.target.value })} />
+          </label>
+          <p className="hint">L’image sera insérée à l’emplacement du curseur dans l’éditeur.</p>
+        </Dialog>
+      )}
       {dialog === 'submit' && (
         <Dialog title="Soumettre pour relecture ?" onCancel={() => setDialog(null)} actions={[{ label: 'Soumettre', kind: 'primary', onClick: () => void submit() }]}>
           <p>Après soumission, cette révision ne pourra plus être modifiée. Un relecteur de la matière l’examinera ; pour corriger ensuite, vous créerez une nouvelle version.</p>

@@ -4,7 +4,7 @@
 import type { JSONContent } from '@tiptap/core';
 import { Api, ApiError, isApiError, type DraftFields, type Revision } from './api/client';
 import { editorToLesson } from './schema/adapter';
-import { LessonError, serializeLesson, type Lang } from './schema/lesson';
+import { LessonError, embeddedMediaIds, serializeLesson, type Lang } from './schema/lesson';
 import type { NewLessonParams, RecoveryData } from './recovery';
 
 export type SaveTarget =
@@ -45,7 +45,9 @@ export function buildFields(state: EditorState): { fields: DraftFields; errors: 
   }
   if ([...state.prerequisites].length > 2000) return { fields: null, errors: ['Les prérequis dépassent 2 000 caractères.'] };
   return {
-    fields: { content: JSON.parse(json) as unknown, prerequisites: state.prerequisites, chapterId: state.chapterId, mediaIds: [...new Set(state.mediaIds)] },
+    // Every image placed in the text is attached to the revision (the server refuses unattached ones);
+    // attached images that are no longer in the text stay attached until the author removes them.
+    fields: { content: JSON.parse(json) as unknown, prerequisites: state.prerequisites, chapterId: state.chapterId, mediaIds: [...new Set([...state.mediaIds, ...embeddedMediaIds(result.document.blocks)])] },
     errors: [],
   };
 }
