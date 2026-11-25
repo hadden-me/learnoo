@@ -480,6 +480,13 @@ func (h *Handlers) writeLessonError(w http.ResponseWriter, op string, err error,
 		h.internal(w, op, err)
 	case errors.Is(err, lessons.ErrDenied) && ownRevision, errors.Is(err, lessons.ErrNotFound) && ownRevision:
 		notFound(w)
+	// Another user's lesson looks exactly like a missing one, so lesson IDs
+	// cannot be probed: unknown_lesson for a translation source, 404 for a
+	// new draft.
+	case errors.Is(err, lessons.ErrNotOwner) && op == "create lesson":
+		unprocessable("unknown_lesson", "The lesson named by translationOf does not exist.")
+	case errors.Is(err, lessons.ErrNotOwner):
+		notFound(w)
 	case errors.Is(err, lessons.ErrDenied):
 		auth.WriteError(w, http.StatusForbidden, "forbidden", "You do not have permission to do this.")
 	case errors.Is(err, lessons.ErrNotFound) && op == "create lesson":

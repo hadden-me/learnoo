@@ -43,7 +43,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation plus t
 | 422 | `invalid_content` | The document fails schema v1 validation, or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
 | 422 | `language_mismatch` | The document's `language` differs from the lesson's |
 | 422 | `unknown_subject` / `unknown_chapter` / `unknown_media` | Referenced subject, chapter (of this subject) or media asset does not exist |
-| 422 | `unknown_lesson` | `translationOf` names a lesson that does not exist |
+| 422 | `unknown_lesson` | `translationOf` names a lesson that does not exist or that the caller does not own |
 | 422 | `translation_subject` | A translation names a subject other than its source lesson's |
 | 422 | `invalid_image` | The image is corrupt or truncated |
 | 422 | `invalid_dimensions` | Over 4096 px per side or 16 megapixels |
@@ -139,8 +139,8 @@ Every endpoint below, reads included, is checked in this order:
 
 | Endpoint | Who may call it |
 | --- | --- |
-| `POST /api/lessons` | Any `author`. The first draft belongs to the caller |
-| `POST /api/lessons/{lessonId}/drafts` | Any `author`, for any existing lesson (the draft belongs to the caller; to be confirmed, see DECISIONS.md) |
+| `POST /api/lessons` | Any `author`. The caller becomes the lesson's owner. With `translationOf`, only the owner of the source lesson; for anyone else, administrators included, `422 unknown_lesson`, identical to a missing source |
+| `POST /api/lessons/{lessonId}/drafts` | The lesson's owner (its creator) only; everyone else with `author`, administrators included, gets `404 not_found`, identical to a missing lesson (see DECISIONS.md "Lesson ownership") |
 | `GET /api/revisions/{revisionId}` | The revision's author only, whatever its status. Everyone else with `author` gets `404 not_found`, identical to a missing ID |
 | `PUT /api/revisions/{revisionId}` | The draft's author only; others get `404 not_found` |
 | `POST /api/revisions/{revisionId}/submit` | The draft's author only; others get `404 not_found` |
@@ -207,16 +207,16 @@ Creates a lesson and its first draft.
 ```
 
 - `subjectId` and `language` are required; `language` must equal `content.language` and is fixed for the lesson, as is the subject.
-- `translationOf` (optional) names an existing lesson of the same subject; the new lesson joins its translation group.
+- `translationOf` (optional) names an existing lesson of the same subject, which the caller must own; the new lesson joins its translation group. A lesson the caller does not own is reported like a missing one (`422 unknown_lesson`).
 - `201` revision object, `Location: /api/revisions/{id}`.
 - `400`, `403`, `413`, `415`, `422 invalid_content | language_mismatch | unknown_subject | unknown_chapter | unknown_media | unknown_lesson | translation_subject`, `409 archived | translation_exists`.
 
 ### `POST /api/lessons/{lessonId}/drafts`
 
-Starts a new draft of an existing lesson (for example the successor of a `changes_requested` revision). Body: the draft fields. Its base is the lesson's published revision (`baseRevisionId`), read under a lock.
+Starts a new draft of an existing lesson (for example the successor of a `changes_requested` revision). Only the lesson's owner may. Body: the draft fields. Its base is the lesson's published revision (`baseRevisionId`), read under a lock.
 
 - `201` revision object, `Location` as above.
-- `404 not_found` (unknown lesson), `409 active_candidate_exists` (a draft, an in-review revision, or an approved revision awaiting publication exists; concurrent requests: exactly one succeeds), `409 archived`, `422` as above.
+- `404 not_found` (unknown lesson, or a lesson the caller does not own; same body), `409 active_candidate_exists` (a draft, an in-review revision, or an approved revision awaiting publication exists; concurrent requests: exactly one succeeds), `409 archived`, `422` as above.
 
 An approved revision keeps blocking new drafts until it is published or withdrawn (LRN-007/LRN-009, not yet available through this API).
 

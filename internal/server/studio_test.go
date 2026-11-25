@@ -694,6 +694,98 @@ func TestStudioTranslationCreatesLinkedLesson(t *testing.T) {
 	}
 }
 
+// Only a lesson's owner (its creator, holding author) starts a draft of it
+// or translates it (issue #6). Anyone else, administrators included, gets
+// exactly the response for a lesson that does not exist.
+func TestStudioOnlyOwnerDraftsAndTranslates(t *testing.T) {
+	f := newStudio(t)
+	rev := f.createLesson(f.author, "Owned lesson")
+	wantStatus(t, "discard", f.api(f.author, http.MethodDelete, revPath(rev.ID)+"?expectedVersion=1", nil), http.StatusNoContent, "")
+	other := f.newUser("author-two", f.subject, permissions.Author)
+	adminAuthor := f.newUser("admin-author", f.subject, permissions.Administrator, permissions.Author)
+	adminOnly := f.newUser("admin-only", f.subject, permissions.Administrator)
+	before := f.count(`SELECT count(*) FROM lesson_revisions`) + f.count(`SELECT count(*) FROM lessons`)
+
+	draftBody := map[string]any{"content": testDoc("Not mine", "fr")}
+	draftPath := fmt.Sprintf("/api/lessons/%d/drafts", rev.LessonID)
+	translation := func(source int64) map[string]any {
+		return map[string]any{"subjectId": f.subject, "language": "ar", "translationOf": source, "content": testDoc("ترجمة", "ar")}
+	}
+	for name, u := range map[string]apiUser{"another author": other, "administrator with author": adminAuthor} {
+		missing := f.api(u, http.MethodPost, "/api/lessons/999999/drafts", draftBody)
+		wantStatus(t, name+": draft of missing lesson", missing, http.StatusNotFound, "not_found")
+		theirs := f.api(u, http.MethodPost, draftPath, draftBody)
+		wantStatus(t, name+": draft of another's lesson", theirs, http.StatusNotFound, "not_found")
+		if theirs.Body.String() != missing.Body.String() {
+			t.Fatalf("%s: non-owner draft differs from missing lesson: %s vs %s", name, theirs.Body, missing.Body)
+		}
+		missing = f.api(u, http.MethodPost, "/api/lessons", translation(999999))
+		wantStatus(t, name+": translation of missing lesson", missing, http.StatusUnprocessableEntity, "unknown_lesson")
+		theirs = f.api(u, http.MethodPost, "/api/lessons", translation(rev.LessonID))
+		wantStatus(t, name+": translation of another's lesson", theirs, http.StatusUnprocessableEntity, "unknown_lesson")
+		if theirs.Body.String() != missing.Body.String() {
+			t.Fatalf("%s: non-owner translation differs from missing lesson: %s vs %s", name, theirs.Body, missing.Body)
+		}
+	}
+	// An archived lesson looks missing too, never 409 archived, to
+	// non-owners; its owner is told it is archived.
+	archived := f.createLesson(f.author, "Archived owned lesson")
+	wantStatus(t, "discard", f.api(f.author, http.MethodDelete, revPath(archived.ID)+"?expectedVersion=1", nil), http.StatusNoContent, "")
+	if _, err := f.db.Exec(context.Background(), `UPDATE lessons SET archived_at = now() WHERE id = $1`, archived.LessonID); err != nil {
+		t.Fatal(err)
+	}
+	archivedPath := fmt.Sprintf("/api/lessons/%d/drafts", archived.LessonID)
+	for name, u := range map[string]apiUser{"another author": other, "administrator with author": adminAuthor} {
+		missing := f.api(u, http.MethodPost, "/api/lessons/999999/drafts", draftBody)
+		theirs := f.api(u, http.MethodPost, archivedPath, draftBody)
+		wantStatus(t, name+": draft of another's archived lesson", theirs, http.StatusNotFound, "not_found")
+		if theirs.Body.String() != missing.Body.String() {
+			t.Fatalf("%s: archived non-owner draft differs from missing lesson: %s vs %s", name, theirs.Body, missing.Body)
+		}
+		missing = f.api(u, http.MethodPost, "/api/lessons", translation(999999))
+		theirs = f.api(u, http.MethodPost, "/api/lessons", translation(archived.LessonID))
+		wantStatus(t, name+": translation of another's archived lesson", theirs, http.StatusUnprocessableEntity, "unknown_lesson")
+		if theirs.Body.String() != missing.Body.String() {
+			t.Fatalf("%s: archived non-owner translation differs from missing lesson: %s vs %s", name, theirs.Body, missing.Body)
+		}
+	}
+	wantStatus(t, "owner draft of archived lesson", f.api(f.author, http.MethodPost, archivedPath, draftBody), http.StatusConflict, "archived")
+	before = f.count(`SELECT count(*) FROM lesson_revisions`) + f.count(`SELECT count(*) FROM lessons`)
+
+	// Without author the middleware refuses before any lookup.
+	wantStatus(t, "administrator without author", f.api(adminOnly, http.MethodPost, draftPath, draftBody), http.StatusForbidden, "forbidden")
+	if after := f.count(`SELECT count(*) FROM lesson_revisions`) + f.count(`SELECT count(*) FROM lessons`); after != before {
+		t.Fatalf("refused requests stored rows: %d -> %d", before, after)
+	}
+
+	// The owner may do both.
+	wantStatus(t, "owner draft", f.api(f.author, http.MethodPost, draftPath, map[string]any{"content": testDoc("Mine", "fr")}), http.StatusCreated, "")
+	wantStatus(t, "owner translation", f.api(f.author, http.MethodPost, "/api/lessons", translation(rev.LessonID)), http.StatusCreated, "")
+
+	// The owner without author, or disabled, may not.
+	revoked := f.newUser("revoked-owner", f.subject, permissions.Author)
+	revokedRev := f.createLesson(revoked, "Revoked owner's lesson")
+	wantStatus(t, "discard", f.api(revoked, http.MethodDelete, revPath(revokedRev.ID)+"?expectedVersion=1", nil), http.StatusNoContent, "")
+	if _, err := permissions.NewStore(f.db).Revoke(context.Background(), testOperator, revoked.id, permissions.Author); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, "owner without author", f.api(revoked, http.MethodPost, fmt.Sprintf("/api/lessons/%d/drafts", revokedRev.LessonID), draftBody),
+		http.StatusForbidden, "forbidden")
+	disabled := f.newUser("disabled-owner", f.subject, permissions.Author)
+	disabledRev := f.createLesson(disabled, "Disabled owner's lesson")
+	wantStatus(t, "discard", f.api(disabled, http.MethodDelete, revPath(disabledRev.ID)+"?expectedVersion=1", nil), http.StatusNoContent, "")
+	if _, err := f.db.Exec(context.Background(), `UPDATE users SET disabled_at = now() WHERE id = $1`, disabled.id); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, "disabled owner", f.api(disabled, http.MethodPost, fmt.Sprintf("/api/lessons/%d/drafts", disabledRev.LessonID), draftBody),
+		http.StatusUnauthorized, "unauthenticated")
+	for _, l := range []int64{revokedRev.LessonID, disabledRev.LessonID} {
+		if n := f.count(`SELECT count(*) FROM lesson_revisions WHERE lesson_id = $1`, l); n != 0 {
+			t.Fatalf("lesson %d: refused owner stored %d revisions", l, n)
+		}
+	}
+}
+
 func TestStudioMediaUploadAndServe(t *testing.T) {
 	f := newStudio(t)
 	data := pngBytes(t, 10)
