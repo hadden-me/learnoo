@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/server"
 )
 
@@ -49,6 +50,10 @@ func TestBrowserReaderServer(t *testing.T) {
 		opts = append(opts, server.WithStudio(root.FS()))
 	}
 	f := newReaderOptions(t, nil, opts...)
+	// A second TEST author, for the Studio's account-switch test (another
+	// account signing in on the same browser must never receive a stale tab's writes).
+	second := f.newUser("test-author-two", f.subject, permissions.Author)
+	f.setName(second.id, "TEST Auteur Deux")
 	ch := f.chapter(f.subject, "test-chapter")
 	f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
 	f.publish(f.approved(0, readerDoc("TEST درس تجريبي", "ar",

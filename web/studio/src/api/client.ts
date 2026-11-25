@@ -134,24 +134,53 @@ export interface ApiOptions {
   fetch?: typeof fetch;
   /** Called whenever the server answers 401 unauthenticated (expired, revoked or missing session). */
   onUnauthenticated?: () => void;
+  /** Called when the browser's session now belongs to another account than the one this page started with. */
+  onAccountChanged?: () => void;
 }
+
+/**
+ * Thrown (status 0, never sent by the server) when the session cookie now
+ * belongs to another account, for example after someone signed in as another
+ * user in another tab. Nothing is sent while in this state.
+ */
+export const ACCOUNT_CHANGED = 'account_changed';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export class Api {
   private csrf: string | null = null;
+  /** The account this page started with; every later session must be the same account. */
+  private userId: number | null = null;
+  private accountChanged = false;
   private readonly fetchImpl: typeof fetch;
   private readonly onUnauthenticated: () => void;
+  private readonly onAccountChanged: () => void;
 
   constructor(options: ApiOptions = {}) {
     // Bound: calling an unbound window.fetch throws "Illegal invocation".
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.onUnauthenticated = options.onUnauthenticated ?? (() => {});
+    this.onAccountChanged = options.onAccountChanged ?? (() => {});
   }
 
-  /** Reads the current session and keeps its CSRF token for later writes. */
+  /**
+   * Reads the current session and keeps its CSRF token for later writes. The
+   * first session fixes the page's account; a session of another account is
+   * refused with account_changed, its token is never kept, and every request
+   * is refused until a session of the original account is read again.
+   */
   async session(): Promise<Session> {
     const session = await this.send<Session>('GET', '/api/auth/session', {}, false);
+    if (this.userId === null) this.userId = session.user.id;
+    if (session.user.id !== this.userId) {
+      this.csrf = null;
+      if (!this.accountChanged) {
+        this.accountChanged = true;
+        this.onAccountChanged();
+      }
+      throw new ApiError(0, ACCOUNT_CHANGED, 'Another account is signed in');
+    }
+    this.accountChanged = false;
     this.csrf = session.csrfToken;
     return session;
   }
@@ -179,8 +208,11 @@ export class Api {
    * Sends a request. A rejected CSRF token (for example after signing in
    * again in another tab, which rotates the session) is refreshed from the
    * session once and the request repeated; nothing was written the first time.
+   * The refresh checks the account (session()), so a request is never
+   * repeated as another user.
    */
   async request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
+    if (this.accountChanged) throw new ApiError(0, ACCOUNT_CHANGED, 'Another account is signed in');
     if (UNSAFE.has(method) && this.csrf === null) await this.session();
     try {
       return await this.send<T>(method, path, options, true);

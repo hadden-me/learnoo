@@ -43,6 +43,28 @@ describe('API client', () => {
     expect(server.calls[3].headers['X-CSRF-Token']).toBe('tok-2');
   });
 
+  it('never repeats a write as another account after a CSRF refresh, and refuses everything until the original account is back', async () => {
+    const other = { ...session, user: { ...session.user, id: 8 }, csrfToken: 'tok-other' };
+    const onAccountChanged = vi.fn();
+    const server = fakeServer([[200, session], [403, err('csrf_rejected')], [200, other], [200, other], [200, session], [201, revision(1)]]);
+    const api = new Api({ fetch: server.fetch, onAccountChanged });
+    await api.session();
+    const error = await api.createLesson({ subjectId: 1, language: 'fr', translationOf: null, ...fields }).catch((e) => e);
+    expect(error).toMatchObject({ code: 'account_changed' });
+    expect(onAccountChanged).toHaveBeenCalledOnce();
+    // Only the first attempt (refused by the server) was a write; the other account's token was never used.
+    expect(server.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
+    expect(server.calls.some((c) => c.headers['X-CSRF-Token'] === 'tok-other')).toBe(false);
+    // While the account differs, nothing is sent at all, reads included.
+    await expect(api.myLessons()).rejects.toMatchObject({ code: 'account_changed' });
+    await expect(api.session()).rejects.toMatchObject({ code: 'account_changed' });
+    expect(server.calls).toHaveLength(4);
+    // Back to the original account: requests flow again.
+    await api.session();
+    await expect(api.createLesson({ subjectId: 1, language: 'fr', translationOf: null, ...fields })).resolves.toMatchObject({ version: 1 });
+    expect(server.calls.at(-1)!.headers['X-CSRF-Token']).toBe('tok-1');
+  });
+
   it('reports 401 to the shell and throws a typed error', async () => {
     const onUnauthenticated = vi.fn();
     const server = fakeServer([[401, err('unauthenticated')]]);
@@ -101,6 +123,11 @@ describe('saving drafts', () => {
   it('classifies an expired session separately so the edits are kept', async () => {
     const server = fakeServer([[200, session], [401, err('unauthenticated')]]);
     expect(await saveToServer(new Api({ fetch: server.fetch }), { kind: 'revision', revisionId: 12, version: 3 }, fields)).toEqual({ kind: 'expired' });
+  });
+
+  it('reports a submitted draft separately from other failures', async () => {
+    const server = fakeServer([[200, session], [409, err('not_draft')]]);
+    expect(await saveToServer(new Api({ fetch: server.fetch }), { kind: 'revision', revisionId: 12, version: 3 }, fields)).toEqual({ kind: 'not_draft' });
   });
 
   it('creates a lesson, or a draft of an existing lesson, with the right endpoint and body', async () => {

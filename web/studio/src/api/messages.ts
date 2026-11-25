@@ -7,6 +7,8 @@ import { ApiError } from './client';
 const MESSAGES: Record<string, string> = {
   network: 'Le serveur ne répond pas. Vérifiez la connexion puis réessayez ; vos modifications restent dans l’éditeur.',
   unauthenticated: 'Votre session a expiré. Reconnectez-vous ; vos modifications restent dans l’éditeur.',
+  account_changed:
+    'Un autre compte est connecté dans ce navigateur. Rien n’a été envoyé : vos modifications restent ici. Reconnectez-vous avec votre compte pour continuer.',
   csrf_rejected: 'La session a changé (connexion dans un autre onglet ?). Réessayez.',
   cross_origin_rejected: 'Requête refusée : elle ne vient pas de Learnoo.',
   forbidden: 'Votre compte n’a pas la permission nécessaire pour cette action.',
