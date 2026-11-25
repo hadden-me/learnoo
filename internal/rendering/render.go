@@ -49,8 +49,14 @@ var fixtureImages = map[string]bool{"/static/complex-plane.svg": true}
 
 // mediaRef is an embedded reference to an uploaded asset (media_assets.id):
 // "media:" and a positive decimal ID without sign or leading zeros that fits
-// in int64 (at most 18 digits, the server's ID rule).
-var mediaRef = regexp.MustCompile(`^media:[1-9][0-9]{0,17}$`)
+// below 2^53 (at most 15 digits), so the Studio holds it exactly as a
+// JavaScript number. Media IDs are database identities; 10^15 is unreachable.
+var mediaRef = regexp.MustCompile(`^media:[1-9][0-9]{0,14}$`)
+
+// blankText matches strings made only of white space: the union of Go's
+// unicode.IsSpace and JavaScript's String.prototype.trim set, listed by code
+// point so that the Studio (lesson.ts BLANK) gives the same verdict.
+var blankText = regexp.MustCompile(`^[\t\n\v\f\r \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}]*$`)
 
 // MediaRefPrefix starts the src of an image that embeds an uploaded asset.
 const MediaRefPrefix = "media:"
@@ -165,7 +171,7 @@ func Validate(doc Document) error {
 					return errors.New("container requires children, not text")
 				}
 			case "image":
-				if !fixtureImages[n.Src] && !mediaRef.MatchString(n.Src) || n.Alt == "" || len(n.Children) > 0 || n.Text != "" {
+				if !fixtureImages[n.Src] && !mediaRef.MatchString(n.Src) || blankText.MatchString(n.Alt) || len(n.Children) > 0 || n.Text != "" {
 					return errors.New("image must reference an approved local fixture asset or an uploaded asset (media:<id>) with alt text")
 				}
 			case "youtube":

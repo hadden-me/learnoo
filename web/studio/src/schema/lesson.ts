@@ -31,8 +31,13 @@ export const MAX_DOCUMENT_BYTES = 128 << 10;
 export const MAX_NODES = 500;
 export const MAX_DEPTH = 12;
 export const ALLOWED_IMAGES = ['/static/complex-plane.svg'] as const;
-/** An uploaded asset embedded by its immutable ID (rendering.MediaID): positive, no sign or leading zero, at most 18 digits. */
-export const MEDIA_REF = /^media:[1-9][0-9]{0,17}$/;
+/**
+ * An uploaded asset embedded by its immutable ID (rendering.MediaID): positive, no sign or leading zero,
+ * at most 15 digits, so every valid ID is below 2^53 and Number() reads it exactly.
+ */
+export const MEDIA_REF = /^media:[1-9][0-9]{0,14}$/;
+/** White space only: the union of Go's unicode.IsSpace and String.prototype.trim (rendering.blankText). */
+export const BLANK = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$/;
 export const MEDIA_PREFIX = 'media:';
 
 /** The uploaded asset ID an image src refers to, or null. */
@@ -160,7 +165,7 @@ export function validateLesson(doc: LessonDocument): string[] {
       } else if (CONTAINERS.has(n.type)) {
         if (n.text || children.length === 0) return `${at} : contenu vide.`;
       } else if (n.type === 'image') {
-        if (!isAllowedImageSrc(n.src ?? '') || !n.alt || children.length > 0 || n.text) return `${at} : l’image doit utiliser une ressource locale autorisée ou une image téléversée (media:<id>), avec un texte alternatif.`;
+        if (!isAllowedImageSrc(n.src ?? '') || BLANK.test(n.alt ?? '') || children.length > 0 || n.text) return `${at} : l’image doit utiliser une ressource locale autorisée ou une image téléversée (media:<id>), avec un texte alternatif.`;
       } else if (n.type === 'youtube') {
         if ((n.videoId && !YOUTUBE_ID.test(n.videoId)) || children.length > 0 || n.text) return `${at} : identifiant YouTube invalide (11 caractères).`;
       } else {

@@ -13,7 +13,9 @@ const para = (text: string) => ({ type: 'paragraph', children: [{ type: 'text', 
 describe('media references', () => {
   it('reads only well-formed IDs', () => {
     expect(mediaId('media:12')).toBe(12);
-    for (const src of ['media:0', 'media:012', 'media:-1', 'media:', 'media:1 ', '/api/media/1', 'media:1000000000000000000', null, undefined]) expect(mediaId(src)).toBeNull();
+    // The longest valid ID is read exactly (below 2^53).
+    expect(mediaId('media:999999999999999')).toBe(999999999999999);
+    for (const src of ['media:0', 'media:012', 'media:-1', 'media:', 'media:1 ', '/api/media/1', 'media:1000000000000000', 'media:9007199254740993', null, undefined]) expect(mediaId(src)).toBeNull();
   });
 
   it('lists distinct embedded IDs, nested ones included', () => {

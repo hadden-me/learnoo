@@ -18,7 +18,7 @@ import { RecoveryList } from '../ui/RecoveryList';
 import { addNavigationGuard } from '../router';
 import { lessonExtensions } from '../schema/extensions';
 import { prepareSource } from '../schema/importer';
-import { MEDIA_PREFIX, mediaId, type Lang } from '../schema/lesson';
+import { BLANK, MEDIA_PREFIX, mediaId, type Lang } from '../schema/lesson';
 import { describePaste, sanitizePastedHTML } from '../schema/paste';
 import { Dialog } from '../ui/Dialog';
 import { revisionToData } from './convert';
@@ -432,7 +432,7 @@ export function DraftEditor(props: DraftEditorProps) {
 
   /** Inserts the attached image at the editor's cursor (or after the selected block). */
   const placeImage = () => {
-    if (!editor || !placing || placing.alt.trim() === '') return;
+    if (!editor || !placing || BLANK.test(placing.alt)) return;
     const attrs = { src: `${MEDIA_PREFIX}${placing.id}`, alt: placing.alt.trim(), caption: placing.caption.trim() };
     const { selection } = editor.state;
     // A selected node (formula, image, video) is kept: the image goes after it instead of replacing it.
@@ -762,7 +762,7 @@ export function DraftEditor(props: DraftEditorProps) {
           title={`Placer l’image n° ${placing.id} dans le texte`}
           onCancel={() => setPlacing(null)}
           initialFocus={altRef}
-          actions={[{ label: 'Placer l’image', kind: 'primary', disabled: placing.alt.trim() === '', onClick: placeImage }]}
+          actions={[{ label: 'Placer l’image', kind: 'primary', disabled: BLANK.test(placing.alt), onClick: placeImage }]}
         >
           <img className="placing-preview" src={`/api/media/${placing.id}`} alt="" />
           <label>

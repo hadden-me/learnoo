@@ -11,13 +11,13 @@ func mediaDoc(blocks ...Node) Document {
 }
 
 func TestMediaReferences(t *testing.T) {
-	for src, want := range map[string]int64{"media:1": 1, "media:42": 42, "media:999999999999999999": 999999999999999999} {
+	for src, want := range map[string]int64{"media:1": 1, "media:42": 42, "media:999999999999999": 999999999999999} {
 		if id, ok := MediaID(src); !ok || id != want {
 			t.Errorf("MediaID(%q) = %d, %v", src, id, ok)
 		}
 	}
 	for _, src := range []string{"media:0", "media:01", "media:-1", "media:+1", "media:", "media:1 ", "Media:1", "media:1.0",
-		"media:1000000000000000000", "media:1/../2", "media://1", "/api/media/1", "media:١"} {
+		"media:1000000000000000", "media:9007199254740993", "media:1/../2", "media://1", "/api/media/1", "media:١"} {
 		if _, ok := MediaID(src); ok {
 			t.Errorf("MediaID(%q) accepted", src)
 		}
@@ -42,6 +42,8 @@ func TestImageFieldRules(t *testing.T) {
 	long := strings.Repeat("é", 501) // 1002 bytes
 	for name, node := range map[string]Node{
 		"missing alt":         {Type: "image", Src: "media:1"},
+		"blank alt":           {Type: "image", Src: "media:1", Alt: " \t\u00a0\u3000"},
+		"blank fixture alt":   {Type: "image", Src: "/static/complex-plane.svg", Alt: "\u2028\ufeff\u0085"},
 		"alt too long":        {Type: "image", Src: "media:1", Alt: long},
 		"caption too long":    {Type: "image", Src: "media:1", Alt: "x", Caption: long},
 		"caption on callout":  {Type: "callout", Caption: "x", Children: []Node{{Type: "paragraph", Children: []Node{{Type: "text", Text: "t"}}}}},
