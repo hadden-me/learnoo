@@ -1,5 +1,6 @@
-// Package review records review decisions on submitted lesson revisions and
-// publishes approved ones (LRN-007).
+// Package review records review decisions on submitted lesson revisions,
+// publishes approved ones (LRN-007), and withdraws, unpublishes and restores
+// them (LRN-009).
 //
 // The database keeps decisions, statuses, the published pointer and the
 // publication audit consistent (migrations/0006_review_publication.sql); this
@@ -13,8 +14,9 @@
 //     else. The reviewer must not be the revision's author.
 //   - Publish requires the global publisher permission. Reviewing never
 //     implies publishing, and publishing never bypasses review: only an
-//     approved, never-published revision of the lesson whose base is the
-//     current published revision can be published.
+//     approved, never-published, non-withdrawn revision of the lesson whose
+//     base is the current published revision can be published.
+//   - Withdraw, Unpublish and Restore (LRN-009) are in withdraw.go.
 //
 // Lock order matches internal/lessons and the database triggers: the lesson
 // row first, then its revision rows.
@@ -66,7 +68,7 @@ var (
 	ErrNotApproved = errors.New("revision is not approved")
 	// ErrAlreadyPublished means the revision is or was already published,
 	// so it is no longer the lesson's candidate. Re-pointing the lesson to
-	// an earlier revision is restoration (LRN-009).
+	// an earlier revision is restoration (Restore).
 	ErrAlreadyPublished = errors.New("revision was already published")
 	// ErrStaleBase means the lesson's published revision changed since the
 	// revision's draft was created. Nothing was changed.
@@ -241,9 +243,15 @@ func (s *Store) Publish(ctx context.Context, actor, revisionID int64) (Publicati
 		if err != nil {
 			return err
 		}
+		withdrawn, err := isWithdrawn(ctx, tx, revisionID)
+		if err != nil {
+			return err
+		}
 		switch {
 		case status != lessons.StatusApproved:
 			return ErrNotApproved
+		case withdrawn:
+			return ErrWithdrawn
 		case closed || (current != nil && *current == revisionID):
 			return ErrAlreadyPublished
 		case archived:
@@ -364,11 +372,12 @@ func (s *Store) ReviewQueue(ctx context.Context, actor, subjectID int64) ([]Queu
 	return items, nil
 }
 
-// PublicationHistory returns the publication audit of a lesson, oldest
-// first. It performs no authorization.
+// PublicationHistory returns the publications (action publish) of a
+// lesson, oldest first; PointerHistory also lists restorations and
+// unpublications. It performs no authorization.
 func (s *Store) PublicationHistory(ctx context.Context, lessonID int64) ([]Publication, error) {
 	rows, err := s.db.Query(ctx, `SELECT lesson_id, revision_id, previous_revision_id, actor_id, occurred_at
-		FROM publication_audit WHERE lesson_id = $1 ORDER BY id`, lessonID)
+		FROM publication_audit WHERE lesson_id = $1 AND action = 'publish' ORDER BY id`, lessonID)
 	if err != nil {
 		return nil, err
 	}
