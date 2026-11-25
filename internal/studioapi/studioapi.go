@@ -1,6 +1,7 @@
 // Package studioapi exposes the Studio ↔ server endpoints for lesson drafts
-// and media (LRN-006 slice 3) and for review and publication (LRN-007,
-// review.go), documented in docs/API.md.
+// and media (LRN-006 slice 3), for review and publication (LRN-007,
+// review.go) and for withdrawal, unpublication and restoration (LRN-009,
+// withdraw.go), documented in docs/API.md.
 //
 // Draft and media routes require a session and the global author
 // permission, checked on the server by permissions.Middleware before any
@@ -90,6 +91,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	route("POST /api/media", h.uploadMedia)
 	route("GET /api/media/{mediaId}", h.serveMedia)
 	h.registerReview(mux)
+	h.registerWithdrawal(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or

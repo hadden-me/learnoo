@@ -235,6 +235,8 @@ func (h *Handlers) writePublishError(w http.ResponseWriter, err error) {
 		notFound(w)
 	case errors.Is(err, review.ErrNotApproved):
 		conflict("not_approved", "Only an approved revision can be published.")
+	case errors.Is(err, review.ErrWithdrawn):
+		conflict("withdrawn", "This revision was withdrawn and can never be published or restored.")
 	case errors.Is(err, review.ErrAlreadyPublished):
 		conflict("already_published", "This revision was already published. Restoring an earlier revision is a separate action.")
 	case errors.Is(err, review.ErrStaleBase):
