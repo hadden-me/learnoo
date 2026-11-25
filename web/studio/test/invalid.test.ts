@@ -2,7 +2,10 @@ import casesSource from './contract/cases.json?raw';
 import { describe, expect, it } from 'vitest';
 import { lessonToEditorChecked } from '../src/schema/adapter';
 import { LessonError, MAX_DOCUMENT_BYTES, findDuplicateKey, findNonIntegerNumber, parseLesson } from '../src/schema/lesson';
-import { DRAFT_KEY, reopenDraft } from '../src/schema/storage';
+import { getSchema } from '@tiptap/core';
+import { revisionToData } from '../src/editor/convert';
+import { lessonExtensions } from '../src/schema/extensions';
+import type { Revision } from '../src/api/client';
 import { createEditor, exportFrom } from './helpers';
 
 const cases: { name: string; valid: boolean; source: string }[] = JSON.parse(casesSource);
@@ -101,11 +104,9 @@ describe('export reports problems instead of saving invalid JSON', () => {
   });
 });
 
-describe('reopen', () => {
-  it('rejects a tampered local save instead of loading it', () => {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...base, blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'x', onclick: 'alert(1)' }] }] }));
-    expect(() => reopenDraft()).toThrow(/Champ inconnu/);
-    localStorage.removeItem(DRAFT_KEY);
-    expect(reopenDraft()).toBeNull();
+describe('opening a stored revision', () => {
+  it('rejects a tampered document instead of loading it', () => {
+    const content = { ...base, blocks: [{ type: 'paragraph', children: [{ type: 'text', text: 'x', onclick: 'alert(1)' }] }] };
+    expect(() => revisionToData(getSchema(lessonExtensions), { content, prerequisites: '', chapterId: null, mediaIds: [] } as unknown as Revision)).toThrow(/Champ inconnu/);
   });
 });

@@ -6,8 +6,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "preview:test": "vite build && vite preview --strictPort"
+    "test": "vitest run"
   },
   "dependencies": {
     "@tiptap/core": "3.35.0",
