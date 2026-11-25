@@ -183,19 +183,22 @@ func TestProcessPhoneJPEG(t *testing.T) {
 	paddedVideo := cat(insertJPEGSegment(prim, 0xE1, xmp(`Camera:MotionPhoto="1"`,
 		directory(primaryItem+` Item:Padding="7"`, videoItem(len(vid))))), make([]byte, 7), vid)
 
+	// A final mdat whose size is 0 ("to the end"), as streaming writers produce.
+	openMdat := cat(vid[:24], []byte("\x00\x00\x00\x00mdat\x01\x02\x03"))
 	tests := map[string][]byte{
-		"mpf preview big-endian":         withMPF(prim, binary.BigEndian, [][]byte{gm}, nil),
-		"mpf two images little-endian":   withMPF(prim, binary.LittleEndian, [][]byte{gm, encodeJPEG(t, testImage(4, 4))}, nil),
-		"mpf undecodable secondary":      withMPF(prim, binary.BigEndian, [][]byte{undecodable}, nil),
-		"mpf then zero padding":          append(withMPF(prim, binary.BigEndian, [][]byte{gm}, nil), make([]byte, 100)...),
-		"ultra hdr gain map":             ultraHDR,
-		"motion photo container":         motionContainer,
-		"motion photo micro video":       microVideo,
-		"ultra hdr motion photo":         both,
-		"container padding before video": paddedVideo,
-		"one zero byte":                  append(append([]byte{}, prim...), 0),
-		"zero padding at the limit":      append(append([]byte{}, prim...), make([]byte, MaxTrailingZeros)...),
-		"xmp without trailer":            insertJPEGSegment(prim, 0xE1, xmp(`Camera:MotionPhoto="1"`, directory(primaryItem, videoItem(9)))),
+		"motion photo final mdat to the end": cat(insertJPEGSegment(prim, 0xE1, xmp(fmt.Sprintf(`GCamera:MicroVideo="1" GCamera:MicroVideoOffset="%d"`, len(openMdat)), "")), openMdat),
+		"mpf preview big-endian":             withMPF(prim, binary.BigEndian, [][]byte{gm}, nil),
+		"mpf two images little-endian":       withMPF(prim, binary.LittleEndian, [][]byte{gm, encodeJPEG(t, testImage(4, 4))}, nil),
+		"mpf undecodable secondary":          withMPF(prim, binary.BigEndian, [][]byte{undecodable}, nil),
+		"mpf then zero padding":              append(withMPF(prim, binary.BigEndian, [][]byte{gm}, nil), make([]byte, 100)...),
+		"ultra hdr gain map":                 ultraHDR,
+		"motion photo container":             motionContainer,
+		"motion photo micro video":           microVideo,
+		"ultra hdr motion photo":             both,
+		"container padding before video":     paddedVideo,
+		"one zero byte":                      append(append([]byte{}, prim...), 0),
+		"zero padding at the limit":          append(append([]byte{}, prim...), make([]byte, MaxTrailingZeros)...),
+		"xmp without trailer":                insertJPEGSegment(prim, 0xE1, xmp(`Camera:MotionPhoto="1"`, directory(primaryItem, videoItem(9)))),
 	}
 	want, err := process(prim, "")
 	if err != nil {
@@ -252,7 +255,15 @@ func TestProcessRejectsPhoneJPEGVariants(t *testing.T) {
 	twoMPF := insertJPEGSegment(mpf(nil, gm), 0xE2, mpfSegment(binary.BigEndian, []mpEntry{{0, 0}}))
 	twoXMP := insertJPEGSegment(withXMP(`Camera:MotionPhoto="1"`, motion(videoItem(len(vid))), vid), 0xE1, xmp("", ""))
 
+	ftypSizeZero := append([]byte{}, vid...)
+	copy(ftypSizeZero, []byte{0, 0, 0, 0})
+	freeSizeZero := cat(vid[:24], []byte("\x00\x00\x00\x00free\x01\x02\x03"))
 	tests := map[string][]byte{
+		// Nothing may follow a video.
+		"container video then padding":  withXMP(`Camera:MotionPhoto="1"`, motion(videoItem(len(vid))+` Item:Padding="4"`), vid, make([]byte, 4)),
+		"container video then gain map": withXMP(`Camera:MotionPhoto="1"`, motion(videoItem(len(vid)), gainMapItem(len(gm))), vid, gm),
+		"micro video ftyp size zero":    microVideo(len(ftypSizeZero), ftypSizeZero),
+		"micro video free size zero":    microVideo(len(freeSizeZero), freeSizeZero),
 		// MPF
 		"mpf size one short":           mpf(func(e []mpEntry) { e[1].size-- }, gm),
 		"mpf size one long":            cat(mpf(func(e []mpEntry) { e[1].size++ }, gm), []byte{0}),
@@ -705,4 +716,38 @@ func FuzzInspectJPEG(f *testing.F) {
 			t.Fatalf("inconsistent inspection %+v for %d bytes", ins, len(b))
 		}
 	})
+}
+
+// The CMYK fast path (Adobe CMYK JPEGs; Go cannot encode them, so orient is
+// tested directly) matches the reference transforms and allocates only the
+// destination.
+func TestOrientCMYK(t *testing.T) {
+	src := image.NewCMYK(image.Rect(0, 0, 5, 3))
+	rng := rand.New(rand.NewSource(7))
+	rng.Read(src.Pix)
+	ref := image.NewRGBA(src.Bounds())
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 5; x++ {
+			c := src.CMYKAt(x, y)
+			r, g, b := color.CMYKToRGB(c.C, c.M, c.Y, c.K)
+			ref.SetRGBA(x, y, color.RGBA{r, g, b, 255})
+		}
+	}
+	for o := 1; o <= 8; o++ {
+		got := orient(src, o)
+		if o == 1 {
+			if got != image.Image(src) {
+				t.Fatal("orientation 1 copied the image")
+			}
+			continue
+		}
+		want := upright(ref, o)
+		rgba, ok := got.(*image.RGBA)
+		if !ok || !bytes.Equal(rgba.Pix, want.Pix) || rgba.Bounds() != want.Bounds() {
+			t.Fatalf("orientation %d: got %T %v", o, got, got.Bounds())
+		}
+	}
+	if n := testing.AllocsPerRun(5, func() { orient(src, 6) }); n > 2 {
+		t.Fatalf("orient allocates %v times", n)
+	}
 }

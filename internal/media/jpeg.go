@@ -29,7 +29,10 @@ import (
 //   - A motion-photo video located by GCamera:MicroVideoOffset (bytes from the
 //     end of the file), checked as an ISO BMFF box list.
 //   - Zero bytes (0x00 only) between or after those structures, at most
-//     MaxTrailingZeros in total, never after a video.
+//     MaxTrailingZeros in total.
+//
+// A video must be the last part and end exactly at the end of the file:
+// nothing (no image, padding or zero byte) may follow it.
 //
 // Anything else after EOI (unknown, partially covered, overlapping or
 // inconsistently declared data, appended files, scripts) is ErrTrailingData.
@@ -238,6 +241,9 @@ func coverTrailer(b []byte, eoi int, parts []trailerPart) error {
 		if prev != nil && p.start == prev.start && p.end == prev.end && p.kind == prev.kind && p.source != prev.source {
 			continue
 		}
+		if prev != nil && prev.kind == partVideo {
+			return trailingErr("data after the motion-photo video")
+		}
 		if p.start < pos {
 			return trailingErr("overlapping parts at offset %d", p.start)
 		}
@@ -251,11 +257,11 @@ func coverTrailer(b []byte, eoi int, parts []trailerPart) error {
 		pos = p.end
 		prev = p
 	}
-	if !allZero(b[pos:]) {
-		return trailingErr("undeclared data at offset %d", pos)
-	}
 	if prev != nil && prev.kind == partVideo && pos != len(b) {
 		return trailingErr("data after the motion-photo video")
+	}
+	if !allZero(b[pos:]) {
+		return trailingErr("undeclared data at offset %d", pos)
 	}
 	zeros += len(b) - pos
 	if zeros > MaxTrailingZeros {
@@ -287,7 +293,9 @@ func checkEmbeddedJPEG(b []byte) error {
 }
 
 // checkBMFF requires b to be a list of ISO BMFF boxes that starts with 'ftyp'
-// and fills b exactly. Box contents are never parsed.
+// and fills b exactly. Box contents are never parsed. A box size of 0 ("to
+// the end") is accepted only for a final 'mdat' box, as streaming writers
+// produce; the region it extends to is already bounded by the declared length.
 func checkBMFF(b []byte) error {
 	n := uint64(len(b))
 	pos := uint64(0)
@@ -299,7 +307,10 @@ func checkBMFF(b []byte) error {
 		typ := b[pos+4 : pos+8]
 		header := uint64(8)
 		switch size {
-		case 0: // extends to the end
+		case 0: // extends to the end: only a final mdat
+			if string(typ) != "mdat" {
+				return trailingErr("video box %q without a size", typ)
+			}
 			size = n - pos
 		case 1: // 64-bit size
 			if n-pos < 16 {
