@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -72,7 +73,55 @@ var (
 	ErrUnknownSubject = errors.New("unknown subject")
 	// ErrUnknownUser means the target user does not exist.
 	ErrUnknownUser = errors.New("unknown user")
+	// ErrLastAdministrator means the change would leave no active
+	// administrator (an account holding administrator and not disabled).
+	ErrLastAdministrator = errors.New("refused: this is the last active administrator")
+	// ErrAdministratorExists means Bootstrap found an active administrator.
+	ErrAdministratorExists = errors.New("an active administrator already exists")
 )
+
+// administratorsLockKey is a transaction-scoped advisory lock taken by every
+// operation that can add or remove an active administrator. It serializes
+// them, so each one counts administrators after the previous one committed
+// (READ COMMITTED gives every statement a fresh snapshot). It is always the
+// first lock such a transaction takes, so it cannot join a deadlock cycle.
+const administratorsLockKey int64 = 0x6c726e6f6f5f6164 // "lrnoo_ad"
+
+// LockAdministrators takes the administrators lock for the rest of tx. Any
+// code outside this package that can remove an active administrator must
+// call it before any other statement in tx, then GuardAdministratorRemoval.
+func LockAdministrators(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, administratorsLockKey); err != nil {
+		return fmt.Errorf("lock administrators: %w", err)
+	}
+	return nil
+}
+
+// GuardAdministratorRemoval returns ErrLastAdministrator if userID is an
+// active administrator and no other active administrator exists. It takes
+// the administrators lock (re-taking it in the same tx is harmless), but
+// callers must already hold it before any row lock: call LockAdministrators
+// first, then Authorize, then this. Taking the lock only here, after
+// Authorize's FOR SHARE, lets two administrators acting on each other
+// deadlock (SQLSTATE 40P01).
+func GuardAdministratorRemoval(ctx context.Context, tx pgx.Tx, userID int64) error {
+	if err := LockAdministrators(ctx, tx); err != nil {
+		return err
+	}
+	var isActive bool
+	var others int64
+	err := tx.QueryRow(ctx, `
+		SELECT coalesce(bool_or(p.user_id = $1), false), count(*) FILTER (WHERE p.user_id <> $1)
+		  FROM user_permissions p JOIN users u ON u.id = p.user_id
+		 WHERE p.permission = 'administrator' AND u.disabled_at IS NULL`, userID).Scan(&isActive, &others)
+	if err != nil {
+		return fmt.Errorf("count administrators: %w", err)
+	}
+	if isActive && others == 0 {
+		return ErrLastAdministrator
+	}
+	return nil
+}
 
 // Set is a user's effective permissions at load time.
 type Set struct {
@@ -338,6 +387,21 @@ func (a Actor) auditLabel() *string {
 // UserActor is a signed-in user acting through the application.
 func UserActor(userID int64) Actor { return Actor{userID: userID} }
 
+// AuditID is the actor_id recorded in audit tables: nil for operators.
+func (a Actor) AuditID() *int64 {
+	if a.operator {
+		return nil
+	}
+	id := a.userID
+	return &id
+}
+
+// Authorize returns nil if actor may administer users and permissions in
+// tx: an operator always, a user actor only while it is an active
+// administrator. It share-locks the actor's administrator grant until tx
+// ends. Callers that also take the administrators lock must take it first.
+func Authorize(ctx context.Context, tx pgx.Tx, actor Actor) error { return authorize(ctx, tx, actor) }
+
 // Grant gives target a global permission. Granting a held permission is a
 // no-op and writes no audit row. It reports whether anything changed.
 func (s *Store) Grant(ctx context.Context, actor Actor, target int64, p Permission) (bool, error) {
@@ -348,13 +412,15 @@ func (s *Store) Grant(ctx context.Context, actor Actor, target int64, p Permissi
 }
 
 // Revoke removes a global permission; revoking an absent one is a no-op.
-// An unknown target returns ErrUnknownUser.
+// An unknown target returns ErrUnknownUser. Revoking administrator returns
+// ErrLastAdministrator, changing nothing, if target is the only active
+// administrator.
 //
 // Permission changes by a user actor share-lock the actor's administrator
-// grant. Two administrators changing each other's grants at the same time
-// can deadlock; PostgreSQL then aborts one with SQLSTATE 40P01. Callers
-// should report such an error (or retry the whole call); it never leaves a
-// partial change.
+// grant. Administrator changes take the administrators lock first, so two
+// administrators revoking each other's administrator serialize instead of
+// deadlocking: the second one finds its own grant gone and is denied. Any
+// database error leaves no partial change.
 func (s *Store) Revoke(ctx context.Context, actor Actor, target int64, p Permission) (bool, error) {
 	if !p.global() {
 		return false, fmt.Errorf("revoke %q: use RevokeReviewer for subject-scoped permissions", p)
@@ -381,6 +447,11 @@ func (s *Store) GrantDefaults(ctx context.Context, actor Actor, target int64, t 
 		return err
 	}
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if slices.Contains(perms, Administrator) {
+			if err := LockAdministrators(ctx, tx); err != nil {
+				return err
+			}
+		}
 		if err := authorize(ctx, tx, actor); err != nil {
 			return err
 		}
@@ -393,11 +464,67 @@ func (s *Store) GrantDefaults(ctx context.Context, actor Actor, target int64, t 
 	})
 }
 
+// Bootstrap creates the first administrator in one transaction: create
+// inserts the account (inside tx) and returns its id, then the Administrator
+// defaults are granted by actor, which must be an operator (operator tools
+// pass OperatorAs(LocalOperatorLabel())), each audited. It returns
+// ErrAdministratorExists, changing nothing, if any active administrator
+// exists; concurrent calls are serialized by the administrators lock, so at
+// most one succeeds.
+func (s *Store) Bootstrap(ctx context.Context, actor Actor, create func(tx pgx.Tx) (int64, error)) (int64, error) {
+	if !actor.operator {
+		return 0, ErrDenied
+	}
+	var id int64
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := LockAdministrators(ctx, tx); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM user_permissions p JOIN users u ON u.id = p.user_id
+				 WHERE p.permission = 'administrator' AND u.disabled_at IS NULL)`).Scan(&exists); err != nil {
+			return fmt.Errorf("check administrators: %w", err)
+		}
+		if exists {
+			return ErrAdministratorExists
+		}
+		var err error
+		if id, err = create(tx); err != nil {
+			return err
+		}
+		perms, _ := DefaultPermissions(Admin)
+		for _, p := range perms {
+			if _, err := s.apply(ctx, tx, actor, id, "grant", p, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 func (s *Store) change(ctx context.Context, actor Actor, target int64, action string, p Permission, subject *int64) (bool, error) {
 	var changed bool
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		// The administrators lock comes before authorize's row lock so the
+		// lock order is the same in every transaction.
+		if p == Administrator {
+			if err := LockAdministrators(ctx, tx); err != nil {
+				return err
+			}
+		}
 		if err := authorize(ctx, tx, actor); err != nil {
 			return err
+		}
+		if p == Administrator && action == "revoke" {
+			if err := GuardAdministratorRemoval(ctx, tx, target); err != nil {
+				return err
+			}
 		}
 		var err error
 		changed, err = s.apply(ctx, tx, actor, target, action, p, subject)
@@ -496,20 +623,89 @@ type AuditEntry struct {
 	Action        string
 	Permission    Permission
 	SubjectID     *int64
+	SubjectCode   string // empty unless SubjectID is set
 }
 
 // Audit returns the permission history of target, oldest first.
 func (s *Store) Audit(ctx context.Context, target int64) ([]AuditEntry, error) {
-	rows, err := s.db.Query(ctx, `SELECT occurred_at, actor_id, coalesce(operator_label, ''), target_user_id, action, permission, subject_id
-		FROM permission_audit WHERE target_user_id = $1 ORDER BY id`, target)
+	rows, err := s.db.Query(ctx, `SELECT a.occurred_at, a.actor_id, coalesce(a.operator_label, ''), a.target_user_id, a.action, a.permission, a.subject_id, coalesce(s.code, '')
+		FROM permission_audit a LEFT JOIN subjects s ON s.id = a.subject_id
+		WHERE a.target_user_id = $1 ORDER BY a.id`, target)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuditEntry, error) {
 		var e AuditEntry
 		var p string
-		err := r.Scan(&e.OccurredAt, &e.ActorID, &e.OperatorLabel, &e.TargetID, &e.Action, &p, &e.SubjectID)
+		err := r.Scan(&e.OccurredAt, &e.ActorID, &e.OperatorLabel, &e.TargetID, &e.Action, &p, &e.SubjectID, &e.SubjectCode)
 		e.Permission = Permission(p)
 		return e, err
 	})
 }
+
+// SubjectID returns the id of the subject with the given code, or
+// ErrUnknownSubject.
+func (s *Store) SubjectID(ctx context.Context, code string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(ctx, `SELECT id FROM subjects WHERE code = $1`, code).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrUnknownSubject
+	}
+	if err != nil {
+		return 0, fmt.Errorf("look up subject: %w", err)
+	}
+	return id, nil
+}
+
+// Grants lists what target holds as stored, whether or not the account is
+// disabled (Load reports effective permissions, which are empty while
+// disabled): global permissions in a stable order and reviewer subject codes
+// sorted. It is for operator inspection, never for access checks.
+func (s *Store) Grants(ctx context.Context, target int64) ([]Permission, []string, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT permission, '' FROM user_permissions WHERE user_id = $1
+		UNION ALL
+		SELECT 'reviewer', s.code FROM reviewer_assignments r JOIN subjects s ON s.id = r.subject_id
+		 WHERE r.user_id = $1`, target)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list grants: %w", err)
+	}
+	defer rows.Close()
+	held := map[Permission]bool{}
+	var subjects []string
+	for rows.Next() {
+		var p, code string
+		if err := rows.Scan(&p, &code); err != nil {
+			return nil, nil, err
+		}
+		if Permission(p) == Reviewer {
+			subjects = append(subjects, code)
+		} else {
+			held[Permission(p)] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("list grants: %w", err)
+	}
+	var global []Permission
+	for _, p := range []Permission{Author, Publisher, Administrator} {
+		if held[p] {
+			global = append(global, p)
+		}
+	}
+	slices.Sort(subjects)
+	return global, subjects, nil
+}
+
+// Parse returns the named permission, or an error for any other name.
+func Parse(name string) (Permission, error) {
+	switch p := Permission(name); p {
+	case Author, Reviewer, Publisher, Administrator:
+		return p, nil
+	}
+	return "", fmt.Errorf("unknown permission %q (want author, reviewer, publisher or administrator)", name)
+}
+
+// Global reports whether p is granted without a subject (author, publisher,
+// administrator). Reviewer and unknown permissions are not global.
+func (p Permission) Global() bool { return p.global() }

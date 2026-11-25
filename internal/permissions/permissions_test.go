@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/users"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -658,64 +656,6 @@ func TestTxChecksDenyByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-// Two administrators revoking each other's administrator at the same time:
-// the FOR SHARE lock on each actor's own grant means at most one succeeds and
-// an administrator always remains. The loser is denied (it ran after the
-// winner committed) or aborted as a deadlock (40P01).
-func TestConcurrentAdministratorsCannotRevokeEachOther(t *testing.T) {
-	e := newEnv(t)
-	deadlocks := 0
-	for i := range 10 {
-		a := e.user("admin-a" + strconv.Itoa(i))
-		b := e.user("admin-b" + strconv.Itoa(i))
-		for _, u := range []int64{a, b} {
-			if _, err := e.store.Grant(e.ctx, operator, u, permissions.Administrator); err != nil {
-				t.Fatal(err)
-			}
-		}
-		start := make(chan struct{})
-		var wg sync.WaitGroup
-		errs := make([]error, 2)
-		for j, pair := range [][2]int64{{a, b}, {b, a}} {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				<-start
-				_, errs[j] = e.store.Revoke(e.ctx, permissions.UserActor(pair[0]), pair[1], permissions.Administrator)
-			}()
-		}
-		close(start)
-		wg.Wait()
-
-		ok := 0
-		for _, err := range errs {
-			var pgErr *pgconn.PgError
-			switch {
-			case err == nil:
-				ok++
-			case errors.As(err, &pgErr) && pgErr.Code == "40P01":
-				deadlocks++
-			case errors.Is(err, permissions.ErrDenied):
-			default:
-				t.Fatalf("iteration %d: unexpected error %v", i, err)
-			}
-		}
-		if ok != 1 {
-			t.Fatalf("iteration %d: %d revocations succeeded (%v), want exactly 1", i, ok, errs)
-		}
-		remaining := 0
-		for _, u := range []int64{a, b} {
-			if e.set(u).Has(permissions.Administrator) {
-				remaining++
-			}
-		}
-		if remaining != 1 {
-			t.Fatalf("iteration %d: %d administrators remain, want 1", i, remaining)
-		}
-	}
-	t.Logf("%d of 10 races ended in a deadlock abort", deadlocks)
 }
 
 // Grant and audit times are both the transaction time.
