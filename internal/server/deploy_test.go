@@ -24,6 +24,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/backupcheck"
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/invitations"
@@ -310,6 +311,24 @@ func runFlow(t *testing.T, e *env) seeded {
 	}
 
 	s.pendingCandidate = f.approvedRev(f.successorRev(s.first.LessonID, "TEST Déploiement candidate"))
+
+	// Studio integration (issue #65): an audited catalogue addition, the
+	// catalogue, the author's lessons and the canonical preview.
+	cat := catalogue.NewStore(e.db)
+	if _, _, err := cat.AddSubject(context.Background(), testOperator, "test-deploy-physics"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := cat.AddChapter(context.Background(), testOperator, "test-deploy-math", "ch-1"); err != nil {
+		t.Fatal(err)
+	}
+	wantStatus(t, "catalogue", f.api(f.reviewer, http.MethodGet, "/api/catalogue/subjects/test-deploy-math/chapters", nil), http.StatusOK, "")
+	w = f.api(f.author, http.MethodGet, "/api/lessons/mine", nil)
+	wantStatus(t, "owned lessons", w, http.StatusOK, "")
+	if !strings.Contains(w.Body.String(), "TEST Déploiement candidate") {
+		t.Fatalf("owned lessons: %s", w.Body)
+	}
+	wantStatus(t, "preview", f.api(f.author, http.MethodPost, "/api/preview",
+		map[string]json.RawMessage{"content": readerDoc("TEST Déploiement aperçu", "fr")}), http.StatusOK, "")
 	return s
 }
 
@@ -444,6 +463,15 @@ func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
 	wantRefused(t, rt, "truncate permission audit", insufficientPrivilege, `TRUNCATE permission_audit`)
 	wantRefused(t, rt, "delete account status audit", appendOnly, `DELETE FROM account_status_audit`)
 	wantRefused(t, rt, "truncate account status audit", insufficientPrivilege, `TRUNCATE account_status_audit`)
+	// Catalogue audit guards (migration 0010).
+	wantRefused(t, rt, "truncate catalogue audit", insufficientPrivilege, `TRUNCATE catalogue_audit`)
+	wantRefused(t, rt, "edit catalogue audit", guardRefusal, `UPDATE catalogue_audit SET operator_label = 'TEST forged'`)
+	wantRefused(t, rt, "delete catalogue audit", guardRefusal, `DELETE FROM catalogue_audit`)
+	wantRefused(t, rt, "unaudited subject", guardRefusal, `INSERT INTO subjects (code) VALUES ('test-unaudited')`)
+	wantRefused(t, rt, "unaudited chapter", guardRefusal,
+		`INSERT INTO chapters (subject_id, code) SELECT id, 'unaudited' FROM subjects WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "rename a subject", guardRefusal, `UPDATE subjects SET code = 'test-renamed' WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "rename a chapter", guardRefusal, `UPDATE chapters SET code = 'renamed' WHERE code = 'ch-1'`)
 	if after := s.withdrawState(); after != before {
 		t.Fatalf("refused statements changed state:\n%s\n%s", before, after)
 	}
