@@ -329,7 +329,7 @@ Decisions and publication recheck the permission inside their database transacti
 Optional query parameter `subjectId` (a positive integer, at most once; no other parameters). Lists revisions in review in the caller's assigned subjects (or only `subjectId`, which must be one of them, else `404 not_found`), oldest submission first, at most 200, excluding the caller's own revisions.
 
 ```json
-{"revisions": [{"revisionId": 12, "lessonId": 4, "number": 2, "title": "Nombres complexes", "language": "fr", "subjectId": 1, "chapterId": null, "authorId": 7, "submittedAt": "2026-11-24T09:00:00Z"}]}
+{"revisions": [{"revisionId": 12, "lessonId": 4, "number": 2, "title": "Nombres complexes", "language": "fr", "subjectId": 1, "chapterId": null, "authorId": 7, "authorName": "Amel", "submittedAt": "2026-11-24T09:00:00Z"}]}
 ```
 
 - `200`; `400 invalid_request` for a malformed query.
@@ -515,7 +515,7 @@ What the Studio needs from the authenticated application, so that neither `local
 | `GET /api/catalogue/subjects` | `author`, or a reviewer of any subject. Everyone else (students, publisher-only and administrator-only accounts): `403 forbidden` |
 | `GET /api/catalogue/subjects/{code}/chapters` | As above. The permission check runs first, so a student gets `403` for known and unknown codes alike |
 | `GET /api/lessons/mine` | `author` (checked by the middleware and again inside the listing's transaction). Lists only the caller's own lessons; administrators get no exception |
-| `POST /api/preview` | `author` |
+| `POST /api/preview` | Every account with Studio access: `author`, `publisher`, `administrator`, or a reviewer of any subject (issue #66 second slice: reviewers, publishers and administrators read submitted revisions through it). Students: `403 forbidden` |
 
 ### Catalogue
 
@@ -573,6 +573,45 @@ The built Studio bundle (`web/studio/dist`, built with Vite `base: '/studio/'`),
 - Files: an existing regular file of the bundle is served with its content type; a missing file, a hidden file (segment starting with `.`), a directory, or any path leaving the bundle (including through a symbolic link) is `404`. Every other path under `/studio/` is a client route and gets `index.html`. The distinction is the last path segment only: **Studio client routes must never contain a dot in their last segment** (`/studio/lessons/12` is a route; `/studio/lessons/v1.2` would be looked up as a file and answer `404`). The `Accept` header is not used.
 - Headers: `Cache-Control: private, no-store` (assets included, see DECISIONS.md), `Vary: Cookie`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, no `Last-Modified` or `ETag`, and `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`. The Vite build emits only an external module script and stylesheet, so no inline script is allowed; the editor does not inject a `<style>` element (TipTap `injectCSS: false`, base rules in the Studio stylesheet), so none is allowed either; inline style attributes are, for the editor and KaTeX, as on the reader's lesson page.
 
+## Studio publication reads (issue #66, second slice)
+
+Read-only endpoints the Studio's publisher and administrator views need ([DECISIONS.md](DECISIONS.md#studio-review-publication-and-administration-issue-66-second-slice)), in `internal/review/publishing.go` and `internal/studioapi/publishing.go`. Session, `Cache-Control: private, no-store`. The permission is checked by the middleware before any lookup (`403 forbidden`, so existing and missing IDs look the same) and again inside the read's transaction with the grant and account rows share-locked, so a revocation committed in between also gives `403`. These are global permissions, so a missing ID is a plain `404 not_found`. No query parameters (`400 invalid_request`).
+
+| Endpoint | Who may call it |
+| --- | --- |
+| `GET /api/publish/queue` | `publisher` |
+| `GET /api/publish/revisions/{revisionId}` | `publisher` |
+| `GET /api/lessons/{lesson}/publication` | `publisher` or `administrator` (both may restore) |
+| `GET /api/admin/lessons` | `administrator` |
+
+**Awaiting publication** means: status `approved`, still the lesson's candidate, never published, not withdrawn, lesson not archived.
+
+`GET /api/publish/queue`: revisions awaiting publication, oldest approval first, at most 200. `staleBase` is `true` when the lesson's published revision is no longer the revision's base: publication will be refused with `409 stale_base`.
+
+```json
+{"revisions": [{"revisionId": 12, "lessonId": 4, "lessonPublicId": "0b9c…", "number": 2, "title": "Nombres complexes", "language": "fr",
+  "subjectId": 1, "subjectCode": "maths", "authorId": 7, "authorName": "Amel", "approvedBy": 9, "approverName": "Karim",
+  "approvedAt": "2026-11-24T09:00:00Z", "baseRevisionId": 9, "publishedRevisionId": 9, "staleBase": false}]}
+```
+
+`GET /api/publish/revisions/{revisionId}`: the [revision object](#revision-object) of a revision awaiting publication, so the publisher reads what they publish. Any other revision (in review, published, withdrawn, missing, malformed ID): `404 not_found`.
+
+`GET /api/lessons/{lesson}/publication`: `{lesson}` is the numeric lesson ID or its public ID (lower-case UUID, as in reader URLs); anything else is `404`. The lesson's publication state, its submitted revisions (drafts are never listed; newest first, at most 200) and the pointer audit (newest first, at most 100):
+
+```json
+{"lessonId": 4, "publicId": "0b9c…", "subjectId": 1, "subjectCode": "maths", "language": "fr", "archived": false, "publishedRevisionId": 9,
+ "revisions": [{"id": 12, "number": 2, "status": "approved", "title": "…", "authorId": 7, "authorName": "Amel", "baseRevisionId": 9,
+   "submittedAt": "…", "approvedBy": 9, "approverName": "Karim", "approvedAt": "…", "everPublished": true, "candidate": false,
+   "withdrawal": {"withdrawnBy": 1, "withdrawnByName": "Lina", "reason": "…", "withdrawnAt": "…"}}],
+ "history": [{"action": "unpublish", "publishedRevisionId": null, "previousRevisionId": 12, "actorId": 1, "actorName": "Lina", "reason": "…", "occurredAt": "…"}]}
+```
+
+`everPublished`: a publication names the revision (restoration is limited to such revisions). `candidate`: approved and still blocking new drafts. `withdrawal` is `null` unless withdrawn. `history[].reason` is set for unpublication only.
+
+`GET /api/admin/lessons`: lessons with at least one approved revision (those withdrawal, unpublication and restoration act on), most recent approval or pointer change first, at most 200: `{"lessons": [{"lessonId", "publicId", "subjectCode", "language", "archived", "publishedRevisionId", "title", "pendingRevisionId", "lastChange"}]}`. `title` is the published revision's, else the latest approved one's; `pendingRevisionId` is the approved candidate awaiting publication, or `null`.
+
+Display names of authors, reviewers and administrators are returned to staff only (reviewers through `authorName` in the review queue, publishers and administrators here); readers already see author and approving-reviewer credits.
+
 ## Not yet defined
 
-Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); catalogue names, ordering and seed data (LRN-014); the Studio's reviewer, publisher and administrator views (second slice of issue #66); a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
+Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); catalogue names, ordering and seed data (LRN-014); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
