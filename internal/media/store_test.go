@@ -348,3 +348,28 @@ func TestStoreOpenDoesNotFollowSymlinkOutOfRoot(t *testing.T) {
 		t.Fatal("opened a symlink escaping the store root")
 	}
 }
+
+func TestCheckWritableWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	s, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.CheckWritable(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("CheckWritable left %d entries", len(entries))
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o750)
+	if err := s.CheckWritable(); err == nil {
+		t.Fatal("read-only directory reported writable")
+	}
+}

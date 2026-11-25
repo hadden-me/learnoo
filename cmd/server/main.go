@@ -11,6 +11,8 @@
 //	server enable-user -email E                    re-enable a disabled account
 //	server show-user -email E                      status, permissions, reviewer subjects and audit
 //	server invite-student -email E [-ttl D]        print a one-time Student invitation link
+//	server verify-restore [-strict]                check a restored database and media directory
+//	server probe [-path P]                         container health check: GET P on LEARNOO_ADDR
 //
 // Operator commands act as permissions.OperatorAs(permissions.LocalOperatorLabel()):
 // anyone with write access to the database is trusted, and the audit records
@@ -38,6 +40,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/backupcheck"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/media"
@@ -90,8 +93,12 @@ func run(args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) err
 		return showUser(ctx, args, stdout)
 	case "invite-student":
 		return inviteStudent(ctx, args, stdout)
+	case "verify-restore":
+		return verifyRestore(ctx, args, stdout)
+	case "probe":
+		return probe(ctx, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user or invite-student)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user, invite-student, verify-restore or probe)", cmd)
 	}
 }
 
@@ -103,6 +110,34 @@ func databaseURL() (string, error) {
 	return url, nil
 }
 
+// openDatabase connects with LEARNOO_DATABASE_URL. If
+// LEARNOO_DATABASE_PASSWORD_FILE is set, the password is read from that file
+// (a container secret) instead of the URL, so it never appears in the
+// environment or the process list. One trailing newline is ignored.
+func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
+	url, err := databaseURL()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		// Never echo the URL: it may contain a password.
+		return nil, errors.New("parse database URL: invalid format")
+	}
+	if file := os.Getenv("LEARNOO_DATABASE_PASSWORD_FILE"); file != "" {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("LEARNOO_DATABASE_PASSWORD_FILE: %w", err)
+		}
+		pw := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
+		if pw == "" {
+			return nil, errors.New("LEARNOO_DATABASE_PASSWORD_FILE is empty")
+		}
+		cfg.ConnConfig.Password = pw
+	}
+	return database.OpenConfig(ctx, cfg)
+}
+
 func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
@@ -112,18 +147,18 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	if addr == "" {
 		addr = defaultAddr
 	}
-	if err := requireLoopback(addr); err != nil {
+	if os.Getenv("LEARNOO_ALLOW_NON_LOOPBACK") == "1" {
+		// Container deployments listen on the container interface; Compose
+		// publishes the port to a host address for the reverse proxy.
+		log.Warn("listening beyond loopback (LEARNOO_ALLOW_NON_LOOPBACK=1); client addresses are the proxy's", "addr", addr)
+	} else if err := requireLoopback(addr); err != nil {
 		return err
 	}
 	mediaDir, err := mediaDirectory()
 	if err != nil {
 		return err
 	}
-	url, err := databaseURL()
-	if err != nil {
-		return err
-	}
-	pool, err := database.Open(ctx, url)
+	pool, err := openDatabase(ctx)
 	if err != nil {
 		return err
 	}
@@ -177,9 +212,12 @@ func mediaDirectory() (string, error) {
 	return filepath.Clean(dir), nil
 }
 
-// requireLoopback keeps the server off public interfaces until deployment
-// work defines TLS termination and the trusted proxy chain (client address
-// for throttling depends on it).
+// requireLoopback keeps the server off public interfaces by default, also in
+// the container image. The production Compose file opts out with
+// LEARNOO_ALLOW_NON_LOOPBACK=1 because the server must listen on the
+// container network, and publishes the port only to the address the reverse
+// proxy uses. Trusted proxy headers are still not
+// read, so throttling sees the proxy's address (docs/DEPLOYMENT.md).
 func requireLoopback(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -190,7 +228,7 @@ func requireLoopback(addr string) error {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("LEARNOO_ADDR %q is not a loopback address; public binding waits for the deployment work", addr)
+		return fmt.Errorf("LEARNOO_ADDR %q is not a loopback address; set LEARNOO_ALLOW_NON_LOOPBACK=1 only inside a container behind the reverse proxy (docs/DEPLOYMENT.md)", addr)
 	}
 	return nil
 }
@@ -201,11 +239,7 @@ func migrate(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	url, err := databaseURL()
-	if err != nil {
-		return err
-	}
-	pool, err := database.Open(ctx, url)
+	pool, err := openDatabase(ctx)
 	if err != nil {
 		return err
 	}
@@ -566,11 +600,7 @@ func readPassword(stdin io.Reader) (string, error) {
 // openMigrated opens the database and refuses to continue while migrations
 // are pending or the history differs.
 func openMigrated(ctx context.Context) (*pgxpool.Pool, error) {
-	url, err := databaseURL()
-	if err != nil {
-		return nil, err
-	}
-	pool, err := database.Open(ctx, url)
+	pool, err := openDatabase(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -615,5 +645,81 @@ func inviteStudent(ctx context.Context, args []string, stdout io.Writer) error {
 		inv.ID, inv.Email, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.OperatorLabel)
 	fmt.Fprintln(stdout, "one-time link (shown only now; send it privately, do not paste it into shared logs or issues):")
 	fmt.Fprintf(stdout, "http://%s/invite/%s\n", addr, token)
+	return nil
+}
+
+// verifyRestore checks a restored database (LEARNOO_DATABASE_URL) and media
+// directory (LEARNOO_MEDIA_DIR): migrations current, every media asset file
+// present with its recorded size and SHA-256, published pointers consistent.
+// Unexpected files are listed, never deleted; -strict makes them fail.
+func verifyRestore(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("verify-restore", flag.ContinueOnError)
+	strict := fs.Bool("strict", false, "also fail on unexpected or temporary files in the media directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("verify-restore takes no arguments")
+	}
+	mediaDir, err := mediaDirectory()
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Stat(mediaDir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("LEARNOO_MEDIA_DIR %q is not an existing directory", mediaDir)
+	}
+	pool, err := openDatabase(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	report, err := backupcheck.Verify(ctx, pool, mediaDir, migrations.FS)
+	if err != nil {
+		return err
+	}
+	report.WriteText(stdout, *strict)
+	if report.Failed(*strict) {
+		return errors.New("restore verification failed")
+	}
+	return nil
+}
+
+// probe is the container health check (the runtime image has no shell or
+// HTTP client): it requests path on the local listener and succeeds only on
+// 200. A wildcard listen address is probed on loopback.
+func probe(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	p := fs.String("path", "/readyz", "path to request (/healthz or /readyz)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *p != "/healthz" && *p != "/readyz" {
+		return errors.New("probe -path must be /healthz or /readyz")
+	}
+	addr := os.Getenv("LEARNOO_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("LEARNOO_ADDR: %w", err)
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(host, port)+*p, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s: status %d", *p, resp.StatusCode)
+	}
 	return nil
 }

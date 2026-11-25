@@ -72,12 +72,26 @@ func relPath(key string) string {
 	return path.Join(key[0:2], key[2:4], key)
 }
 
+// RelPath returns the slash-separated path of a valid key inside the store
+// root ("ab/cd/<key>"). Backup verification uses it to find stored files.
+func RelPath(key string) (string, error) {
+	if !ValidKey(key) {
+		return "", ErrInvalidKey
+	}
+	return relPath(key), nil
+}
+
+// TempPrefix starts the name of every temporary file the store writes.
+// Such files never match a key and may be deleted.
+const TempPrefix = ".tmp-"
+
 // Store is immutable, content-addressed image storage rooted at one directory
 // (the persistent media volume; later configured by LEARNOO_MEDIA_DIR). Every
 // access goes through os.Root, so paths cannot escape the directory even via
 // symlinks.
 type Store struct {
 	root *os.Root
+	dir  string // absolute or as given; used only by CheckWritable
 }
 
 // OpenStore creates dir (0750) if needed and opens it as a Store.
@@ -92,7 +106,7 @@ func OpenStore(dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("media: open storage directory: %w", err)
 	}
-	return &Store{root: root}, nil
+	return &Store{root: root, dir: dir}, nil
 }
 
 // Close releases the store's directory handle.
@@ -182,7 +196,7 @@ func (s *Store) writeTemp(dir string, data []byte) (string, error) {
 	if _, err := rand.Read(rnd[:]); err != nil {
 		return "", err
 	}
-	name := path.Join(dir, ".tmp-"+hex.EncodeToString(rnd[:]))
+	name := path.Join(dir, TempPrefix+hex.EncodeToString(rnd[:]))
 	f, err := s.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
 		return "", fmt.Errorf("media: create temporary file: %w", err)
@@ -241,6 +255,14 @@ func (s *Store) matches(rel string, data []byte) (bool, error) {
 		return false, err
 	}
 	return bytes.Equal(existing, data), nil
+}
+
+// CheckWritable reports whether the store directory is currently writable
+// by this process, for readiness probes. It writes nothing (see
+// checkWritable), so a probe flood costs no disk I/O; a full disk is not
+// detected.
+func (s *Store) CheckWritable() error {
+	return checkWritable(s.dir)
 }
 
 // Open opens a stored asset for reading after strictly validating the key.

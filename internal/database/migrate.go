@@ -66,7 +66,8 @@ func isSQL(name string) bool { return len(name) > 4 && name[len(name)-4:] == ".s
 
 // Status compares the database history with the embedded migrations. It
 // returns the migrations not yet applied, or an error when the applied
-// history diverges (unknown version or changed checksum).
+// history diverges (unknown version or changed checksum). It never writes,
+// so it works under the least-privilege runtime role.
 func Status(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]Migration, error) {
 	migs, err := Load(fsys)
 	if err != nil {
@@ -77,8 +78,15 @@ func Status(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) ([]Migration, e
 		return nil, err
 	}
 	defer conn.Release()
-	if err := ensureTable(ctx, conn.Conn()); err != nil {
-		return nil, err
+	// Read-only: the runtime role has no CREATE privilege, and even
+	// CREATE TABLE IF NOT EXISTS checks it, so a missing history table means
+	// every migration is pending rather than something to create here.
+	var exists bool
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	if !exists {
+		return migs, nil
 	}
 	return pending(ctx, conn.Conn(), migs)
 }
