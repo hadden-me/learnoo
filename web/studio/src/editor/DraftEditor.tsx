@@ -422,8 +422,7 @@ export function DraftEditor(props: DraftEditorProps) {
       const media = await api.uploadMedia(file);
       setMediaInfo((m) => ({ ...m, [media.id]: media }));
       setMediaIds((ids) => (ids.includes(media.id) ? ids : [...ids, media.id]));
-      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Placez-la dans le texte avec son texte alternatif, puis enregistrez le brouillon.` });
-      setPlacing({ id: media.id, alt: '', caption: '' });
+      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Placez le curseur dans le texte puis choisissez « Placer dans le texte » ; enregistrez ensuite le brouillon.` });
     } catch (error) {
       setUploadError(`Téléversement refusé. ${describeError(error)}`);
     } finally {
