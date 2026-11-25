@@ -15,6 +15,7 @@ Two programs live in this repository and stay separate:
 | PostgreSQL | 16 (Compose and CI use `postgres:16.13`; tested locally with Homebrew 16.13) |
 | `github.com/jackc/pgx/v5` | v5.12.0 (driver and pool) |
 | `golang.org/x/crypto` | v0.55.0 (Argon2id) |
+| `golang.org/x/image` | v0.45.0 (WebP decoding only; newer releases require Go 1.26) |
 
 Migrations use a small built-in runner (`internal/database`), not an external tool. See [DECISIONS.md](DECISIONS.md#application-server-foundation-lrn-005).
 
@@ -108,7 +109,7 @@ With `LEARNOO_TEST_DATABASE_URL` set, each database-backed test creates an isola
 
 ### Pending
 
-Permissions are implemented in `internal/permissions` and `migrations/0002_permissions.sql` (see [API.md](API.md#permissions)). The operator CLI above administers them (LRN-013). Not yet implemented: the web admin console (LRN-019), self-approval prevention in review (LRN-007), curriculum data for subjects beyond a bare identifier (LRN-014). Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented.
+Permissions are implemented in `internal/permissions` and `migrations/0002_permissions.sql` (see [API.md](API.md#permissions)). The operator CLI above administers them (LRN-013). Not yet implemented: the web admin console (LRN-019), self-approval prevention in review (LRN-007), curriculum data for subjects beyond a bare identifier (LRN-014). Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented. Image validation and content-addressed storage exist in `internal/media` (see [DECISIONS.md](DECISIONS.md#media-upload-limits-lrn-006)) but are not wired to the server: the media directory will be configured by a variable such as `LEARNOO_MEDIA_DIR` on a persistent volume, and there are no upload or serving endpoints yet. Registration, recovery, verification, deletion (LRN-022), deployment, TLS termination and trusted-proxy client addresses are not implemented.
 
 ## Local renderer experiment
 
