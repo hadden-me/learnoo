@@ -148,6 +148,22 @@ func Render(doc Document) ([]byte, error) {
 	return out.Bytes(), err
 }
 
+// RenderBlocks validates doc and renders only its blocks: the canonical
+// lesson body that Render places inside the page's article element. The
+// authenticated reader (internal/reader) wraps it in its own page, so reader
+// and preview share one node renderer.
+func RenderBlocks(doc Document) (template.HTML, error) {
+	if err := Validate(doc); err != nil {
+		return "", err
+	}
+	var out bytes.Buffer
+	if err := page.ExecuteTemplate(&out, "blocks", doc); err != nil {
+		return "", err
+	}
+	// The output of html/template is safe HTML by construction.
+	return template.HTML(out.String()), nil
+}
+
 func Fixture(name string) (Document, error) {
 	data, err := Files.ReadFile("fixtures/" + name + ".json")
 	if err != nil {

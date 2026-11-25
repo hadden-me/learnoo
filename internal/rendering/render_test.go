@@ -93,3 +93,60 @@ func BenchmarkRenderLesson(b *testing.B) {
 		}
 	}
 }
+
+// The reader embeds RenderBlocks; the preview page embeds the same blocks.
+func TestRenderBlocksMatchesPageBody(t *testing.T) {
+	for _, name := range []string{"complex-numbers", "bidi", "failure"} {
+		doc, err := Fixture(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := Render(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := RenderBlocks(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body == "" || !strings.Contains(string(page), `<article aria-label="Contenu de la leçon">`+string(body)+`</article>`) {
+			t.Errorf("%s: blocks differ from the page body", name)
+		}
+	}
+	if _, err := RenderBlocks(Document{SchemaVersion: 1, Status: "unreviewed", Language: "fr", Title: "x"}); err == nil {
+		t.Error("invalid document rendered")
+	}
+}
+
+// Nodes without a language or direction inherit them: empty lang/dir
+// attributes would reset the inherited language (lang="" means unknown).
+func TestUnlabelledNodesInheritLanguage(t *testing.T) {
+	doc := Document{SchemaVersion: 1, Status: "unreviewed", Language: "ar", Title: "اختبار", Blocks: []Node{
+		{Type: "heading", Children: []Node{{Type: "text", Text: "عنوان"}}},
+		{Type: "paragraph", Children: []Node{{Type: "text", Text: "نص"}, {Type: "text", Text: "terme", Lang: "fr", Dir: "ltr"}}},
+		{Type: "paragraph", Lang: "fr", Dir: "ltr", Children: []Node{{Type: "text", Text: "texte"}}},
+	}}
+	body, err := RenderBlocks(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if strings.Contains(got, `lang=""`) || strings.Contains(got, `dir=""`) {
+		t.Fatalf("empty lang/dir attributes: %s", got)
+	}
+	for _, want := range []string{`<h2><bdi>عنوان</bdi></h2>`, `<p><bdi>نص</bdi><bdi lang="fr" dir="ltr">terme</bdi></p>`, `<p lang="fr" dir="ltr"><bdi>texte</bdi></p>`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	for _, name := range []string{"complex-numbers", "bidi", "failure"} {
+		doc, _ := Fixture(name)
+		page, err := Render(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(page), `lang=""`) || strings.Contains(string(page), `dir=""`) {
+			t.Errorf("%s: empty lang/dir attributes", name)
+		}
+	}
+}

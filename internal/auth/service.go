@@ -30,6 +30,9 @@ type Config struct {
 	AccountLimit int
 	// AddressLimit is the number of attempts per client address per window.
 	AddressLimit int
+	// InvitationLimit is the number of invitation lookups and acceptances
+	// per client address per window (LRN-008).
+	InvitationLimit int
 	// Argon2 sets the cost of new hashes, including the dummy hash.
 	Argon2 Argon2Params
 }
@@ -41,6 +44,7 @@ var DefaultConfig = Config{
 	ThrottleWindow:  15 * time.Minute,
 	AccountLimit:    5,
 	AddressLimit:    30,
+	InvitationLimit: 20,
 	Argon2:          DefaultArgon2,
 }
 
@@ -111,7 +115,7 @@ func (s *Service) Login(ctx context.Context, email, password, clientAddr, previo
 	accountKey := throttleKey("account", norm)
 	addressKey := throttleKey("address", clientAddr)
 
-	attemptIDs, err := s.recordAttempt(ctx, now, accountKey, addressKey)
+	attemptIDs, err := s.recordAttempt(ctx, now, []limitedKey{{accountKey, s.cfg.AccountLimit}, {addressKey, s.cfg.AddressLimit}})
 	if err != nil {
 		return "", Session{}, err
 	}
@@ -193,38 +197,55 @@ func (s *Service) Login(ctx context.Context, email, password, clientAddr, previo
 	return token, sess, nil
 }
 
+// limitedKey is a throttle key and its limit per window.
+type limitedKey struct {
+	key   []byte
+	limit int
+}
+
+// ThrottleInvitation records an invitation lookup or acceptance attempt from
+// clientAddr and returns *RateLimitedError when the address exceeded
+// Config.InvitationLimit in the window. It uses the login throttle table with
+// its own key scope, so the two limits never count each other's attempts.
+func (s *Service) ThrottleInvitation(ctx context.Context, clientAddr string) error {
+	_, err := s.recordAttempt(ctx, s.now().UTC(), []limitedKey{{throttleKey("invitation-address", clientAddr), s.cfg.InvitationLimit}})
+	return err
+}
+
+// HashPassword hashes a new password with the service's Argon2id cost.
+func (s *Service) HashPassword(password string) (string, error) {
+	return HashPassword(password, s.cfg.Argon2)
+}
+
 // recordAttempt stores the attempt before checking limits, so concurrent
 // requests each see the others and cannot all slip under the limit.
-func (s *Service) recordAttempt(ctx context.Context, now time.Time, accountKey, addressKey []byte) ([]int64, error) {
+func (s *Service) recordAttempt(ctx context.Context, now time.Time, keys []limitedKey) ([]int64, error) {
 	windowStart := now.Add(-s.cfg.ThrottleWindow)
 	var ids []int64
 	var limited *RateLimitedError
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		// Serialize attempts per key until commit; READ COMMITTED alone would
 		// let concurrent transactions miss each other's uncommitted rows.
-		// Locks are always taken account-then-address, so they cannot deadlock.
-		for _, k := range [][]byte{accountKey, addressKey} {
-			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, lockID(k)); err != nil {
+		// Locks are always taken in the callers' fixed order (account, then
+		// address), so they cannot deadlock.
+		for _, k := range keys {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, lockID(k.key)); err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM login_attempts WHERE attempted_at <= $1`, windowStart); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx,
-			`INSERT INTO login_attempts (key_hash, attempted_at) VALUES ($1, $3), ($2, $3) RETURNING id`,
-			accountKey, addressKey, now)
-		if err != nil {
-			return err
+		for _, k := range keys {
+			var id int64
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO login_attempts (key_hash, attempted_at) VALUES ($1, $2) RETURNING id`,
+				k.key, now).Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
 		}
-		ids, err = pgx.CollectRows(rows, pgx.RowTo[int64])
-		if err != nil {
-			return err
-		}
-		for _, k := range []struct {
-			key   []byte
-			limit int
-		}{{accountKey, s.cfg.AccountLimit}, {addressKey, s.cfg.AddressLimit}} {
+		for _, k := range keys {
 			var n int
 			var oldest time.Time
 			if err := tx.QueryRow(ctx,
