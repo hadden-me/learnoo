@@ -82,16 +82,16 @@ describe('editorial API', () => {
 describe('space discovery', () => {
   it('reads each space from its endpoint: 403 hides the space, success shows it', async () => {
     const allowed = new Set(['/api/review/queue', '/api/admin/lessons']);
-    const server = fakeServer((url) => (allowed.has(url) ? [200, {}] : [403, err('forbidden')]));
+    const server = fakeServer((url) => (url === '/api/auth/session' ? [200, session] : allowed.has(url) ? [200, {}] : [403, err('forbidden')]));
     const spaces = await discoverSpaces(new Api({ fetch: server.fetch }));
     expect(spaces).toEqual({ author: false, reviewer: true, publisher: false, administrator: true });
-    expect(server.calls.map((c) => c.url).sort()).toEqual(['/api/admin/lessons', '/api/lessons/mine', '/api/publish/queue', '/api/review/queue']);
+    expect(server.calls.map((c) => c.url).filter((u) => u !== '/api/auth/session').sort()).toEqual(['/api/admin/lessons', '/api/lessons/mine', '/api/publish/queue', '/api/review/queue']);
     expect(canHandleReports(spaces)).toBe(true);
     expect(canHandleReports({ ...NO_SPACES, publisher: true })).toBe(false);
   });
 
   it('does not mistake a failure for a missing permission', async () => {
-    const server = fakeServer((url) => (url === '/api/publish/queue' ? [500, err('internal')] : [403, err('forbidden')]));
+    const server = fakeServer((url) => (url === '/api/auth/session' ? [200, session] : url === '/api/publish/queue' ? [500, err('internal')] : [403, err('forbidden')]));
     await expect(discoverSpaces(new Api({ fetch: server.fetch }))).rejects.toMatchObject({ code: 'internal' });
   });
 
