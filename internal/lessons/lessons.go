@@ -10,8 +10,9 @@
 // optimistic version checks and schema v1 validation through
 // internal/rendering before anything is stored.
 //
-// Review decisions, publication, restoration and withdrawal are not here
-// (LRN-007, LRN-009); neither is media upload (a later LRN-006 slice).
+// Review decisions and publication are in internal/review (LRN-007);
+// restoration and withdrawal are LRN-009. Revisions carry their review
+// decision when one exists.
 package lessons
 
 import (
@@ -145,6 +146,28 @@ type Revision struct {
 	UpdatedAt      time.Time
 	SubmittedAt    *time.Time
 	MediaIDs       []int64
+	// Decision is the review decision that took the revision out of review,
+	// or nil while it is a draft or in review.
+	Decision *Decision
+}
+
+// Decision is a recorded review decision (migrations/0006).
+type Decision struct {
+	// Action is "approve" or "request_changes".
+	Action     string
+	ReviewerID int64
+	// Comment is empty for an approval without comment.
+	Comment   string
+	DecidedAt time.Time
+}
+
+// ApprovedBy returns the approving reviewer, if the revision was approved.
+func (r Revision) ApprovedBy() *int64 {
+	if r.Decision == nil || r.Decision.Action != "approve" {
+		return nil
+	}
+	id := r.Decision.ReviewerID
+	return &id
 }
 
 // Store creates, saves, submits and discards lesson drafts. It validates
@@ -581,6 +604,12 @@ func (s *Store) Revision(ctx context.Context, id int64) (Revision, error) {
 	return rev, err
 }
 
+// RevisionTx loads a stored revision inside tx. It performs no
+// authorization and takes no locks.
+func RevisionTx(ctx context.Context, tx pgx.Tx, id int64) (Revision, error) {
+	return loadRevision(ctx, tx, id)
+}
+
 // Lesson loads a lesson identity. It performs no authorization.
 func (s *Store) Lesson(ctx context.Context, id int64) (Lesson, error) {
 	var l Lesson
@@ -598,15 +627,20 @@ func (s *Store) Lesson(ctx context.Context, id int64) (Lesson, error) {
 func loadRevision(ctx context.Context, tx pgx.Tx, id int64) (Revision, error) {
 	var r Revision
 	var status string
+	var action, comment *string
+	var reviewer *int64
+	var decided *time.Time
 	err := tx.QueryRow(ctx, `
-		SELECT id, lesson_id, revision_number, status, author_id, base_revision_id, title,
-		       objectives, prerequisites, content, schema_version, language, subject_id,
-		       chapter_id, version, created_at, updated_at, submitted_at,
-		       ARRAY(SELECT media_asset_id FROM revision_media WHERE revision_id = r.id ORDER BY 1)
-		  FROM lesson_revisions r WHERE id = $1`, id).Scan(&r.ID, &r.LessonID, &r.Number, &status,
+		SELECT r.id, r.lesson_id, r.revision_number, r.status, r.author_id, r.base_revision_id, r.title,
+		       r.objectives, r.prerequisites, r.content, r.schema_version, r.language, r.subject_id,
+		       r.chapter_id, r.version, r.created_at, r.updated_at, r.submitted_at,
+		       ARRAY(SELECT media_asset_id FROM revision_media WHERE revision_id = r.id ORDER BY 1),
+		       d.action, d.reviewer_id, d.comment, d.decided_at
+		  FROM lesson_revisions r LEFT JOIN review_decisions d ON d.revision_id = r.id
+		 WHERE r.id = $1`, id).Scan(&r.ID, &r.LessonID, &r.Number, &status,
 		&r.AuthorID, &r.BaseRevisionID, &r.Title, &r.Objectives, &r.Prerequisites, &r.Content,
 		&r.SchemaVersion, &r.Language, &r.SubjectID, &r.ChapterID, &r.Version, &r.CreatedAt,
-		&r.UpdatedAt, &r.SubmittedAt, &r.MediaIDs)
+		&r.UpdatedAt, &r.SubmittedAt, &r.MediaIDs, &action, &reviewer, &comment, &decided)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, ErrNotFound
 	}
@@ -614,6 +648,12 @@ func loadRevision(ctx context.Context, tx pgx.Tx, id int64) (Revision, error) {
 		return Revision{}, fmt.Errorf("load revision: %w", err)
 	}
 	r.Status = Status(status)
+	if action != nil && reviewer != nil && decided != nil {
+		r.Decision = &Decision{Action: *action, ReviewerID: *reviewer, DecidedAt: *decided}
+		if comment != nil {
+			r.Decision.Comment = *comment
+		}
+	}
 	return r, nil
 }
 
