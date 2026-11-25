@@ -85,13 +85,16 @@ type Chapter struct {
 // Lesson is a published lesson ready to render.
 type Lesson struct {
 	LessonSummary
-	LessonID     int64
-	RevisionID   int64
-	Objectives   string
-	Document     rendering.Document
-	AuthorName   string
-	ReviewerName string // the approving reviewer; empty if none recorded
-	Bookmarked   bool
+	LessonID   int64
+	RevisionID int64
+	// RevisionNumber is the published revision's lesson-scoped number; the
+	// error report form sends it back so a report names the revision shown.
+	RevisionNumber int
+	Objectives     string
+	Document       rendering.Document
+	AuthorName     string
+	ReviewerName   string // the approving reviewer; empty if none recorded
+	Bookmarked     bool
 }
 
 // Bookmark is a saved lesson. Available is false when the lesson is no
@@ -176,7 +179,9 @@ func (s *Store) Lesson(ctx context.Context, userID int64, publicID string) (Less
 	var content []byte
 	var reviewer *string
 	err := s.db.QueryRow(ctx, `
-		SELECT `+summaryColumns+`, p.lesson_id, p.revision_id, p.objectives, p.content::text,
+		SELECT `+summaryColumns+`, p.lesson_id, p.revision_id,
+		       (SELECT lr.revision_number FROM lesson_revisions lr WHERE lr.id = p.revision_id),
+		       p.objectives, p.content::text,
 		       au.display_name,
 		       (SELECT ru.display_name FROM review_decisions d JOIN users ru ON ru.id = d.reviewer_id
 		         WHERE d.revision_id = p.revision_id AND d.action = 'approve'),
@@ -185,7 +190,7 @@ func (s *Store) Lesson(ctx context.Context, userID int64, publicID string) (Less
 		  JOIN users au ON au.id = p.author_id
 		 WHERE p.public_id = $1::uuid`, publicID, userID).Scan(
 		&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.ChapterCode,
-		&l.LessonID, &l.RevisionID, &l.Objectives, &content, &l.AuthorName, &reviewer, &l.Bookmarked)
+		&l.LessonID, &l.RevisionID, &l.RevisionNumber, &l.Objectives, &content, &l.AuthorName, &reviewer, &l.Bookmarked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lesson{}, ErrNotFound
 	}
