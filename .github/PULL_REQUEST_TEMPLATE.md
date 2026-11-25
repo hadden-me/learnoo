@@ -18,6 +18,10 @@ List the checks you actually ran and their results. Do not list checks that were
 
 Identify any permission, content schema, API, migration, or licensing implications, and any shared contract changed.
 
+## Contribution rights
+
+Link the applicable adopted terms, contributor acceptance and third-party provenance, or state that these are pending. A checkbox or this PR alone is not consent to unpublished terms. External contributions remain blocked until the [rights gate](https://github.com/hadden-me/learnoo/blob/develop/docs/CONTRIBUTION_TERMS.md) is satisfied.
+
 ## Handoff
 
 - **What changed:**

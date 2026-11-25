@@ -4,6 +4,12 @@ The project is preparing its first prototype. Start with [README](README.md), [r
 
 Planning feedback, issue discussions, and expressions of interest are welcome. Acceptance of external code and educational contributions is deferred until complete [licensing and inbound contribution terms](docs/LICENSING.md) are established. Do not submit third-party teaching material without permission or publish student information.
 
+Anyone may fork the repository and propose improvements through a pull request. Submission does not guarantee acceptance: external contributions require the owner’s explicit approval before merge, as well as the rights and validation gates below. No contributor gains direct-push or merge permission merely by opening a PR.
+
+## Contribution rights
+
+The owner has confirmed the noncommercial restriction. Read [the terms preparation and acceptance process](docs/CONTRIBUTION_TERMS.md) before offering code or educational material. It is a requirements document, not an agreement to sign. Existing PRs remain blocked until reviewed terms and explicit contributor permission are recorded; passing technical review does not remove this gate.
+
 ## Development workflow
 
 Follow the [working protocol](docs/CAHIER_DES_CHARGES.md#5-working-protocol-for-contributors-and-ai-agents): get assigned on the GitHub issue before starting, keep shared contracts in their documented home, and end every pull request with a handoff.

@@ -234,3 +234,7 @@ Implementer choices on 2026-11-24 within the execution contract on issue 7 (`int
 - **Open question: archived lessons.** Publication of a revision of an archived lesson is refused (`409 archived`); decisions on revisions of archived lessons are allowed. Archival has no code path yet, so neither choice is exercised outside tests.
 - **Open question: publisher visibility.** Publishers have no endpoint to list or read approved revisions awaiting publication; they need the revision ID from elsewhere. A publisher queue or read access was not in the contract.
 - **Unchanged open question.** A stale approved candidate (its base no longer the pointer) cannot be published and keeps blocking new drafts ([Lesson persistence](#lesson-persistence-lrn-006)); LRN-007 implements only the refusal.
+
+## Noncommercial contribution policy confirmed (2026-11-25)
+
+The owner chose to retain the noncommercial restriction, including commercial educational use. No standard open-source license, custom agreement or new reuse grant is adopted by this decision. The requirements and acceptance process in [CONTRIBUTION_TERMS.md](CONTRIBUTION_TERMS.md) guide legal review; external PR acceptance remains deferred until adequate terms and contributor permission exist.
