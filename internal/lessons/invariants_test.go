@@ -223,8 +223,8 @@ func TestPublishedPointerRequiresApprovedRevision(t *testing.T) {
 	if err := publish(other.LessonID, other.ID); err != nil {
 		t.Fatalf("approved revision rejected: %v", err)
 	}
-	// Unpublishing (NULL) stays possible for LRN-009.
-	f.mustExec(`UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, other.LessonID)
+	// Unpublishing (NULL) stays possible, with its audit row (LRN-009).
+	f.unpublish(other.LessonID)
 }
 
 func TestStatusAndTimestampRules(t *testing.T) {

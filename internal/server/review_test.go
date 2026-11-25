@@ -371,8 +371,22 @@ func TestReviewPublishStaleBaseConflicts(t *testing.T) {
 	wantStatus(t, "second draft", w, http.StatusCreated, "")
 	second := f.submitRev(f.author, decodeRevision(t, w))
 	wantStatus(t, "approve second", f.api(f.reviewer, http.MethodPost, reviewPath(second.ID)+"/approve", map[string]any{}), http.StatusOK, "")
-	// Unpublication (LRN-009) simulated with direct SQL.
-	if _, err := f.db.Exec(context.Background(), `UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, first.LessonID); err != nil {
+	// Unpublication simulated with direct SQL, with the audit row the
+	// database requires since LRN-009.
+	admin := f.newUser("admin-one", f.subject, permissions.Administrator)
+	tx, err := f.db.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(context.Background(), `INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action, reason)
+		VALUES ($1, NULL, $2, $3, 'unpublish', 'Simulated reason.')`, first.LessonID, first.ID, admin.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), `UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, first.LessonID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	before := f.reviewState()

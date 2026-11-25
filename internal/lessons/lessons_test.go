@@ -190,6 +190,7 @@ type fixture struct {
 	subject   int64
 	reviewer  int64 // assigned to subject
 	publisher int64
+	admin     int64 // administrator, for simulated unpublication (LRN-009)
 }
 
 func newFixture(t *testing.T) fixture {
@@ -203,7 +204,11 @@ func newFixture(t *testing.T) fixture {
 	if _, err := e.perms.Grant(e.ctx, operator, publisher, permissions.Publisher); err != nil {
 		t.Fatal(err)
 	}
-	return fixture{env: e, author: e.newAuthor("author"), subject: subject, reviewer: reviewer, publisher: publisher}
+	admin := e.user("fixture-admin")
+	if _, err := e.perms.Grant(e.ctx, operator, admin, permissions.Administrator); err != nil {
+		t.Fatal(err)
+	}
+	return fixture{env: e, author: e.newAuthor("author"), subject: subject, reviewer: reviewer, publisher: publisher, admin: admin}
 }
 
 // decide simulates a review decision with direct SQL, as the database
@@ -246,15 +251,43 @@ func (f fixture) mustRequestChanges(rev int64) {
 }
 
 // publishIn simulates publication inside tx with direct SQL: an audit row by
-// the fixture's publisher naming the current pointer, then the pointer.
+// the fixture's publisher naming the current pointer, then the pointer. A
+// revision that was published before is re-pointed to as a restoration, as
+// the database requires since LRN-009 (migrations/0007).
 func (f fixture) publishIn(tx pgx.Tx, lesson, rev int64) error {
 	if _, err := tx.Exec(f.ctx, `
 		INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action)
-		SELECT $1, $2, published_revision_id, $3, 'publish' FROM lessons WHERE id = $1`, lesson, rev, f.publisher); err != nil {
+		SELECT $1, $2, published_revision_id, $3,
+		       CASE WHEN EXISTS (SELECT 1 FROM publication_audit WHERE revision_id = $2 AND action = 'publish')
+		            THEN 'restore' ELSE 'publish' END
+		  FROM lessons WHERE id = $1`, lesson, rev, f.publisher); err != nil {
 		return err
 	}
 	_, err := tx.Exec(f.ctx, `UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev, lesson)
 	return err
+}
+
+// unpublish simulates an audited unpublication (LRN-009) with direct SQL:
+// an audit row by the fixture's administrator, then the pointer to NULL.
+func (f fixture) unpublish(lesson int64) {
+	f.t.Helper()
+	tx, err := f.db.Begin(f.ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(f.ctx) }()
+	if _, err := tx.Exec(f.ctx, `
+		INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action, reason)
+		SELECT $1, NULL, published_revision_id, $2, 'unpublish', 'Simulated unpublication.' FROM lessons WHERE id = $1`,
+		lesson, f.admin); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, `UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, lesson); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 // publish runs publishIn in its own transaction.

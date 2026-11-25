@@ -106,7 +106,7 @@ func TestApprovedUnpublishedBlocksDraftsUntilPublished(t *testing.T) {
 		t.Fatalf("base %v, want %d", draft.BaseRevisionID, rev.ID)
 	}
 	// Unpublishing does not reopen it.
-	f.mustExec(`UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, rev.LessonID)
+	f.unpublish(rev.LessonID)
 	if f.closedAt(rev.ID) == nil {
 		t.Fatal("unpublishing reopened the candidate")
 	}

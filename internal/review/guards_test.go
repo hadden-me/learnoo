@@ -33,6 +33,12 @@ func auditSQL(lesson, rev int64, previous string, actor int64) string {
 		VALUES (%d, %d, %s, %d, 'publish')`, lesson, rev, previous, actor)
 }
 
+// unpublishSQL audits clearing the pointer (LRN-009, migrations/0007).
+func unpublishSQL(lesson, previous, admin int64) string {
+	return fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action, reason)
+		VALUES (%d, NULL, %d, %d, 'unpublish', 'Simulated reason.')`, lesson, previous, admin)
+}
+
 func pointerSQL(lesson int64, rev string) string {
 	return fmt.Sprintf(`UPDATE lessons SET published_revision_id = %s WHERE id = %d`, rev, lesson)
 }
@@ -114,9 +120,10 @@ func TestPublicationAndAuditAreAtomic(t *testing.T) {
 	if err := e.inTx(auditSQL(rev.LessonID, rev.ID, "NULL", publisher), pointerSQL(rev.LessonID, id)); err != nil {
 		t.Fatalf("valid direct publication: %v", err)
 	}
-	// Clearing the pointer (LRN-009 unpublication) is not guarded here; an
-	// audit row of the earlier transaction does not allow re-pointing.
-	if err := e.exec(pointerSQL(rev.LessonID, "NULL")); err != nil {
+	// Clearing the pointer needs its own audit row since LRN-009
+	// (migrations/0007); an audit row of the earlier transaction does not
+	// allow re-pointing.
+	if err := e.inTx(unpublishSQL(rev.LessonID, rev.ID, e.user("admin", permissions.Administrator)), pointerSQL(rev.LessonID, "NULL")); err != nil {
 		t.Fatal(err)
 	}
 	wantGuard(t, "reused audit row", e.inTx(pointerSQL(rev.LessonID, id)), "requires a publication audit row")
@@ -166,13 +173,42 @@ func TestReviewAuditIsAppendOnly(t *testing.T) {
 // statements in one committed transaction as that role on a new connection,
 // so no cached plan hides a shadowing regression.
 func (e *env) leastPrivilegeRole() (asRole func(stmts ...string) error, qs string) {
+	e.t.Helper()
+	role, qs := e.newLeastPrivilegeRole()
+	asRole = func(stmts ...string) error {
+		conn, err := pgx.ConnectConfig(e.ctx, e.db.Config().ConnConfig.Copy())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close(context.Background()) }()
+		tx, err := conn.Begin(e.ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(e.ctx) }()
+		if _, err := tx.Exec(e.ctx, `SET LOCAL ROLE `+role); err != nil {
+			return err
+		}
+		for _, s := range stmts {
+			if _, err := tx.Exec(e.ctx, s); err != nil {
+				return err
+			}
+		}
+		return tx.Commit(e.ctx)
+	}
+	return asRole, qs
+}
+
+// newLeastPrivilegeRole creates the role described above and returns its
+// quoted name and the quoted test schema.
+func (e *env) newLeastPrivilegeRole() (role, qs string) {
 	t := e.t
 	t.Helper()
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		t.Fatal(err)
 	}
-	role := pgx.Identifier{"learnoo_test_app_" + hex.EncodeToString(b[:])}.Sanitize()
+	role = pgx.Identifier{"learnoo_test_app_" + hex.EncodeToString(b[:])}.Sanitize()
 	var schema, dbName string
 	if err := e.db.QueryRow(e.ctx, `SELECT current_schema(), current_database()`).Scan(&schema, &dbName); err != nil {
 		t.Fatal(err)
@@ -196,28 +232,7 @@ func (e *env) leastPrivilegeRole() (asRole func(stmts ...string) error, qs strin
 	must(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ` + qs + ` TO ` + role)
 	must(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ` + qs + ` TO ` + role)
 	must(`GRANT TEMP ON DATABASE ` + pgx.Identifier{dbName}.Sanitize() + ` TO ` + role)
-	asRole = func(stmts ...string) error {
-		conn, err := pgx.ConnectConfig(e.ctx, e.db.Config().ConnConfig.Copy())
-		if err != nil {
-			return err
-		}
-		defer func() { _ = conn.Close(context.Background()) }()
-		tx, err := conn.Begin(e.ctx)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = tx.Rollback(e.ctx) }()
-		if _, err := tx.Exec(e.ctx, `SET LOCAL ROLE `+role); err != nil {
-			return err
-		}
-		for _, s := range stmts {
-			if _, err := tx.Exec(e.ctx, s); err != nil {
-				return err
-			}
-		}
-		return tx.Commit(e.ctx)
-	}
-	return asRole, qs
+	return role, qs
 }
 
 // The new guards read lesson_revisions, lessons, review_decisions,
