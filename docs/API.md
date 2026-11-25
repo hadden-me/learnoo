@@ -56,6 +56,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `invalid_content` | The document fails schema v1 validation (drafts and `POST /api/preview` alike), or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
 | 422 | `language_mismatch` | The document's `language` differs from the lesson's |
 | 422 | `unknown_subject` / `unknown_chapter` / `unknown_media` | Referenced subject, chapter (of this subject) or media asset does not exist |
+| 422 | `unattached_media` | The content embeds an uploaded image (`media:<id>`) that is not in the revision's `mediaIds` (issue #77) |
 | 422 | `reason_required` / `invalid_reason` | Withdrawal or unpublication without a reason, or with one over 2000 characters or not valid text |
 | 422 | `unknown_lesson` | `translationOf` names a lesson that does not exist or that the caller does not own |
 | 422 | `translation_subject` | A translation names a subject other than its source lesson's |
@@ -167,7 +168,7 @@ Every endpoint below, reads included, is checked in this order:
 | `POST /api/revisions/{revisionId}/submit` | The draft's author only; others get `404 not_found` |
 | `DELETE /api/revisions/{revisionId}` | The draft's author only; others get `404 not_found` |
 | `POST /api/media` | Any `author` |
-| `GET /api/media/{mediaId}` | An `author` who uploaded that asset (also when the upload was deduplicated) or who authored a revision referencing it. Everyone else with `author` gets `404 not_found`, identical to a missing ID. Reviewers use [`GET /api/review/media/{mediaId}`](#get-apireviewmediamediaid); student and reader access comes with LRN-008 |
+| `GET /api/media/{mediaId}` | An `author` who uploaded that asset (also when the upload was deduplicated) or who authored a revision referencing it. Everyone else with `author` gets `404 not_found`, identical to a missing ID. Reviewers use [`GET /api/review/media/{mediaId}`](#get-apireviewmediamediaid), publishers `GET /api/publish/media/{mediaId}`, and students the reader's `GET /learn/lessons/{publicId}/media/{mediaId}` |
 
 Reviewer access to submitted revisions uses the [review endpoints](#review-and-publication-lrn-007), not these.
 
@@ -218,7 +219,7 @@ Lesson writes share these request fields:
 | `content` | object | Required. Schema v1 document, at most 128 KiB in compact form, `status` `unreviewed`. Validated with the reader's validator before anything is stored |
 | `prerequisites` | string | Optional, at most 2000 characters |
 | `chapterId` | integer or null | Optional; must be a chapter of the lesson's subject. Omitted or null clears it |
-| `mediaIds` | integer array | Optional, at most 100 distinct uploaded asset IDs (duplicates are merged). Only assets the caller may read (see `GET /api/media/{mediaId}`) may be referenced; others get `422 unknown_media`, exactly like missing IDs. The list replaces the previous one |
+| `mediaIds` | integer array | Optional, at most 100 distinct uploaded asset IDs (duplicates are merged). Only assets the caller may read (see `GET /api/media/{mediaId}`) may be referenced; others get `422 unknown_media`, exactly like missing IDs. The list replaces the previous one. Every image the content embeds (`"src": "media:<id>"`, [schema](fixtures/README.md#experimental-content-contract)) must be in the list, else `422 unattached_media`; an attached image need not be embedded (removing it from the text does not detach it) |
 
 Bodies are limited to 256 KiB (`413 too_large`).
 
@@ -233,7 +234,7 @@ Creates a lesson and its first draft.
 - `subjectId` and `language` are required; `language` must equal `content.language` and is fixed for the lesson, as is the subject.
 - `translationOf` (optional) names an existing lesson of the same subject, which the caller must own; the new lesson joins its translation group. A lesson the caller does not own is reported like a missing one (`422 unknown_lesson`).
 - `201` revision object, `Location: /api/revisions/{id}`.
-- `400`, `403`, `413`, `415`, `422 invalid_content | language_mismatch | unknown_subject | unknown_chapter | unknown_media | unknown_lesson | translation_subject`, `409 archived | translation_exists`.
+- `400`, `403`, `413`, `415`, `422 invalid_content | language_mismatch | unknown_subject | unknown_chapter | unknown_media | unattached_media | unknown_lesson | translation_subject`, `409 archived | translation_exists`.
 
 ### `POST /api/lessons/{lessonId}/drafts`
 
@@ -449,9 +450,10 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 | `POST /learn/lessons/{publicId}/bookmark` | required + `csrf_token` | Bookmarks a published lesson (idempotent), `303` back to the lesson (or to `/learn` with `return=dashboard`). `404` if not published; `409` page at 500 bookmarks |
 | `POST /learn/lessons/{publicId}/unbookmark` | required + `csrf_token` | Removes the bookmark, published or not (idempotent), `303` as above |
 | `POST /learn/lessons/{publicId}/report` | required + `csrf_token` | Files an [error report](#error-reports-lrn-015) on the published revision shown. Fields `message` and `revision`. `303` to the confirmation page; `422` lesson page with the form reopened (text kept) for invalid text; `409` lesson page showing the current revision (text kept) if the published revision changed, or with a generic "try again" message (text kept) after a concurrent conflict or guard refusal; `413` lesson page (form reopened, text not kept) for a body over 32 KiB, which is never accepted, stored or throttled; `400` page for missing or malformed fields; `404` if the lesson is not published; `429` page when throttled |
+| `GET /learn/lessons/{publicId}/media/{mediaId}` | required | An uploaded image embedded in the lesson's **currently published** revision (issue #77): the revision is the one `reader_published_lessons` exposes (approved, not withdrawn, lesson not archived), the asset is in its frozen `mediaIds` and its content embeds it as `media:{mediaId}`. Any signed-in account, as for the lesson page. Image bytes with `Content-Type` from the validated storage key, `Content-Disposition: inline`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; sandbox`, `Cache-Control: private, no-store`, `Vary: Cookie`; also `HEAD`. Everything else gets the same JSON `404 not_found` with no redirect: anonymous requests, malformed IDs or public IDs, another lesson's path, a draft, in-review or approved-unpublished revision's image, an image attached but not embedded, and lessons unpublished, withdrawn or archived. After a restoration, the restored revision's images are served again and the withdrawn revision's are not |
 | `GET /learn/lessons/{publicId}/reported` | required | Confirmation page with a link back to the lesson; shows no lesson data |
 | `GET /learn/search?q=…` | required | Title search over published lessons, see below |
-| `GET /static/{path}` | — / required | Public: `tokens.css`, `site.css`, `reader.css`, `math.js`, `vendor/katex/…` (generic code, no lesson content). Lesson media (today only the renderer's fixture image `complex-plane.svg`) needs a session. Anything else, directories, and media without a session: `404` |
+| `GET /static/{path}` | — / required | Public: `tokens.css`, `site.css`, `reader.css`, `math.js`, `vendor/katex/…` (generic code, no lesson content). The renderer's fixture image `complex-plane.svg` needs a session (uploaded images use the lesson media route above). Anything else, directories, and media without a session: `404` |
 
 ### Invitation throttling
 
@@ -555,7 +557,7 @@ The caller's lessons (`lessons.created_by`), most recently updated first (by the
 
 ### `POST /api/preview`
 
-Body `{"content": {…schema v1 document…}}` (strict JSON, `content` required and not `null`, at most 256 KiB as for drafts). The document is validated exactly as a draft save validates it (valid UTF-8, no NUL, the canonical schema v1 decoder and its 128 KiB document limit) and rendered by the production renderer (`internal/rendering`), never by the renderer experiment. Nothing is stored.
+Body `{"content": {…schema v1 document…}, "mediaRoute": "author"}` (strict JSON, `content` required and not `null`, at most 256 KiB as for drafts). `mediaRoute` is optional: `"author"` (default), `"review"` or `"publish"`; any other value, including `null`, is `400 invalid_request`. It only chooses the URL embedded uploaded images (`media:<id>`) are linked to: `/api/media/{id}`, `/api/review/media/{id}` or `/api/publish/media/{id}`; that route checks access when the image is fetched, so the preview itself reveals nothing about an asset. The document is validated exactly as a draft save validates it (valid UTF-8, no NUL, the canonical schema v1 decoder and its 128 KiB document limit) and rendered by the production renderer (`internal/rendering`), never by the renderer experiment. Nothing is stored.
 
 `200`:
 
@@ -563,7 +565,7 @@ Body `{"content": {…schema v1 document…}}` (strict JSON, `content` required 
 {"html": "<h1 lang=\"fr\" dir=\"ltr\">…</h1><p class=\"objective\" …>…</p><article class=\"lesson-body\" …>…</article>"}
 ```
 
-`html` is the reader's markup for the same document, byte for byte: the lesson heading, the objective paragraph (absent without an objective) and the `article` holding the lesson body, as on `/learn/lessons/{publicId}`. Math is emitted as `.math` elements for the client to typeset with the locally hosted KaTeX, as the reader does; the YouTube block is the same click-to-load button. Errors: `400 invalid_request`, `413 too_large`, `415 unsupported_media_type`, `422 invalid_content` with the validator's message.
+`html` is the reader's markup for the same document, byte for byte except the `src` of embedded uploaded images (the reader links them to `/learn/lessons/{publicId}/media/{id}`): the lesson heading, the objective paragraph (absent without an objective) and the `article` holding the lesson body, as on `/learn/lessons/{publicId}`. Math is emitted as `.math` elements for the client to typeset with the locally hosted KaTeX, as the reader does; the YouTube block is the same click-to-load button. Errors: `400 invalid_request`, `413 too_large`, `415 unsupported_media_type`, `422 invalid_content` with the validator's message. The preview does not check `mediaIds` (it has none); saves do.
 
 ### Studio pages: `GET /studio` and `GET /studio/{path…}`
 
@@ -581,6 +583,7 @@ Read-only endpoints the Studio's publisher and administrator views need ([DECISI
 | --- | --- |
 | `GET /api/publish/queue` | `publisher` |
 | `GET /api/publish/revisions/{revisionId}` | `publisher` |
+| `GET /api/publish/media/{mediaId}` | `publisher` |
 | `GET /api/lessons/{lesson}/publication` | `publisher` or `administrator` (both may restore); publishers get a reduced view, below |
 | `GET /api/admin/lessons` | `administrator` |
 
@@ -595,6 +598,8 @@ Read-only endpoints the Studio's publisher and administrator views need ([DECISI
 ```
 
 `GET /api/publish/revisions/{revisionId}`: `{"item": {…queue item as above…}, "revision": {…revision object…}}` for a revision awaiting publication, so the publisher reads what they publish with its facts (current pointer, `staleBase`, names) however long the queue is. Any other revision (in review, published, withdrawn, archived lesson, missing, malformed ID): `404 not_found`.
+
+`GET /api/publish/media/{mediaId}`: the image bytes of an uploaded asset referenced by a revision awaiting publication (issue #77), with the headers of [`GET /api/media/{mediaId}`](#get-apimediamediaid). Any other asset, a malformed ID, or a caller who lost `publisher` (rechecked in the query, with the account not disabled): `404 not_found`. It lets the publication page show the images of what is published; once published, images are read through the reader.
 
 `GET /api/lessons/{lesson}/publication`: `{lesson}` is the numeric lesson ID or its public ID (lower-case UUID, as in reader URLs); anything else is `404`. The lesson's publication state, its submitted revisions (drafts are never listed; newest first, at most 200) and the pointer audit (newest first, at most 100). Whether the caller is an administrator is decided inside the transaction:
 
