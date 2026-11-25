@@ -130,7 +130,7 @@ func TestEmbeddedMediaMustBeAttachedAndReadable(t *testing.T) {
 func TestPreviewLinksEmbeddedMediaToTheViewersRoute(t *testing.T) {
 	f := newStudio(t)
 	content := mediaDoc("TEST aperçu", true, 7)
-	for route, prefix := range map[string]string{"": "/api/media/", "author": "/api/media/", "review": "/api/review/media/"} {
+	for route, prefix := range map[string]string{"": "/api/media/", "author": "/api/media/", "review": "/api/review/media/", "publish": "/api/publish/media/"} {
 		body := map[string]any{"content": content}
 		if route != "" {
 			body["mediaRoute"] = route
@@ -213,7 +213,24 @@ func TestReaderServesOnlyCurrentlyPublishedLessonMedia(t *testing.T) {
 
 	wf.approvedRev(rev1)
 	wantNoMedia(t, "approved, not published", rf.get(student, mediaPath(publicID, first)))
+	// Awaiting publication: the publisher reads the images of what they
+	// publish through their own route; nobody else uses it.
+	publishMedia := func(id int64) string { return fmt.Sprintf("/api/publish/media/%d", id) }
+	w = rf.api(rf.publisher, http.MethodGet, publishMedia(first), nil)
+	wantStatus(t, "publisher media", w, http.StatusOK, "")
+	if w.Header().Get("Content-Type") != "image/png" || w.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("publisher media headers: %v", w.Header())
+	}
+	wantStatus(t, "publisher, other image", rf.api(rf.publisher, http.MethodGet, publishMedia(otherDraft), nil), http.StatusNotFound, "not_found")
+	wantStatus(t, "publisher, malformed", rf.api(rf.publisher, http.MethodGet, "/api/publish/media/01", nil), http.StatusNotFound, "not_found")
+	for name, u := range map[string]apiUser{"student": student, "author": rf.author, "reviewer": rf.reviewer, "admin": rf.admin} {
+		wantStatus(t, name+" on publisher media", rf.api(u, http.MethodGet, publishMedia(first), nil), http.StatusForbidden, "forbidden")
+	}
+	wantStatus(t, "anonymous on publisher media", rf.api(apiUser{}, http.MethodGet, publishMedia(first), nil), http.StatusUnauthorized, "")
+	// The reviewer's route covers revisions in review only.
+	wantStatus(t, "reviewer after approval", rf.api(rf.reviewer, http.MethodGet, fmt.Sprintf("/api/review/media/%d", first), nil), http.StatusNotFound, "not_found")
 	wf.publishedRev(rev1)
+	wantStatus(t, "publisher after publication", rf.api(rf.publisher, http.MethodGet, publishMedia(first), nil), http.StatusNotFound, "not_found")
 
 	page := rf.get(student, lessonPath(publicID))
 	wantPage(t, "lesson page", page, http.StatusOK, fmt.Sprintf(`<img src="%s" alt="TEST image %d" loading="lazy">`, mediaPath(publicID, first), first))
