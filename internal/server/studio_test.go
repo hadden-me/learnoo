@@ -507,27 +507,43 @@ func TestStudioDraftLifecycle(t *testing.T) {
 		map[string]any{"content": testDoc("Nowhere", "fr")}), http.StatusNotFound, "not_found")
 }
 
-// An approved revision awaiting publication is the active candidate. Review
-// decisions and publication are LRN-007; they are simulated with direct SQL.
+// An approved revision awaiting publication is the active candidate.
+// Approval and publication are simulated with direct SQL here (decision and
+// audit rows, as the database requires); the review endpoints have their
+// own tests.
 func TestStudioApprovedUnpublishedBlocksDrafts(t *testing.T) {
 	f := newStudio(t)
 	rev := f.createLesson(f.author, "Approved")
 	wantStatus(t, "submit", f.api(f.author, http.MethodPost, revPath(rev.ID)+"/submit",
 		map[string]any{"expectedVersion": rev.Version}), http.StatusOK, "")
-	exec := func(sql string, args ...any) {
+	reviewer := f.newUser("reviewer-one", f.subject, permissions.Reviewer)
+	publisher := f.newUser("publisher-one", f.subject, permissions.Publisher)
+	exec := func(sql ...string) {
 		t.Helper()
-		if _, err := f.db.Exec(context.Background(), sql, args...); err != nil {
+		tx, err := f.db.Begin(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		for _, s := range sql {
+			if _, err := tx.Exec(context.Background(), s); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := tx.Commit(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, rev.ID)
+	exec(fmt.Sprintf(`INSERT INTO review_decisions (revision_id, reviewer_id, action) VALUES (%d, %d, 'approve')`, rev.ID, reviewer.id),
+		fmt.Sprintf(`UPDATE lesson_revisions SET status = 'approved' WHERE id = %d`, rev.ID))
 	draftPath := fmt.Sprintf("/api/lessons/%d/drafts", rev.LessonID)
 	wantStatus(t, "draft while approved and unpublished", f.api(f.author, http.MethodPost, draftPath,
 		map[string]any{"content": testDoc("Blocked", "fr")}), http.StatusConflict, "active_candidate_exists")
 	if n := f.count(`SELECT count(*) FROM lesson_revisions WHERE lesson_id = $1`, rev.LessonID); n != 1 {
 		t.Fatalf("blocked draft stored: %d revisions", n)
 	}
-	exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev.ID, rev.LessonID)
+	exec(fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, actor_id, action) VALUES (%d, %d, %d, 'publish')`, rev.LessonID, rev.ID, publisher.id),
+		fmt.Sprintf(`UPDATE lessons SET published_revision_id = %d WHERE id = %d`, rev.ID, rev.LessonID))
 	w := f.api(f.author, http.MethodPost, draftPath, map[string]any{"content": testDoc("Next edition", "fr")})
 	wantStatus(t, "draft after publication", w, http.StatusCreated, "")
 	if next := decodeRevision(t, w); next.BaseRevisionID == nil || *next.BaseRevisionID != rev.ID {

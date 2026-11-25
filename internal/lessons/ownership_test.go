@@ -29,8 +29,7 @@ func (f fixture) ownedWithChangesRequested(owner int64, title string) lessons.Re
 	if rev, err = f.store.Submit(f.ctx, owner, rev.ID, rev.Version); err != nil {
 		f.t.Fatal(err)
 	}
-	// No review decisions exist in this slice; set the status directly.
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+	f.mustRequestChanges(rev.ID)
 	return rev
 }
 
