@@ -1,433 +1,273 @@
-import { useCallback, useId, useRef, useState, type ChangeEvent } from 'react';
-import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react';
-import { NodeSelection } from '@tiptap/pm/state';
-import { lessonExtensions } from './schema/extensions';
-import { editorToLesson, type Metadata } from './schema/adapter';
-import { prepareLesson, prepareSource, type PreparedLesson } from './schema/importer';
-import { ALLOWED_IMAGES, LessonError, YOUTUBE_ID, serializeLesson, type LessonDocument } from './schema/lesson';
-import { describePaste, sanitizePastedHTML } from './schema/paste';
-import { reopenDraft, saveDraft } from './schema/storage';
-import { FIXTURES } from './fixtures';
+// Studio shell: session, navigation, sign-out and the "session expired" /
+// "another account signed in" states. Pages are chosen by the client route (router.ts). The next slice
+// adds reviewer, publisher and administrator spaces next to "Mes leçons",
+// each shown only to accounts the server lets use it.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ACCOUNT_CHANGED, Api, isApiError, type Session } from './api/client';
+import { describeError } from './api/messages';
+import { StudioContext, allowUnload, useStudio, type Studio } from './context';
+import { Link } from './ui/Link';
+import { BASE, hasBlockingGuard, onNavigate, setLeaveConfirmation, useRoute } from './router';
+import { Dialog } from './ui/Dialog';
+import { findUserRecovery, purgeRecovery, RECOVERY_MAX_AGE_MS, suspendRecovery } from './recovery';
+import { LessonList } from './pages/LessonList';
+import { NewLesson } from './pages/NewLesson';
+import { EditorPage } from './pages/EditorPage';
 
-type Status = { text: string; error?: boolean };
+/** The sign-in page accepts only /studio paths of plain segments as `next` (API.md). */
+export function loginURL(pathname: string): string {
+  const path = pathname.replace(/\/+$/, '');
+  const next = /^\/studio(\/[A-Za-z0-9_-]+)*$/.test(path) ? path : BASE;
+  return `/login?next=${encodeURIComponent(next)}`;
+}
 
-const EMPTY: Metadata = { title: '', language: 'fr', objective: '' };
+type Boot = { state: 'loading' } | { state: 'ready'; session: Session; isAuthor: boolean } | { state: 'error'; message: string };
 
 export function App() {
-  const [meta, setMeta] = useState<Metadata>(EMPTY);
-  const [status, setStatus] = useState<Status>({ text: 'Document vide. Rien n’est publié : tout reste sur cet appareil.' });
-  const [errors, setErrors] = useState<string[]>([]);
-  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
-  const [exported, setExported] = useState('');
-  const [previewHtml, setPreviewHtml] = useState('');
-  const [previewing, setPreviewing] = useState(false);
-  const pasteRef = useRef(setPasteNotice);
-  pasteRef.current = setPasteNotice;
-  const fileRef = useRef<HTMLInputElement>(null);
-  const ids = { title: useId(), language: useId(), objective: useId(), example: useId() };
-
-  const editor = useEditor({
-    extensions: lessonExtensions,
-    // The CSP refuses injected <style> elements; the base rules are in styles.css.
-    injectCSS: false,
-    content: { type: 'doc', content: [{ type: 'paragraph' }] },
-    editorProps: {
-      attributes: { class: 'studio-editor', 'aria-label': 'Contenu de la leçon', 'aria-multiline': 'true', role: 'textbox' },
-      transformPastedHTML: (html) => {
-        const result = sanitizePastedHTML(html);
-        pasteRef.current(describePaste(result.report));
-        return result.html;
-      },
-    },
-  });
-
-  /** Export the current editor content; returns null (and reports why) when it cannot be saved. Never changes the editor. */
-  const exportLesson = useCallback((): { doc: LessonDocument; json: string } | null => {
-    if (!editor) return null;
-    const result = editorToLesson(editor.getJSON(), meta);
-    setErrors(result.errors);
-    if (result.errors.length > 0) {
-      setStatus({ text: 'Le document ne respecte pas le format restreint ; rien n’a été enregistré.', error: true });
-      return null;
-    }
-    try {
-      const json = serializeLesson(result.document);
-      setExported(json);
-      return { doc: result.document, json };
-    } catch (error) {
-      setStatus({ text: `Export impossible, document conservé dans l’éditeur : ${(error as Error).message}`, error: true });
-      return null;
-    }
-  }, [editor, meta]);
-
-  /** Replace the editor content with an already validated and serialised document. */
-  const load = useCallback(
-    (prepared: PreparedLesson, message: string) => {
-      if (!editor) return;
-      const { doc, content, json } = prepared;
-      editor.commands.setContent(content, { emitUpdate: false });
-      setMeta({ title: doc.title, language: doc.language, objective: doc.objective });
-      setErrors([]);
-      setPasteNotice(null);
-      setExported(json);
-      setStatus({ text: message });
-    },
-    [editor],
+  const [problem, setProblem] = useState<'expired' | 'account' | null>(null);
+  const booted = useRef(false);
+  const api = useMemo(
+    () =>
+      new Api({
+        onUnauthenticated: () => {
+          // Before boot there is nothing to lose: go and sign in. Afterwards keep the page (and its edits).
+          if (!booted.current) {
+            allowUnload();
+            location.assign(loginURL(location.pathname));
+          } else setProblem((p) => p ?? 'expired');
+        },
+        onAccountChanged: () => setProblem('account'),
+      }),
+    [],
   );
+  const [boot, setBoot] = useState<Boot>({ state: 'loading' });
+  const [leave, setLeave] = useState<(() => void) | null>(null);
 
-  const importSource = useCallback(
-    (source: string, message: string) => {
-      if (!editor) return;
-      let prepared: PreparedLesson;
+  useEffect(() => {
+    setLeaveConfirmation((proceed) => setLeave(() => proceed));
+    // Another account may have signed in from another tab: re-check before showing any page's data,
+    // and as soon as this tab is shown again (the banner then replaces nothing on screen).
+    const removeNavigate = onNavigate(() => api.invalidateAccount());
+    const recheck = () => {
+      if (document.visibilityState !== 'visible' || !booted.current) return;
+      api.invalidateAccount();
+      api.session().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+    // Recovery copies are short-lived crash protection: forget old ones.
+    purgeRecovery(localStorage, { olderThan: new Date(Date.now() - RECOVERY_MAX_AGE_MS) });
+    (async () => {
       try {
-        prepared = prepareSource(editor.schema, source);
+        const session = await api.session();
+        let isAuthor = true;
+        try {
+          await api.myLessons();
+        } catch (error) {
+          if (isApiError(error, 'forbidden')) isAuthor = false;
+          else throw error;
+        }
+        booted.current = true;
+        setBoot({ state: 'ready', session, isAuthor });
       } catch (error) {
-        // Nothing has been changed yet, so the current document really is preserved.
-        setStatus({ text: `Import refusé, document actuel conservé : ${(error as Error).message}`, error: true });
-        return;
+        if (!isApiError(error, 'unauthenticated')) setBoot({ state: 'error', message: describeError(error) });
       }
-      load(prepared, message);
-    },
-    [editor, load],
+    })();
+    return () => {
+      removeNavigate();
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+    };
+  }, [api]);
+
+  if (boot.state === 'loading') return <p className="loading" role="status">Chargement du Studio…</p>;
+  if (boot.state === 'error')
+    return (
+      <main className="page" id="main">
+        <h1 tabIndex={-1}>Studio indisponible</h1>
+        <p role="alert">{boot.message}</p>
+        <button type="button" onClick={() => location.reload()}>
+          Réessayer
+        </button>
+      </main>
+    );
+
+  const studio: Studio = { api, session: boot.session, isAuthor: boot.isAuthor, expired: problem !== null, accountChanged: problem === 'account' };
+  return (
+    <StudioContext.Provider value={studio}>
+      <Shell onRenewed={() => setProblem(null)} />
+      {leave && (
+        <Dialog
+          title="Quitter sans enregistrer ?"
+          onCancel={() => setLeave(null)}
+          cancelLabel="Rester sur la page"
+          actions={[
+            {
+              label: 'Quitter la page',
+              kind: 'danger',
+              onClick: () => {
+                const proceed = leave;
+                setLeave(null);
+                proceed();
+              },
+            },
+          ]}
+        >
+          <p>Des modifications ne sont pas enregistrées sur le serveur. Une copie de secours reste sur cet appareil et vous sera proposée à la prochaine ouverture de la leçon.</p>
+        </Dialog>
+      )}
+    </StudioContext.Provider>
   );
+}
 
-  const onSave = () => {
-    const result = exportLesson();
-    if (!result) return;
+function Shell({ onRenewed }: { onRenewed: () => void }) {
+  const studio = useStudio();
+  const route = useRoute();
+  const [signingOut, setSigningOut] = useState<'ask' | 'busy' | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const userId = studio.session.user.id;
+  const signOut = useCallback(async () => {
+    setSigningOut('busy');
     try {
-      saveDraft(result.doc);
-      setStatus({ text: 'Enregistré sur cet appareil uniquement. Non publié, non relu.' });
+      await studio.api.logout();
     } catch (error) {
-      setStatus({ text: `Enregistrement impossible : ${error instanceof LessonError ? error.message : 'stockage du navigateur indisponible.'}`, error: true });
-    }
-  };
-
-  const onReopen = () => {
-    if (!editor) return;
-    let prepared: PreparedLesson | null;
-    try {
-      const doc = reopenDraft();
-      prepared = doc && prepareLesson(editor.schema, doc);
-    } catch (error) {
-      setStatus({ text: `Sauvegarde illisible, document actuel conservé : ${(error as Error).message}`, error: true });
-      return;
-    }
-    if (!prepared) setStatus({ text: 'Aucune sauvegarde sur cet appareil.' });
-    else load(prepared, 'Sauvegarde rouverte.');
-  };
-
-  const onDownload = () => {
-    const result = exportLesson();
-    if (!result) return;
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([result.json + '\n'], { type: 'application/json' }));
-    link.download = 'lecon-non-relue.json';
-    link.click();
-    URL.revokeObjectURL(link.href);
-    setStatus({ text: 'JSON exporté (format restreint, schéma 1).' });
-  };
-
-  const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (file) importSource(await file.text(), `Fichier « ${file.name} » importé.`);
-  };
-
-  const onPreview = async () => {
-    const result = exportLesson();
-    if (!result) return;
-    setPreviewing(true);
-    try {
-      const response = await fetch('/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: result.json });
-      const text = await response.text();
-      if (!response.ok) {
-        setStatus({ text: `Le renderer Go refuse le document : ${text.trim()}`, error: true });
+      // Another account's session is not ours to end; an expired one is already gone.
+      if (!isApiError(error, 'unauthenticated') && !isApiError(error, ACCOUNT_CHANGED)) {
+        setSigningOut(null);
+        setMessage(`Déconnexion impossible : ${describeError(error)}`);
         return;
       }
-      setPreviewHtml(text);
-      setStatus({ text: 'Aperçu généré par le renderer Go, identique à la page élève.' });
-    } catch {
-      setStatus({ text: 'Le renderer Go ne répond pas (go run ./cmd/renderer). Le dernier aperçu est conservé.', error: true });
-    } finally {
-      setPreviewing(false);
     }
-  };
+    // Shared devices: this account's unsaved-edit copies do not outlive its session.
+    suspendRecovery();
+    purgeRecovery(localStorage, { userId });
+    allowUnload();
+    location.assign('/login');
+  }, [studio.api, userId]);
 
-  const dir = meta.language === 'ar' ? 'rtl' : 'ltr';
+  let page: ReactNode;
+  if (!studio.isAuthor) page = <NoAuthoring />;
+  else if (route.name === 'lessons') page = <LessonList />;
+  else if (route.name === 'new') page = <NewLesson />;
+  else if (route.name === 'edit') page = <EditorPage key={route.lessonId} lessonId={route.lessonId} />;
+  else
+    page = (
+      <main className="page" id="main">
+        <h1 tabIndex={-1}>Page introuvable</h1>
+        <p>
+          <Link to={`${BASE}/`}>Revenir à mes leçons</Link>
+        </p>
+      </main>
+    );
 
   return (
     <div className="studio">
+      <a className="skip" href="#main">
+        Aller au contenu
+      </a>
       <header className="studio-header">
-        <p className="brand">LEARNOO <span>Studio · prototype local</span></p>
-        <p className="notice" role="note">
-          Prototype local · Contenu non relu par un enseignant. Rien n’est publié ni envoyé ailleurs qu’au renderer local.
+        <p className="brand">
+          LEARNOO <span>Studio</span>
         </p>
-      </header>
-
-      <main className="studio-layout">
-        <section className="panel" aria-labelledby="editor-heading">
-          <h1 id="editor-heading">Éditer une leçon</h1>
-          <div className="fields">
-            <label htmlFor={ids.title}>Titre</label>
-            <input id={ids.title} value={meta.title} maxLength={240} dir="auto" onChange={(e) => setMeta({ ...meta, title: e.target.value })} />
-            <label htmlFor={ids.language}>Langue du document</label>
-            <select id={ids.language} value={meta.language} onChange={(e) => setMeta({ ...meta, language: e.target.value as Metadata['language'] })}>
-              <option value="fr">Français</option>
-              <option value="ar">Arabe (droite à gauche)</option>
-            </select>
-            <label htmlFor={ids.objective}>Objectif</label>
-            <textarea id={ids.objective} value={meta.objective} rows={2} dir="auto" onChange={(e) => setMeta({ ...meta, objective: e.target.value })} />
-          </div>
-
-          {editor && <Toolbar editor={editor} />}
-          <div className="editor-frame" lang={meta.language} dir={dir}>
-            <EditorContent editor={editor} />
-          </div>
-          {pasteNotice && (
-            <p className="paste-notice" role="status">
-              {pasteNotice}
-            </p>
+        <nav aria-label="Studio">
+          {studio.isAuthor && (
+            <Link to={`${BASE}/`} current={route.name === 'lessons'}>
+              Mes leçons
+            </Link>
           )}
-          {editor && <Inspector editor={editor} />}
-
-          <div className="actions">
-            <button type="button" className="primary" onClick={onSave}>
-              Enregistrer sur cet appareil
-            </button>
-            <button type="button" onClick={onReopen}>
-              Rouvrir la sauvegarde
-            </button>
-            <button type="button" onClick={onDownload}>
-              Exporter le JSON
-            </button>
-            <button type="button" onClick={() => fileRef.current?.click()}>
-              Importer un JSON
-            </button>
-            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFile} />
-          </div>
-          <div className="fields inline">
-            <label htmlFor={ids.example}>Charger un exemple technique</label>
-            <select
-              id={ids.example}
-              value=""
-              onChange={(e) => {
-                const fixture = FIXTURES.find((f) => f.id === e.target.value);
-                if (fixture) importSource(fixture.source, `Exemple « ${fixture.label} » chargé. Contenu non relu.`);
-              }}
-            >
-              <option value="">Choisir…</option>
-              {FIXTURES.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <p id="studio-status" className={status.error ? 'status error' : 'status'} role="status" aria-live="polite">
-            {status.text}
-          </p>
-          {errors.length > 0 && (
-            <ul className="errors" aria-label="Problèmes à corriger">
-              {errors.map((e) => (
-                <li key={e}>{e}</li>
-              ))}
-            </ul>
-          )}
-          <details className="json-output">
-            <summary>JSON restreint exporté</summary>
-            <pre dir="ltr" data-testid="exported-json">{exported || 'Pas encore exporté.'}</pre>
-          </details>
-        </section>
-
-        <section className="panel" aria-labelledby="preview-heading">
-          <h2 id="preview-heading">Aperçu élève</h2>
-          <p className="hint">Le Studio n’a pas son propre rendu : l’aperçu vient du renderer Go, comme la page élève.</p>
-          <button type="button" className="primary" onClick={onPreview} disabled={previewing}>
-            Prévisualiser avec le renderer Go
+        </nav>
+        <div className="account">
+          <span className="who">{studio.session.user.displayName}</span>
+          <button
+            type="button"
+            onClick={() => (hasBlockingGuard() || findUserRecovery(localStorage, userId).length > 0 ? setSigningOut('ask') : void signOut())}
+            disabled={signingOut === 'busy'}
+          >
+            Se déconnecter
           </button>
-          <iframe id="preview-frame" title="Aperçu de la leçon (renderer Go)" srcDoc={previewHtml} />
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function Toolbar({ editor }: { editor: Editor }) {
-  const state = useEditorState({
-    editor,
-    selector: ({ editor: e }) => ({
-      bold: e.isActive('bold'),
-      heading: e.isActive('heading'),
-      list: e.isActive('bulletList'),
-      arText: e.isActive('lang', { lang: 'ar' }),
-      frText: e.isActive('lang', { lang: 'fr' }),
-      canSolution: e.can().wrapIn('solution'),
-      canUndo: e.can().undo(),
-      canRedo: e.can().redo(),
-    }),
-  });
-
-  const insertAtom = (content: { type: string; attrs: Record<string, string> }) => {
-    const from = editor.state.selection.from;
-    editor.chain().focus().insertContent(content).run();
-    // Select the new node so its properties can be edited right away.
-    const pos = content.type === 'inlineMath' ? from : findAtomBefore(editor, editor.state.selection.from, content.type);
-    if (pos !== null) editor.commands.setNodeSelection(pos);
-  };
-
-  const inlineMath = () => {
-    const { from, to, empty } = editor.state.selection;
-    const latex = empty ? '' : editor.state.doc.textBetween(from, to);
-    editor.chain().focus().deleteSelection().run();
-    insertAtom({ type: 'inlineMath', attrs: { latex } });
-  };
-
-  return (
-    <div className="toolbar" role="toolbar" aria-label="Mise en forme">
-      <div role="group" aria-label="Texte">
-        <B label="Titre de section" pressed={state.heading} onClick={() => editor.chain().focus().toggleNode('heading', 'paragraph').run()} />
-        <B label="Gras" pressed={state.bold} onClick={() => editor.chain().focus().toggleBold().run()} />
-        <B label="Liste" pressed={state.list} onClick={() => editor.chain().focus().toggleBulletList().run()} />
-      </div>
-      <div role="group" aria-label="Mathématiques">
-        <B label="Formule en ligne" onClick={inlineMath} />
-        <B label="Formule centrée" onClick={() => insertAtom({ type: 'displayMath', attrs: { latex: '' } })} />
-      </div>
-      <div role="group" aria-label="Blocs">
-        <B label="Encadré" onClick={() => editor.chain().focus().wrapIn('callout').run()} />
-        <B label="Exercice" onClick={() => editor.chain().focus().wrapIn('exercise').run()} />
-        <B label="Solution" disabled={!state.canSolution} onClick={() => editor.chain().focus().wrapIn('solution').run()} />
-        <B label="Image locale" onClick={() => insertAtom({ type: 'image', attrs: { src: ALLOWED_IMAGES[0], alt: '' } })} />
-        <B label="Vidéo YouTube" onClick={() => insertAtom({ type: 'youtube', attrs: { title: '', videoId: '' } })} />
-      </div>
-      <div role="group" aria-label="Langue du texte sélectionné">
-        <B label="Texte en arabe" pressed={state.arText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'ar', dir: 'rtl' }).run()} />
-        <B label="Texte en français" pressed={state.frText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'fr', dir: 'ltr' }).run()} />
-        <B label="Langue du document" onClick={() => editor.chain().focus().unsetMark('lang').run()} />
-      </div>
-      <div role="group" aria-label="Historique">
-        <B label="Annuler" disabled={!state.canUndo} onClick={() => editor.chain().focus().undo().run()} />
-        <B label="Rétablir" disabled={!state.canRedo} onClick={() => editor.chain().focus().redo().run()} />
-      </div>
-    </div>
-  );
-}
-
-function B({ label, onClick, pressed, disabled }: { label: string; onClick: () => void; pressed?: boolean; disabled?: boolean }) {
-  // mousedown is cancelled so the editor keeps its selection; keyboard users activate with Enter/Space.
-  return (
-    <button type="button" aria-pressed={pressed} disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={onClick}>
-      {label}
-    </button>
-  );
-}
-
-function findAtomBefore(editor: Editor, pos: number, type: string): number | null {
-  let found: number | null = null;
-  editor.state.doc.nodesBetween(Math.max(0, pos - 2), Math.min(editor.state.doc.content.size, pos + 2), (node, at) => {
-    if (node.type.name === type) found = at;
-  });
-  return found;
-}
-
-/** Properties of the selected formula, media or container, and of the current block. */
-function Inspector({ editor }: { editor: Editor }) {
-  const ctx = useEditorState({
-    editor,
-    selector: ({ editor: e }) => {
-      const { selection } = e.state;
-      const atom = selection instanceof NodeSelection ? { pos: selection.from, type: selection.node.type.name, attrs: selection.node.attrs } : null;
-      let container: { pos: number; type: string; title: string } | null = null;
-      let block: { pos: number; lang: string; dir: string } | null = null;
-      const $from = selection.$from;
-      for (let d = $from.depth; d > 0; d--) {
-        const node = $from.node(d);
-        if (!block && (node.type.name === 'paragraph' || node.type.name === 'heading')) block = { pos: $from.before(d), lang: node.attrs.lang ?? '', dir: node.attrs.dir ?? '' };
-        if (!container && (node.type.name === 'callout' || node.type.name === 'exercise')) container = { pos: $from.before(d), type: node.type.name, title: node.attrs.title };
-      }
-      return { atom, container, block };
-    },
-  });
-  if (!ctx) return null;
-  const set = (pos: number, attr: string, value: string | null) => editor.view.dispatch(editor.state.tr.setNodeAttribute(pos, attr, value));
-  const { atom, container, block } = ctx;
-  const videoId = atom?.type === 'youtube' ? String(atom.attrs.videoId) : '';
-
-  return (
-    <fieldset className="inspector">
-      <legend>Propriétés de la sélection</legend>
-      {atom && (atom.type === 'inlineMath' || atom.type === 'displayMath') && (
-        <label>
-          {atom.type === 'inlineMath' ? 'Formule en ligne (TeX)' : 'Formule centrée (TeX)'}
-          <textarea className="tex" dir="ltr" rows={2} maxLength={2000} value={String(atom.attrs.latex)} onChange={(e) => set(atom.pos, 'latex', e.target.value)} />
-        </label>
-      )}
-      {atom?.type === 'image' && (
-        <>
-          <label>
-            Ressource locale autorisée
-            <select value={String(atom.attrs.src)} onChange={(e) => set(atom.pos, 'src', e.target.value)}>
-              {ALLOWED_IMAGES.map((src) => (
-                <option key={src}>{src}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Texte alternatif (obligatoire)
-            <input dir="auto" maxLength={1000} value={String(atom.attrs.alt)} onChange={(e) => set(atom.pos, 'alt', e.target.value)} />
-          </label>
-        </>
-      )}
-      {atom?.type === 'youtube' && (
-        <>
-          <label>
-            Titre de la vidéo
-            <input dir="auto" maxLength={240} value={String(atom.attrs.title)} onChange={(e) => set(atom.pos, 'title', e.target.value)} />
-          </label>
-          <label>
-            Identifiant YouTube (11 caractères, pas d’URL ; vide = à sélectionner)
-            <input dir="ltr" maxLength={11} value={videoId} aria-invalid={videoId !== '' && !YOUTUBE_ID.test(videoId)} onChange={(e) => set(atom.pos, 'videoId', e.target.value.trim())} />
-          </label>
-        </>
-      )}
-      {container && (
-        <label>
-          {container.type === 'callout' ? 'Titre de l’encadré' : 'Titre de l’exercice'}
-          <input dir="auto" maxLength={240} value={container.title} onChange={(e) => set(container.pos, 'title', e.target.value)} />
-        </label>
-      )}
-      {block && (
-        <div className="row">
-          <label>
-            Langue du paragraphe
-            <select
-              value={block.lang}
-              onChange={(e) => {
-                const lang = e.target.value || null;
-                let tr = editor.state.tr.setNodeAttribute(block.pos, 'lang', lang);
-                // Choosing a language also sets its usual direction; it stays editable below.
-                if (lang) tr = tr.setNodeAttribute(block.pos, 'dir', lang === 'ar' ? 'rtl' : 'ltr');
-                editor.view.dispatch(tr);
-              }}
-            >
-              <option value="">Celle du document</option>
-              <option value="fr">Français</option>
-              <option value="ar">Arabe</option>
-            </select>
-          </label>
-          <label>
-            Direction
-            <select value={block.dir} onChange={(e) => set(block.pos, 'dir', e.target.value || null)}>
-              <option value="">Héritée</option>
-              <option value="ltr">Gauche à droite</option>
-              <option value="rtl">Droite à gauche</option>
-              <option value="auto">Automatique</option>
-            </select>
-          </label>
         </div>
+      </header>
+      {studio.expired && <ExpiredBanner onRenewed={onRenewed} />}
+      {message && (
+        <p className="banner error" role="alert">
+          {message}
+        </p>
       )}
-      {!atom && !container && !block && <p className="hint">Sélectionnez une formule, un média ou un paragraphe.</p>}
-    </fieldset>
+      {page}
+      {signingOut === 'ask' && (
+        <Dialog
+          title="Se déconnecter sans enregistrer ?"
+          onCancel={() => setSigningOut(null)}
+          cancelLabel="Revenir à l’édition"
+          actions={[{ label: 'Se déconnecter quand même', kind: 'danger', onClick: () => void signOut() }]}
+        >
+          <p>
+            Des modifications ne sont pas enregistrées sur le serveur (dans cette page ou dans des copies de secours de cet appareil). Enregistrez-les d’abord : à la déconnexion, les copies de secours de votre compte sont effacées de cet appareil et ces modifications seront perdues.
+          </p>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Shown after a 401 while signed in. Nothing on the page is discarded: the
+ * author signs in again in another tab, then resumes here (the session's
+ * new CSRF token is read before the next write).
+ */
+function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
+  const studio = useStudio();
+  const [error, setError] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => ref.current?.focus(), []);
+  const resume = async () => {
+    try {
+      // session() refuses another account before keeping anything from it.
+      await studio.api.session();
+      setError(null);
+      onRenewed();
+    } catch (e) {
+      setError(
+        isApiError(e, 'unauthenticated')
+          ? 'Toujours pas connecté. Connectez-vous dans l’autre onglet, puis réessayez.'
+          : isApiError(e, ACCOUNT_CHANGED)
+            ? `Un autre compte est toujours connecté dans ce navigateur. Déconnectez-le dans l’autre onglet et reconnectez-vous avec ${studio.session.user.email}, puis réessayez.`
+            : describeError(e),
+      );
+    }
+  };
+  return (
+    <div className="banner expired" role="alert" tabIndex={-1} ref={ref}>
+      {studio.accountChanged ? (
+        <p>
+          <strong>Un autre compte est connecté dans ce navigateur.</strong> Pour protéger vos leçons, cette page n’envoie plus rien au serveur. Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil. Reconnectez-vous avec {studio.session.user.email}, puis reprenez ici.
+        </p>
+      ) : (
+        <p>
+          <strong>Session expirée.</strong> Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil, mais rien ne peut être enregistré tant que vous n’êtes pas reconnecté.
+        </p>
+      )}
+      <p>
+        <a href={loginURL(location.pathname)} target="_blank" rel="noopener">
+          Se reconnecter dans un nouvel onglet
+        </a>
+        , puis{' '}
+        <button type="button" onClick={() => void resume()}>
+          Reprendre ici
+        </button>
+      </p>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function NoAuthoring() {
+  return (
+    <main className="page" id="main">
+      <h1 tabIndex={-1}>Studio</h1>
+      <p>Votre compte n’a pas la permission auteur : vous ne pouvez pas rédiger de leçons.</p>
+      <p className="hint">Les espaces de relecture et de publication seront ajoutés à cette page dans une prochaine version.</p>
+    </main>
   );
 }

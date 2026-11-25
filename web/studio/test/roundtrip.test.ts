@@ -3,8 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FIXTURES } from '../src/fixtures';
 import { serializeLesson, parseLesson } from '../src/schema/lesson';
-import { reopenDraft, saveDraft } from '../src/schema/storage';
-import { createEditor, exportFrom, loadInto, roundTrip, type } from './helpers';
+import { buildFields } from '../src/drafts';
+import { revisionToData } from '../src/editor/convert';
+import type { Revision } from '../src/api/client';
+import { createEditor, exportFrom, roundTrip, type } from './helpers';
 
 describe('fixture round trip', () => {
   for (const fixture of FIXTURES) {
@@ -16,20 +18,17 @@ describe('fixture round trip', () => {
     });
   }
 
-  it('save/reopen through local storage preserves the document', () => {
+  it('a stored revision opens in the editor and saves back unchanged', () => {
     const fixture = FIXTURES.find((f) => f.id === 'bidi')!;
     const doc = parseLesson(fixture.source);
     const editor = createEditor();
-    loadInto(editor, doc);
-    saveDraft(exportFrom(editor, doc).document);
+    const revision = { content: JSON.parse(fixture.source), prerequisites: 'Bases', chapterId: 4, mediaIds: [5] } as unknown as Revision;
+    const data = revisionToData(editor.schema, revision);
+    editor.commands.setContent(data.doc as never, { emitUpdate: false });
+    const built = buildFields({ ...data, doc: editor.getJSON(), language: doc.language });
+    expect(built.errors).toEqual([]);
+    expect(built.fields).toEqual({ content: doc, prerequisites: 'Bases', chapterId: 4, mediaIds: [5] });
     editor.destroy();
-
-    const reopened = reopenDraft();
-    expect(reopened).not.toBeNull();
-    const second = createEditor();
-    loadInto(second, reopened!);
-    expect(exportFrom(second, reopened!).document).toEqual(doc);
-    second.destroy();
   });
 });
 
