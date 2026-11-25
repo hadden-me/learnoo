@@ -105,6 +105,34 @@ func (m *Middleware) RequireAnyReviewer(next http.Handler) http.Handler {
 	})
 }
 
+// RequireReviewerOrAny allows users assigned to review at least one
+// subject and users holding at least one of the global permissions ps.
+// Routes whose subject is known only after a lookup check it in their
+// transaction.
+func (m *Middleware) RequireReviewerOrAny(ps []Permission, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := auth.SessionFrom(r.Context())
+		if !ok {
+			auth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "Sign in to continue.")
+			return
+		}
+		set, err := m.store.Load(r.Context(), sess.User.ID)
+		if err != nil {
+			m.deny(w, err)
+			return
+		}
+		allowed := len(set.ReviewerSubjects()) > 0
+		for _, p := range ps {
+			allowed = allowed || set.Has(p)
+		}
+		if !allowed {
+			m.deny(w, ErrDenied)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (m *Middleware) deny(w http.ResponseWriter, err error) {
 	if err != ErrDenied {
 		// A failed lookup still denies; log the cause without request data.
