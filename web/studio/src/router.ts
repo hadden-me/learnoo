@@ -1,9 +1,10 @@
 // Client routes under /studio/ (History API, no dependency). The Go server
 // answers every /studio path whose last segment has no dot with index.html,
 // so routes must never contain a dot in their last segment (API.md).
-// Reviewer, publisher and administrator spaces are added here as new route
-// names by the next slice; the shell shows only those the account can use.
+// Reviewer, publisher, administrator and error-report routes are in
+// editorialRoutes.ts; the shell shows only the spaces the account can use.
 import { useEffect, useState } from 'react';
+import { parseEditorialRoute, type EditorialRoute } from './editorialRoutes';
 
 export const BASE = '/studio';
 
@@ -11,6 +12,7 @@ export type Route =
   | { name: 'lessons' }
   | { name: 'new' }
   | { name: 'edit'; lessonId: number }
+  | EditorialRoute
   | { name: 'notFound' };
 
 export function parseRoute(pathname: string): Route {
@@ -19,7 +21,7 @@ export function parseRoute(pathname: string): Route {
   if (path === `${BASE}/lessons/new`) return { name: 'new' };
   const edit = /^\/studio\/lessons\/([1-9][0-9]{0,17})\/edit$/.exec(path);
   if (edit) return { name: 'edit', lessonId: Number(edit[1]) };
-  return { name: 'notFound' };
+  return parseEditorialRoute(path) ?? { name: 'notFound' };
 }
 
 export function routePath(route: Route): string {
@@ -30,7 +32,7 @@ export function routePath(route: Route): string {
       return `${BASE}/lessons/new`;
     case 'edit':
       return `${BASE}/lessons/${route.lessonId}/edit`;
-    case 'notFound':
+    default:
       return `${BASE}/`;
   }
 }
