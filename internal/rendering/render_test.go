@@ -150,3 +150,21 @@ func TestUnlabelledNodesInheritLanguage(t *testing.T) {
 		}
 	}
 }
+
+// The click-to-load button and its notice share one wrapper, which math.js
+// replaces as a whole with the player (issue #54).
+func TestYouTubeControlWrapsNotice(t *testing.T) {
+	doc, _ := Fixture("complex-numbers")
+	doc.Blocks = []Node{{Type: "youtube", Title: "Vidéo", VideoID: "abcdefghijk"}, {Type: "youtube", Title: "À choisir"}}
+	html, err := Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `<div class="video-control"><button type="button" class="video-load" data-video-id="abcdefghijk">Charger la vidéo YouTube</button><p class="video-notice">La vidéo ne se charge qu’après votre choix.</p></div>`
+	if !bytes.Contains(html, []byte(want)) {
+		t.Fatalf("video control markup missing: %s", html)
+	}
+	if n := bytes.Count(html, []byte(`class="video-control"`)); n != 1 {
+		t.Fatalf("pending video slot must not render a control, got %d", n)
+	}
+}

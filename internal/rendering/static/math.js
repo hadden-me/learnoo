@@ -25,7 +25,10 @@
       iframe.title = 'Vidéo pédagogique YouTube';
       iframe.referrerPolicy = 'strict-origin-when-cross-origin';
       iframe.allow = 'fullscreen';
-      button.replaceWith(iframe);
+      // Replace the whole control (button and its notice), then keep
+      // keyboard focus on the player that took the button's place.
+      (button.closest('.video-control') || button).replaceWith(iframe);
+      iframe.focus();
     }, { once: true });
   }
 })();
