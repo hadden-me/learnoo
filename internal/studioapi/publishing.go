@@ -31,6 +31,7 @@ func (h *Handlers) registerPublishing(mux *http.ServeMux) {
 	publisher := []permissions.Permission{permissions.Publisher}
 	guard("GET /api/publish/queue", publisher, h.publishQueue)
 	guard("GET /api/publish/revisions/{revisionId}", publisher, h.publishRevision)
+	guard("GET /api/publish/media/{mediaId}", publisher, h.publishMedia)
 	guard("GET /api/lessons/{lesson}/publication",
 		[]permissions.Permission{permissions.Publisher, permissions.Administrator}, h.lessonPublication)
 	guard("GET /api/admin/lessons", []permissions.Permission{permissions.Administrator}, h.adminLessons)
@@ -250,4 +251,21 @@ func (h *Handlers) writeReadError(w http.ResponseWriter, op string, err error) {
 	default:
 		h.internal(w, op, err)
 	}
+}
+
+// publishableBy is the publisher media rule for the user in $2 on asset row
+// a: the user holds the publisher permission and the asset is referenced by
+// a revision awaiting publication (review.AwaitingPublication, the rule of
+// GET /api/publish/revisions/{id}), so a publisher sees the images of what
+// they publish and nothing else. Published lessons' images are read through
+// the reader.
+const publishableBy = `(EXISTS (SELECT 1 FROM user_permissions up JOIN users u ON u.id = up.user_id AND u.disabled_at IS NULL
+	                      WHERE up.user_id = $2 AND up.permission = 'publisher')
+	AND EXISTS (SELECT 1 FROM revision_media rm
+	              JOIN lesson_revisions r ON r.id = rm.revision_id
+	              JOIN lessons l ON l.id = r.lesson_id
+	             WHERE rm.media_asset_id = a.id AND ` + review.AwaitingPublication + `))`
+
+func (h *Handlers) publishMedia(w http.ResponseWriter, r *http.Request) {
+	h.serveMediaWhere(w, r, publishableBy)
 }

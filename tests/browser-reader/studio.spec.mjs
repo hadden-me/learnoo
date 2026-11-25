@@ -572,3 +572,152 @@ test('a page never shows another account’s lessons after someone else signs in
   await switchAccount(context, authorTwo);
   expect(problems).toEqual([]);
 });
+
+/** A new browser context signed in to the Studio as `user`, recording CSP violations and external requests. */
+async function signedInStudio(browser, baseURL, user) {
+  const context = await browser.newContext({ baseURL, viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const problems = watch(page, baseURL);
+  await page.addInitScript(() => {
+    window.cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (e) => window.cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  await signIn(page, user);
+  await expect(page).toHaveURL(/\/studio$/);
+  return { context, page, problems };
+}
+
+/** A signed-in API session (another browser context) for the TEST editorial accounts. */
+async function apiSession(browser, baseURL, user) {
+  const ctx = await browser.newContext({ baseURL });
+  const login = await ctx.request.post('/api/auth/login', { data: user });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  return { ctx, post: (path, data = {}) => ctx.request.post(path, { data, headers: { 'X-CSRF-Token': csrfToken } }), get: (path) => ctx.request.get(path) };
+}
+
+test('an uploaded image placed in the text is previewed, reviewed, published to students and withdrawn with its revision', async ({ page, browser, baseURL }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const problems = watch(page, baseURL);
+  await page.addInitScript(() => {
+    window.cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (e) => window.cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  await signIn(page, author);
+  await newLesson(page, { title: 'TEST Image intégrée' });
+  await editor(page).click();
+  await page.keyboard.type('Avant la figure.');
+
+  // Upload, then place it at the cursor: the alt text is required.
+  await page.getByLabel('Téléverser une image (PNG, JPEG ou WebP, 5 Mio au maximum)').setInputFiles({ name: 'figure.png', mimeType: 'image/png', buffer: png(48, 30) });
+  const attached = page.getByRole('img', { name: /Image jointe n° \d+/ });
+  await expect(attached).toBeVisible();
+  const mediaId = Number(/n° (\d+)/.exec(await attached.getAttribute('alt'))[1]);
+  await page.getByRole('button', { name: 'Placer dans le texte' }).click();
+  const dialog = page.getByRole('dialog', { name: `Placer l’image n° ${mediaId} dans le texte` });
+  await expect(dialog.getByLabel('Texte alternatif (obligatoire)')).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Placer l’image' })).toBeDisabled();
+  await dialog.getByLabel('Texte alternatif (obligatoire)').fill('Rectangle gris de test');
+  await dialog.getByLabel('Légende (facultative, visible sous l’image)').fill('Figure de test');
+  await dialog.getByRole('button', { name: 'Placer l’image' }).click();
+  await expect(dialog).toHaveCount(0);
+  const inEditor = editor(page).getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(inEditor).toHaveAttribute('src', `/api/media/${mediaId}`);
+  await expect.poll(() => inEditor.evaluate((img) => img.naturalWidth)).toBe(48);
+  await expect(page.locator('.media-list')).toContainText('placée dans le texte');
+  await expect(page.getByRole('button', { name: 'Retirer de la révision' })).toBeDisabled();
+
+  // Canonical preview through the author's media route.
+  await page.getByRole('button', { name: 'Prévisualiser' }).first().click();
+  const previewImg = page.getByTestId('lesson-preview').getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(previewImg).toHaveAttribute('src', `/api/media/${mediaId}`);
+  await expect.poll(() => previewImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await expect(page.getByTestId('lesson-preview').locator('figcaption')).toHaveText('Figure de test');
+
+  // Save and submit.
+  await saveButton(page).click();
+  await expect(page).toHaveURL(/\/studio\/lessons\/\d+\/edit$/);
+  const revision = await openRevision(page);
+  expect(revision.mediaIds).toEqual([mediaId]);
+  expect(revision.content.blocks).toContainEqual({ type: 'image', src: `media:${mediaId}`, alt: 'Rectangle gris de test', caption: 'Figure de test' });
+  await page.getByRole('button', { name: 'Soumettre pour relecture' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Soumettre', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /En relecture/ })).toBeVisible();
+  await expect.poll(() => page.getByTestId('revision-preview').getByRole('img', { name: 'Rectangle gris de test' }).evaluate((img) => img.naturalWidth)).toBe(48);
+  expect(await page.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(problems).toEqual([]);
+
+  // The reviewer sees it in the Studio review page, through the reviewer media route.
+  const rev = await signedInStudio(browser, baseURL, reviewer);
+  await rev.page.getByRole('navigation', { name: 'Studio' }).getByRole('link', { name: 'Relecture' }).click();
+  await rev.page.getByRole('link', { name: 'TEST Image intégrée', exact: true }).click();
+  const reviewImg = rev.page.getByTestId('review-preview').getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(reviewImg).toHaveAttribute('src', `/api/review/media/${mediaId}`);
+  await expect.poll(() => reviewImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await rev.page.getByRole('button', { name: 'Approuver…' }).click();
+  await rev.page.getByRole('dialog').getByRole('button', { name: 'Approuver', exact: true }).click();
+  await expect(rev.page.getByText('Révision approuvée : « TEST Image intégrée »')).toBeVisible();
+  expect(await rev.page.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(rev.problems).toEqual([]);
+  // Approved: out of review, so the reviewer route no longer serves it.
+  expect((await rev.page.request.get(`/api/review/media/${mediaId}`)).status()).toBe(404);
+  await rev.context.close();
+
+  // The publisher sees it in the publication page, through the publisher media route, and publishes.
+  const pub = await signedInStudio(browser, baseURL, { email: 'test-publisher@example.test', password });
+  await pub.page.getByRole('navigation', { name: 'Studio' }).getByRole('link', { name: 'Publication' }).click();
+  await pub.page.getByRole('link', { name: 'TEST Image intégrée', exact: true }).click();
+  const publishImg = pub.page.getByTestId('publish-preview').getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(publishImg).toHaveAttribute('src', `/api/publish/media/${mediaId}`);
+  await expect.poll(() => publishImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await pub.page.getByRole('button', { name: 'Publier cette révision…' }).click();
+  await pub.page.getByRole('dialog').getByRole('button', { name: 'Publier', exact: true }).click();
+  await expect(pub.page.getByRole('heading', { name: 'Révision publiée' })).toBeVisible();
+  expect(await pub.page.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(pub.problems).toEqual([]);
+  // Published: the publisher reads it in the reader like everyone else.
+  expect((await pub.page.request.get(`/api/publish/media/${mediaId}`)).status()).toBe(404);
+  await pub.context.close();
+
+  // A student reads it; the image comes from the lesson-scoped reader route under the reader's CSP.
+  const lessonId = Number(/\/studio\/lessons\/(\d+)\/edit/.exec(page.url())[1]);
+  const { publicId } = (await (await page.request.get('/api/lessons/mine')).json()).lessons.find((l) => l.id === lessonId);
+  const mediaURL = `/learn/lessons/${publicId}/media/${mediaId}`;
+  const studentContext = await browser.newContext({ baseURL });
+  const student = await studentContext.newPage();
+  const studentProblems = watch(student, baseURL);
+  await student.addInitScript(() => {
+    window.cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (e) => window.cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  await signIn(student, { email: 'test-student@example.test', password }, `/learn/lessons/${publicId}`);
+  await expect(student).toHaveURL(new RegExp(`/learn/lessons/${publicId}$`));
+  const readerImg = student.getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(readerImg).toHaveAttribute('src', mediaURL);
+  await expect.poll(() => readerImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await expect(student.locator('figure.lesson-media figcaption')).toHaveText('Figure de test');
+  const served = await student.request.get(mediaURL);
+  expect(served.status()).toBe(200);
+  expect(served.headers()['cache-control']).toBe('private, no-store');
+  expect(served.headers()['x-content-type-options']).toBe('nosniff');
+  // The student has no access to the Studio's routes for the same image.
+  expect((await student.request.get(`/api/media/${mediaId}`)).status()).toBe(403);
+  expect(await student.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(studentProblems).toEqual([]);
+
+  // Nobody else gets it: anonymous readers, and another author through the author route.
+  const anonymous = await browser.newContext({ baseURL });
+  const anon = await anonymous.request.get(mediaURL, { maxRedirects: 0 });
+  expect(anon.status()).toBe(404);
+  await anonymous.close();
+  const other = await apiSession(browser, baseURL, authorTwo);
+  expect((await other.get(`/api/media/${mediaId}`)).status()).toBe(404);
+  await other.ctx.close();
+
+  // Withdrawn: the image is no longer served, even to the student who read it.
+  const admin = await apiSession(browser, baseURL, { email: 'test-admin@example.test', password });
+  expect((await admin.post(`/api/revisions/${revision.id}/withdraw`, { reason: 'TEST retrait.', expectedPublishedRevisionId: revision.id })).status()).toBe(200);
+  await admin.ctx.close();
+  expect((await student.request.get(mediaURL)).status()).toBe(404);
+  await studentContext.close();
+});

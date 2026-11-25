@@ -19,10 +19,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// mediaCSP forbids everything a served image could try to do if a browser
-// ever treated it as a document.
-const mediaCSP = "default-src 'none'; frame-ancestors 'none'; sandbox"
-
 type mediaJSON struct {
 	ID          int64  `json:"id"`
 	ContentType string `json:"contentType"`
@@ -236,8 +232,8 @@ func (h *Handlers) checkMedia(w http.ResponseWriter, r *http.Request, ids []int6
 	return true
 }
 
-// serveMedia returns a stored image to a signed-in author. The content type
-// comes from the validated storage key, never from the request.
+// serveMedia returns a stored image to a signed-in author (media.Store.Serve
+// sets the content type from the validated storage key and the headers).
 func (h *Handlers) serveMedia(w http.ResponseWriter, r *http.Request) {
 	h.serveMediaWhere(w, r, readableBy)
 }
@@ -262,37 +258,10 @@ func (h *Handlers) serveMediaWhere(w http.ResponseWriter, r *http.Request, acces
 		h.internal(w, "load media", err)
 		return
 	}
-	ctype, err := media.ContentTypeForKey(key)
-	if err != nil {
-		// Rows not written by the upload endpoint (or a corrupted key) are
-		// never served.
-		h.Log.Error("media row has an invalid storage key", "id", id)
+	if err := h.Media.Serve(w, r, key); err != nil {
+		// Rows not written by the upload endpoint (a corrupted key) or a
+		// missing file are never served.
+		h.Log.Error("media unavailable", "id", id, "err", err)
 		notFound(w)
-		return
 	}
-	f, err := h.Media.Open(key)
-	if err != nil {
-		h.Log.Error("media file unavailable", "id", id, "err", err)
-		notFound(w)
-		return
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		h.internal(w, "stat media", err)
-		return
-	}
-	hd := w.Header()
-	hd.Set("Content-Type", ctype)
-	hd.Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
-	hd.Set("Content-Disposition", "inline")
-	hd.Set("X-Content-Type-Options", "nosniff")
-	hd.Set("Content-Security-Policy", mediaCSP)
-	// Authenticated content: no shared or browser storage.
-	hd.Set("Cache-Control", "private, no-store")
-	w.WriteHeader(http.StatusOK)
-	if r.Method == http.MethodHead {
-		return
-	}
-	_, _ = io.Copy(w, f)
 }

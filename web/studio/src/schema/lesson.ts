@@ -13,6 +13,7 @@ export interface LessonNode {
   dir?: Dir;
   src?: string;
   alt?: string;
+  caption?: string;
   videoId?: string;
   children?: LessonNode[];
 }
@@ -30,12 +31,41 @@ export const MAX_DOCUMENT_BYTES = 128 << 10;
 export const MAX_NODES = 500;
 export const MAX_DEPTH = 12;
 export const ALLOWED_IMAGES = ['/static/complex-plane.svg'] as const;
+/**
+ * An uploaded asset embedded by its immutable ID (rendering.MediaID): positive, no sign or leading zero,
+ * at most 15 digits, so every valid ID is below 2^53 and Number() reads it exactly.
+ */
+export const MEDIA_REF = /^media:[1-9][0-9]{0,14}$/;
+/** White space only: the union of Go's unicode.IsSpace and String.prototype.trim (rendering.blankText). */
+export const BLANK = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$/;
+export const MEDIA_PREFIX = 'media:';
+
+/** The uploaded asset ID an image src refers to, or null. */
+export function mediaId(src: string | undefined | null): number | null {
+  return src && MEDIA_REF.test(src) ? Number(src.slice(MEDIA_PREFIX.length)) : null;
+}
+
+/** Distinct uploaded asset IDs embedded in the blocks, sorted (rendering.MediaIDs). */
+export function embeddedMediaIds(blocks: LessonNode[]): number[] {
+  const ids = new Set<number>();
+  const walk = (nodes: LessonNode[]) => {
+    for (const n of nodes) {
+      const id = n.type === 'image' ? mediaId(n.src) : null;
+      if (id !== null) ids.add(id);
+      walk(n.children ?? []);
+    }
+  };
+  walk(blocks);
+  return [...ids].sort((a, b) => a - b);
+}
+
+export const isAllowedImageSrc = (src: string) => (ALLOWED_IMAGES as readonly string[]).includes(src) || MEDIA_REF.test(src);
 export const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 
 const DOCUMENT_KEYS = ['schemaVersion', 'title', 'language', 'status', 'objective', 'blocks'];
 // Go struct field order; also the order used when serialising nodes.
-export const NODE_KEYS = ['type', 'text', 'title', 'lang', 'dir', 'src', 'alt', 'videoId', 'children'] as const;
-const STRING_NODE_KEYS = new Set(['type', 'text', 'title', 'lang', 'dir', 'src', 'alt', 'videoId']);
+export const NODE_KEYS = ['type', 'text', 'title', 'lang', 'dir', 'src', 'alt', 'caption', 'videoId', 'children'] as const;
+const STRING_NODE_KEYS = new Set(['type', 'text', 'title', 'lang', 'dir', 'src', 'alt', 'caption', 'videoId']);
 
 const INLINE = new Set(['text', 'math', 'strong']);
 const INLINE_PARENTS = new Set(['paragraph', 'heading', 'strong']);
@@ -120,14 +150,14 @@ export function validateLesson(doc: LessonDocument): string[] {
     for (const [i, n] of nodes.entries()) {
       const at = `${path}[${i}] (${n.type})`;
       if (++count > MAX_NODES) return `Trop de nœuds (${MAX_NODES} maximum).`;
-      if (byteLength(n.text ?? '') > 8000 || byteLength(n.title ?? '') > 240 || byteLength(n.alt ?? '') > 1000) return `${at} : texte trop long.`;
+      if (byteLength(n.text ?? '') > 8000 || byteLength(n.title ?? '') > 240 || byteLength(n.alt ?? '') > 1000 || byteLength(n.caption ?? '') > 1000) return `${at} : texte trop long.`;
       if (n.lang && n.lang !== 'ar' && n.lang !== 'fr') return `${at} : langue non prise en charge.`;
       if (n.dir && n.dir !== 'rtl' && n.dir !== 'ltr' && n.dir !== 'auto') return `${at} : direction invalide.`;
       if (INLINE.has(n.type) !== INLINE_PARENTS.has(parent)) return `${at} : ${n.type} interdit dans ${parent}.`;
       if (parent === 'list' && n.type !== 'item') return `${at} : une liste ne contient que des éléments.`;
       if (n.type === 'item' && parent !== 'list') return `${at} : élément hors d’une liste.`;
       if (n.type === 'solution' && parent !== 'exercise') return `${at} : solution hors d’un exercice.`;
-      if ((n.src && n.type !== 'image') || (n.alt && n.type !== 'image') || (n.videoId && n.type !== 'youtube')) return `${at} : attributs média inattendus.`;
+      if ((n.src && n.type !== 'image') || (n.alt && n.type !== 'image') || (n.caption && n.type !== 'image') || (n.videoId && n.type !== 'youtube')) return `${at} : attributs média inattendus.`;
       const children = n.children ?? [];
       if (LEAVES.has(n.type)) {
         if (children.length > 0 || !n.text) return `${at} : ${n.type === 'text' ? 'texte vide' : 'formule vide'}.`;
@@ -135,7 +165,7 @@ export function validateLesson(doc: LessonDocument): string[] {
       } else if (CONTAINERS.has(n.type)) {
         if (n.text || children.length === 0) return `${at} : contenu vide.`;
       } else if (n.type === 'image') {
-        if (!(ALLOWED_IMAGES as readonly string[]).includes(n.src ?? '') || !n.alt || children.length > 0 || n.text) return `${at} : l’image doit utiliser une ressource locale autorisée et un texte alternatif.`;
+        if (!isAllowedImageSrc(n.src ?? '') || BLANK.test(n.alt ?? '') || children.length > 0 || n.text) return `${at} : l’image doit utiliser une ressource locale autorisée ou une image téléversée (media:<id>), avec un texte alternatif.`;
       } else if (n.type === 'youtube') {
         if ((n.videoId && !YOUTUBE_ID.test(n.videoId)) || children.length > 0 || n.text) return `${at} : identifiant YouTube invalide (11 caractères).`;
       } else {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/invitations"
+	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/rendering"
 	"github.com/hadden-me/learnoo/internal/reports"
 	"github.com/hadden-me/learnoo/internal/users"
@@ -60,7 +61,9 @@ type Config struct {
 	Store       *Store
 	Invitations *invitations.Store
 	Reports     *reports.Store
-	Log         *slog.Logger
+	// Media holds uploaded images embedded in published lessons.
+	Media *media.Store
+	Log   *slog.Logger
 }
 
 // Handlers serves the reader pages.
@@ -97,6 +100,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	page("POST /learn/lessons/{publicId}/unbookmark", h.requireUser(h.requireCSRF(h.removeBookmark)))
 	page("POST /learn/lessons/{publicId}/report", h.requireUser(h.requireCSRFBody(maxReportFormBytes, h.report, h.reportTooLarge)))
 	page("GET /learn/lessons/{publicId}/reported", h.requireUser(h.reported))
+	page("GET /learn/lessons/{publicId}/media/{mediaId}", h.lessonMedia)
 	mux.Handle("GET /static/{path...}", headers(h.Auth.Middleware(http.HandlerFunc(h.static))))
 }
 
@@ -523,7 +527,7 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 	}
 	// The same parts as the Studio preview (POST /api/preview): heading,
 	// objective and body come from the published document.
-	parts, err := rendering.RenderLesson(l.Document)
+	parts, err := rendering.RenderLesson(l.Document, LessonMediaURL(l.PublicID))
 	if err != nil {
 		h.internal(w, r, "render lesson", err)
 		return
@@ -532,6 +536,52 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 	w.Header().Set("Content-Security-Policy", cspLesson)
 	h.render(w, r, status, "lesson", view{Title: l.Title, Lesson: true,
 		Data: lessonData{Lesson: l, Parts: parts, Report: form}})
+}
+
+// LessonMediaURL is the reader's MediaURL for a published lesson: embedded
+// uploaded images are fetched through lessonMedia, scoped to the lesson.
+func LessonMediaURL(publicID string) rendering.MediaURL {
+	return rendering.MediaPrefix(lessonPath(publicID) + "/media/")
+}
+
+func lessonPath(publicID string) string { return "/learn/lessons/" + publicID }
+
+// mediaIDPattern accepts the server's media IDs: positive decimal, no sign
+// or leading zeros, at most 18 digits (fits in int64).
+var mediaIDPattern = regexp.MustCompile(`^[1-9][0-9]{0,17}$`)
+
+// lessonMedia serves an uploaded image embedded in the lesson's currently
+// published revision (Store.LessonMedia) to any signed-in account. Every
+// other request (anonymous, malformed or unknown IDs, an image of another
+// lesson, of a draft or of an unpublished, withdrawn or archived lesson, or
+// attached to the revision but not embedded in it) gets the same JSON 404,
+// as protected /static media does: no redirect, so nothing about the lesson
+// is revealed.
+func (h *Handlers) lessonMedia(w http.ResponseWriter, r *http.Request) {
+	publicID, raw := r.PathValue("publicId"), r.PathValue("mediaId")
+	if _, ok := auth.SessionFrom(r.Context()); !ok || !ValidPublicID(publicID) || !mediaIDPattern.MatchString(raw) {
+		staticNotFound(w)
+		return
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		staticNotFound(w)
+		return
+	}
+	key, err := h.Store.LessonMedia(r.Context(), publicID, id)
+	if errors.Is(err, ErrNotFound) {
+		staticNotFound(w)
+		return
+	}
+	if err != nil {
+		h.Log.Error("reader failure", "op", "lesson media", "err", err)
+		auth.WriteError(w, http.StatusInternalServerError, "internal", "Something went wrong. Try again later.")
+		return
+	}
+	if err := h.Media.Serve(w, r, key); err != nil {
+		h.Log.Error("reader media unavailable", "id", id, "err", err)
+		staticNotFound(w)
+	}
 }
 
 // revisionField accepts a positive decimal revision number.

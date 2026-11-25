@@ -33,6 +33,11 @@ const (
 // withdrawn, still the lesson's candidate" on revision row r of lesson l.
 // candidate_closed_at alone already covers publication and withdrawal; the
 // explicit checks keep the rule readable and independent of the trigger.
+// AwaitingPublication is the SQL predicate, on revision row r and its lesson
+// row l, of a revision awaiting publication (the publisher queue rule). The
+// publisher media route (internal/studioapi) reuses it.
+const AwaitingPublication = awaitingPublication
+
 const awaitingPublication = `r.status = 'approved' AND r.candidate_closed_at IS NULL AND l.archived_at IS NULL
 	AND NOT EXISTS (SELECT 1 FROM revision_withdrawals w WHERE w.revision_id = r.id)
 	AND NOT EXISTS (SELECT 1 FROM publication_audit p WHERE p.revision_id = r.id AND p.action = 'publish')`

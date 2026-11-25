@@ -105,7 +105,7 @@ func TestRenderBlocksMatchesPageBody(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body, err := RenderBlocks(doc)
+		body, err := RenderBlocks(doc, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +113,7 @@ func TestRenderBlocksMatchesPageBody(t *testing.T) {
 			t.Errorf("%s: blocks differ from the page body", name)
 		}
 	}
-	if _, err := RenderBlocks(Document{SchemaVersion: 1, Status: "unreviewed", Language: "fr", Title: "x"}); err == nil {
+	if _, err := RenderBlocks(Document{SchemaVersion: 1, Status: "unreviewed", Language: "fr", Title: "x"}, nil); err == nil {
 		t.Error("invalid document rendered")
 	}
 }
@@ -126,7 +126,7 @@ func TestUnlabelledNodesInheritLanguage(t *testing.T) {
 		{Type: "paragraph", Children: []Node{{Type: "text", Text: "نص"}, {Type: "text", Text: "terme", Lang: "fr", Dir: "ltr"}}},
 		{Type: "paragraph", Lang: "fr", Dir: "ltr", Children: []Node{{Type: "text", Text: "texte"}}},
 	}}
-	body, err := RenderBlocks(doc)
+	body, err := RenderBlocks(doc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

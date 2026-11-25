@@ -185,7 +185,7 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
       )}
       <section className="panel" aria-labelledby="preview-heading">
         <h2 id="preview-heading">Leçon telle que l’élève la lira</h2>
-        <CanonicalPreview content={revision.content} testId="review-preview" />
+        <CanonicalPreview content={revision.content} testId="review-preview" mediaRoute="review" />
       </section>
     </main>
   );

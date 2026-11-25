@@ -60,7 +60,7 @@ function blockToEditor(n: LessonNode, path: string): JSONContent {
     case 'displayMath':
       return { type: 'displayMath', attrs: { latex: n.text ?? '' } };
     case 'image':
-      return { type: 'image', attrs: { src: n.src ?? '', alt: n.alt ?? '' } };
+      return { type: 'image', attrs: { src: n.src ?? '', alt: n.alt ?? '', caption: n.caption ?? '' } };
     case 'youtube':
       return { type: 'youtube', attrs: { title: n.title ?? '', videoId: n.videoId ?? '' } };
     default:
@@ -149,8 +149,12 @@ function blockFromEditor(node: JSONContent, errors: string[], where: string): Le
       }
       return { type: 'displayMath', text: latex };
     }
-    case 'image':
-      return { type: 'image', src: String(attrs.src ?? ''), alt: String(attrs.alt ?? '').trim() };
+    case 'image': {
+      const out: LessonNode = { type: 'image', src: String(attrs.src ?? ''), alt: String(attrs.alt ?? '').trim() };
+      const caption = String(attrs.caption ?? '').trim();
+      if (caption) out.caption = caption;
+      return out;
+    }
     case 'youtube': {
       const out: LessonNode = { type: 'youtube' };
       if (attrs.title) out.title = String(attrs.title);

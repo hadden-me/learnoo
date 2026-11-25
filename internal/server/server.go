@@ -63,6 +63,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Store:       reader.NewStore(db),
 		Invitations: invitations.NewStore(db, nil),
 		Reports:     reports.NewStore(db),
+		Media:       mediaStore,
 		Log:         log,
 	})
 	readerH.Register(mux)

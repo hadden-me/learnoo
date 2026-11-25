@@ -39,6 +39,7 @@ p { margin-block: var(--learnoo-space-4); }
 .callout h3 { color: var(--learnoo-color-accent); }
 figure { margin: var(--learnoo-space-8) 0; }
 figure img { width: 100%; height: auto; border-radius: var(--learnoo-radius-card); }
+figure.lesson-media img { width: auto; max-width: 100%; }
 figcaption { font-size: var(--learnoo-text-caption); color: var(--learnoo-color-muted); margin-block-start: var(--learnoo-space-2); }
 .exercise { border-block-start: 2px solid var(--learnoo-color-brand); margin-block: var(--learnoo-space-10); padding-block-start: var(--learnoo-space-6); }
 .exercise h2 { margin-block-start: var(--learnoo-space-2); }

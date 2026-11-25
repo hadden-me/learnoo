@@ -353,5 +353,210 @@
   "name": "number-like and null-like text inside strings",
   "valid": true,
   "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"1.0 1e0 null -0\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"null 1e0 \\\\\\\" 2.5\"}]}]}"
+ },
+ {
+  "name": "uploaded image reference with alt",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"Schéma\"}]}"
+ },
+ {
+  "name": "uploaded image with caption",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"Schéma\", \"caption\": \"Figure 1 : légende\"}]}"
+ },
+ {
+  "name": "fixture image with caption",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\", \"caption\": \"Le plan complexe\"}]}"
+ },
+ {
+  "name": "uploaded and fixture images mixed, nested in callout and solution",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"Plan\"}, {\"type\": \"callout\", \"title\": \"C\", \"children\": [{\"type\": \"image\", \"src\": \"media:12\", \"alt\": \"a\"}]}, {\"type\": \"exercise\", \"title\": \"E\", \"children\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"text\", \"text\": \"x\"}]}, {\"type\": \"solution\", \"children\": [{\"type\": \"image\", \"src\": \"media:999999999999999\", \"alt\": \"b\"}]}]}]}"
+ },
+ {
+  "name": "same uploaded image twice",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\"}, {\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"b\"}]}"
+ },
+ {
+  "name": "uploaded image without alt",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\"}]}"
+ },
+ {
+  "name": "uploaded image with empty alt",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"\"}]}"
+ },
+ {
+  "name": "uploaded image alt over 1000 bytes",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"}]}"
+ },
+ {
+  "name": "caption over 1000 bytes",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"caption\": \"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"}]}"
+ },
+ {
+  "name": "caption outside an image",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"caption\": \"x\", \"children\": [{\"type\": \"text\", \"text\": \"x\"}]}]}"
+ },
+ {
+  "name": "caption on youtube",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"youtube\", \"caption\": \"x\"}]}"
+ },
+ {
+  "name": "null caption",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"caption\": null}]}"
+ },
+ {
+  "name": "numeric caption",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"caption\": 1}]}"
+ },
+ {
+  "name": "case-folded Caption key",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"Caption\": \"x\"}]}"
+ },
+ {
+  "name": "media id zero",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:0\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with leading zero",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:05\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "negative media id",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:-5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with sign",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:+5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with 16 digits",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:1000000000000000\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "empty media id",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with whitespace",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media: 5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with trailing newline",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\\n\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "upper-case media scheme",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"MEDIA:5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with path",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5/../6\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id with non-ASCII digits",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:٥\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media API URL as src",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/api/media/5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "reader media URL as src",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/learn/lessons/00000000-0000-0000-0000-000000000000/media/5\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "data URL image",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"data:image/png;base64,AAAA\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "uploaded image inside a paragraph",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"children\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\"}]}]}"
+ },
+ {
+  "name": "uploaded image with children",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"children\": [{\"type\": \"text\", \"text\": \"x\"}]}]}"
+ },
+ {
+  "name": "media id with 15 digits",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:999999999999999\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "media id above 2^53",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:9007199254740993\", \"alt\": \"a\"}]}"
+ },
+ {
+  "name": "uploaded image with space-only alt",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"   \"}]}"
+ },
+ {
+  "name": "fixture image with whitespace-only alt",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"/static/complex-plane.svg\", \"alt\": \"\\t\\n \"}]}"
+ },
+ {
+  "name": "alt of no-break and ideographic spaces",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \" 　 \"}]}"
+ },
+ {
+  "name": "alt of U+0085 only (Go space, not JS trim)",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"\"}]}"
+ },
+ {
+  "name": "alt of U+FEFF only (JS trim, not Go space)",
+  "valid": false,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"﻿\"}]}"
+ },
+ {
+  "name": "alt with surrounding spaces",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \" Schéma \"}]}"
+ },
+ {
+  "name": "alt of zero-width space is not blank",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"​\"}]}"
+ },
+ {
+  "name": "empty caption on an image (same as absent)",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"image\", \"src\": \"media:5\", \"alt\": \"a\", \"caption\": \"\"}]}"
+ },
+ {
+  "name": "empty caption on a paragraph (same as absent)",
+  "valid": true,
+  "source": "{\"schemaVersion\": 1, \"title\": \"Test technique\", \"language\": \"fr\", \"status\": \"unreviewed\", \"objective\": \"\", \"blocks\": [{\"type\": \"paragraph\", \"caption\": \"\", \"children\": [{\"type\": \"text\", \"text\": \"x\"}]}]}"
  }
 ]

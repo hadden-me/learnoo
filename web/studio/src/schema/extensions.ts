@@ -7,7 +7,7 @@ import Document from '@tiptap/extension-document';
 import Text from '@tiptap/extension-text';
 import { BulletList, ListItem } from '@tiptap/extension-list';
 import { Gapcursor, TrailingNode, UndoRedo } from '@tiptap/extensions';
-import { ALLOWED_IMAGES, YOUTUBE_ID, type Dir, type Lang } from './lesson';
+import { ALLOWED_IMAGES, MEDIA_REF, YOUTUBE_ID, mediaId, type Dir, type Lang } from './lesson';
 
 export const asLang = (value: string | null | undefined): Lang | null => (value === 'fr' || value === 'ar' ? value : null);
 export const asDir = (value: string | null | undefined): Dir | null => (value === 'ltr' || value === 'rtl' || value === 'auto' ? value : null);
@@ -186,24 +186,44 @@ export const Solution = Node.create({
   renderHTML: () => ['div', { 'data-type': 'solution', class: 'studio-solution' }, ['p', { class: 'studio-node-label', contenteditable: 'false' }, 'Solution (repliée pour l’élève)'], ['div', { 'data-content': '' }, 0]],
 });
 
+/** The URL the Studio shows an image from: uploaded media through the author's route (GET /api/media/{id}). */
+export const editorImageURL = (src: string) => {
+  const id = mediaId(src);
+  return id === null ? src : `/api/media/${id}`;
+};
+
 export const LessonImage = Node.create({
   name: 'image',
   group: 'block',
   atom: true,
   selectable: true,
-  addAttributes: () => ({ src: { default: ALLOWED_IMAGES[0], rendered: false }, alt: { default: '', rendered: false } }),
+  addAttributes: () => ({ src: { default: ALLOWED_IMAGES[0], rendered: false }, alt: { default: '', rendered: false }, caption: { default: '', rendered: false } }),
   parseHTML: () => {
-    const fromImg = (img: Element | null) => {
-      const src = img?.getAttribute('src') ?? '';
-      // Only allowlisted local assets; anything else is dropped (and counted by the paste filter).
-      return (ALLOWED_IMAGES as readonly string[]).includes(src) ? { src, alt: img?.getAttribute('alt') ?? '' } : false;
+    const fromImg = (img: Element | null, figure: Element | null) => {
+      // The editor's own markup names its source in data-src (an allowlisted asset or "media:<id>");
+      // otherwise only allowlisted local assets are kept and anything else is dropped (and counted by
+      // the paste filter). Reader or API image URLs are never turned back into references.
+      const own = figure?.getAttribute('data-src') ?? '';
+      const src = MEDIA_REF.test(own) || (ALLOWED_IMAGES as readonly string[]).includes(own) ? own : (img?.getAttribute('src') ?? '');
+      if (!MEDIA_REF.test(src) && !(ALLOWED_IMAGES as readonly string[]).includes(src)) return false;
+      return { src, alt: img?.getAttribute('alt') ?? '', caption: figure?.getAttribute('data-caption') ?? '' };
     };
     return [
-      { tag: 'figure', getAttrs: (el: HTMLElement) => fromImg(el.querySelector('img')) },
-      { tag: 'img[src]', getAttrs: (el: HTMLElement) => fromImg(el) },
+      { tag: 'figure', getAttrs: (el: HTMLElement) => fromImg(el.querySelector('img'), el) },
+      { tag: 'img[src]', getAttrs: (el: HTMLElement) => fromImg(el, null) },
     ];
   },
-  renderHTML: ({ node }) => ['figure', { 'data-type': 'image', class: 'studio-image' }, ['img', { src: node.attrs.src, alt: node.attrs.alt, width: '320', height: '180' }], ['figcaption', {}, node.attrs.alt || 'Texte alternatif manquant']],
+  renderHTML: ({ node }) => {
+    const src = String(node.attrs.src);
+    const uploaded = mediaId(src) !== null;
+    const caption = String(node.attrs.caption ?? '');
+    return [
+      'figure',
+      { 'data-type': 'image', 'data-src': src, 'data-caption': caption, class: uploaded ? 'studio-image studio-image-uploaded' : 'studio-image' },
+      ['img', uploaded ? { src: editorImageURL(src), alt: node.attrs.alt } : { src, alt: node.attrs.alt, width: '320', height: '180' }],
+      ['figcaption', {}, node.attrs.alt ? (caption ? `${caption} · texte alternatif : ${node.attrs.alt}` : `Texte alternatif : ${node.attrs.alt}`) : 'Texte alternatif manquant'],
+    ];
+  },
 });
 
 export const YouTube = Node.create({

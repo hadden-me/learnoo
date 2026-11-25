@@ -262,7 +262,10 @@ func runFlow(t *testing.T, e *env) seeded {
 	}
 	s.mediaID = up.ID
 
-	s.first = f.approvedRev(f.submittedLesson(f.author, "TEST Déploiement première édition", s.mediaID))
+	// The first edition embeds the uploaded image in its text (issue #77).
+	w = f.createWithMedia(f.author, subject, mediaDoc("TEST Déploiement première édition", false, s.mediaID), []int64{s.mediaID})
+	wantStatus(t, "create with embedded image", w, http.StatusCreated, "")
+	s.first = f.approvedRev(f.submitRev(f.author, decodeRevision(t, w)))
 	f.publishedRev(s.first)
 	s.second = f.approvedRev(f.successorRev(s.first.LessonID, "TEST Déploiement deuxième édition"))
 	f.publishedRev(s.second)
@@ -279,6 +282,11 @@ func runFlow(t *testing.T, e *env) seeded {
 	wantStatus(t, "restore", f.api(f.publisher, http.MethodPost, restorePath(s.first.ID),
 		map[string]any{"expectedPublishedRevisionId": nil}), http.StatusOK, "")
 	wantPage(t, "read restored edition", rd.get(s.student, lessonPath(s.lessonPublicID)), http.StatusOK, "TEST Déploiement première édition")
+	// The reader serves the restored edition's embedded image (reader_published_lessons,
+	// revision_media and media_assets read by the runtime role).
+	if w := rd.get(s.student, mediaPath(s.lessonPublicID, s.mediaID)); w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), s.image) {
+		t.Fatalf("reader media as the runtime role: %d", w.Code)
+	}
 	wantPage(t, "dashboard bookmark", rd.get(s.student, "/learn"), http.StatusOK, "Mes signets (1)")
 
 	// Error reports (LRN-015): file two, resolve one through the review API.

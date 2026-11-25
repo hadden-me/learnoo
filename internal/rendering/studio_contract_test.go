@@ -36,7 +36,8 @@ func TestStudioContractCases(t *testing.T) {
 }
 
 // Documents exported by the Studio editor (golden files written by its tests)
-// must pass Go validation and render through the canonical renderer.
+// must pass Go validation and render through the canonical renderer (with
+// the Studio's media route, as they may embed uploaded images).
 func TestStudioGoldenExports(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "..", "web", "studio", "test", "golden", "*.json"))
 	if err != nil || len(paths) == 0 {
@@ -51,7 +52,7 @@ func TestStudioGoldenExports(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
-		if _, err := Render(doc); err != nil {
+		if _, err := RenderLesson(doc, MediaPrefix("/api/media/")); err != nil {
 			t.Fatalf("%s: render: %v", path, err)
 		}
 	}

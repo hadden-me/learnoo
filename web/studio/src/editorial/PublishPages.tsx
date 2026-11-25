@@ -172,13 +172,13 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
       )}
       {revision.mediaIds.length > 0 && (
         <p className="hint">
-          {revision.mediaIds.length === 1 ? '1 image jointe' : `${revision.mediaIds.length} images jointes`} (relue par le relecteur ; elle n’apparaît pas dans la leçon publiée tant que le format de leçon ne
-          permet pas de la placer dans le texte).
+          {revision.mediaIds.length === 1 ? '1 image jointe' : `${revision.mediaIds.length} images jointes`}, relues par le relecteur. Les images placées dans le texte apparaissent dans la leçon ci-dessous
+          et seront montrées aux élèves ; une image jointe mais non placée ne leur est pas montrée.
         </p>
       )}
       <section className="panel" aria-labelledby="preview-heading">
         <h2 id="preview-heading">Leçon telle que l’élève la lira</h2>
-        <CanonicalPreview content={revision.content} testId="publish-preview" />
+        <CanonicalPreview content={revision.content} testId="publish-preview" mediaRoute="publish" />
       </section>
       {asking && (
         <Dialog

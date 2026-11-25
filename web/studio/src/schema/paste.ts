@@ -1,7 +1,7 @@
 // Pasted HTML is parsed into an inert document, stripped of anything the lesson
 // schema cannot hold, and summarised so the author sees what was removed.
 // Supported text is never removed: unsupported formatting is unwrapped, not deleted.
-import { ALLOWED_IMAGES } from './lesson';
+import { ALLOWED_IMAGES, MEDIA_REF } from './lesson';
 
 export interface PasteReport {
   /** Elements removed with their content (scripts, embeds, external images…). */
@@ -24,7 +24,9 @@ export function sanitizePastedHTML(html: string): { html: string; report: PasteR
       // KaTeX draws some glyphs with SVG; the formula itself comes from its TeX annotation.
       if (!(tag === 'svg' && el.closest('.katex'))) report.removed.push(tag);
       el.remove();
-    } else if (tag === 'img' && !(ALLOWED_IMAGES as readonly string[]).includes(el.getAttribute('src') ?? '')) {
+    } else if (tag === 'img' && !(ALLOWED_IMAGES as readonly string[]).includes(el.getAttribute('src') ?? '') && !MEDIA_REF.test(el.closest('figure[data-type="image"]')?.getAttribute('data-src') ?? '')) {
+      // Kept: allowlisted assets and the editor's own uploaded-image figures (copied within the Studio),
+      // which name their "media:<id>" reference; the server checks the author may use that ID.
       report.removed.push('image externe');
       el.remove();
     } else if (!KNOWN.has(tag) && !el.closest('.katex')) {

@@ -78,6 +78,10 @@ var (
 	ErrUnknownChapter = errors.New("unknown chapter for this subject")
 	// ErrUnknownMedia means a referenced media asset does not exist.
 	ErrUnknownMedia = errors.New("unknown media asset")
+	// ErrUnattachedMedia means the content embeds an uploaded image
+	// ("media:<id>") that is not among the revision's media references. It
+	// wraps ErrInvalidContent.
+	ErrUnattachedMedia = fmt.Errorf("%w: an embedded image is not among the revision's media references", ErrInvalidContent)
 	// ErrArchived means the lesson is archived and accepts no new drafts.
 	ErrArchived = errors.New("lesson is archived")
 	// ErrTranslationExists means the translation group already has a lesson
@@ -254,6 +258,16 @@ func prepare(f Fields) (snapshot, error) {
 	}
 	if len(media) > 0 && media[0] <= 0 {
 		return snapshot{}, ErrUnknownMedia
+	}
+	// Every embedded image must be attached: the caller's mediaIds are
+	// checked for read access (HTTP slice) and frozen with the snapshot at
+	// submission, so the content can only show assets its author may read.
+	// Attached assets need not be embedded (removing the last reference
+	// keeps the attachment until the author removes it).
+	for _, id := range rendering.MediaIDs(doc) {
+		if _, found := slices.BinarySearch(media, id); !found {
+			return snapshot{}, ErrUnattachedMedia
+		}
 	}
 	return snapshot{content: content, doc: doc, prereq: f.Prerequisites, chapter: f.ChapterID, media: media}, nil
 }
@@ -557,15 +571,31 @@ func (s *Store) Submit(ctx context.Context, actor, revisionID int64, expectedVer
 // the content is valid and in canonical form. Equality with the canonical
 // re-encoding rejects content altered outside the store with keys the
 // decoder reads differently from the stored JSON (case-folded duplicates).
-// Submission and restoration (LRN-009) use it.
+// Every uploaded image the content embeds must be among the revision's
+// media references (ErrUnattachedMedia otherwise). Submission and
+// restoration (LRN-009) use it.
 func CheckStoredContentTx(ctx context.Context, tx pgx.Tx, revisionID int64) error {
 	var content []byte
 	if err := tx.QueryRow(ctx, `SELECT content FROM lesson_revisions WHERE id = $1`, revisionID).Scan(&content); err != nil {
 		return err
 	}
-	_, canon, err := canonicalize(content)
+	doc, canon, err := canonicalize(content)
 	if err != nil {
 		return err
+	}
+	if embedded := rendering.MediaIDs(doc); len(embedded) > 0 {
+		var unattached bool
+		err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM unnest($2::bigint[]) AS e(id)
+			                WHERE NOT EXISTS (SELECT 1 FROM revision_media rm
+			                                   WHERE rm.revision_id = $1 AND rm.media_asset_id = e.id))`,
+			revisionID, embedded).Scan(&unattached)
+		if err != nil {
+			return err
+		}
+		if unattached {
+			return ErrUnattachedMedia
+		}
 	}
 	var same bool
 	if err := tx.QueryRow(ctx, `SELECT content = $2::jsonb FROM lesson_revisions WHERE id = $1`, revisionID, canon).Scan(&same); err != nil {

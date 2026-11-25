@@ -214,6 +214,35 @@ func (s *Store) Lesson(ctx context.Context, userID int64, publicID string) (Less
 	return l, nil
 }
 
+// LessonMedia returns the storage key of the uploaded asset mediaID if the
+// lesson's currently published revision (reader_published_lessons: not
+// archived, approved, not withdrawn) both lists it in its frozen media
+// references (revision_media) and embeds it in its content as an image
+// "media:<id>". Anything else is ErrNotFound. Reading needs only a session,
+// as for the lesson page.
+func (s *Store) LessonMedia(ctx context.Context, publicID string, mediaID int64) (string, error) {
+	if !ValidPublicID(publicID) || mediaID <= 0 {
+		return "", ErrNotFound
+	}
+	var key string
+	err := s.db.QueryRow(ctx, `
+		SELECT a.storage_key
+		  FROM reader_published_lessons p
+		  JOIN revision_media rm ON rm.revision_id = p.revision_id
+		  JOIN media_assets a ON a.id = rm.media_asset_id
+		 WHERE p.public_id = $1::uuid AND a.id = $2
+		   AND jsonb_path_exists(p.content, 'strict $.** ? (@.type == "image" && @.src == $src)',
+		                         jsonb_build_object('src', 'media:' || $2::bigint::text))`,
+		publicID, mediaID).Scan(&key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lesson media: %w", err)
+	}
+	return key, nil
+}
+
 // NormalizeQuery trims a search query, turns whitespace (tabs, newlines)
 // into single spaces and drops other control characters. It
 // returns ok=false for queries shorter than MinSearchRunes or longer than

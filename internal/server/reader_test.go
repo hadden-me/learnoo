@@ -429,7 +429,7 @@ func TestLessonPageRendersCanonicalContentWithCredit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := rendering.RenderBlocks(doc)
+	body, err := rendering.RenderBlocks(doc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
