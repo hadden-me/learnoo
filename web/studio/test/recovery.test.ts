@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { RECOVERY_PREFIX, differs, findRecovery, recoveryKey, removeRecovery, writeRecovery, type RecoveryData } from '../src/recovery';
+import { RECOVERY_PREFIX, differs, findLessonRecovery, findRecovery, findUserRecovery, purgeRecovery, recoveryKey, removeRecovery, writeRecovery, type RecoveryData } from '../src/recovery';
 import { parseRoute, routePath } from '../src/router';
 import { loginURL } from '../src/App';
 
@@ -47,6 +47,29 @@ describe('unsaved-edit recovery buffer', () => {
     localStorage.setItem('unrelated', 'keep');
     expect(findRecovery(localStorage, 7, 12)).toEqual([]);
     removeRecovery(localStorage, 'unrelated');
+    expect(localStorage.getItem('unrelated')).toBe('keep');
+  });
+
+  it('finds a lesson’s copies across its revisions (a draft since submitted or discarded)', () => {
+    writeRecovery(localStorage, { userId: 7, revisionId: 12, baseVersion: 3, lessonId: 4, revisionNumber: 1, instance: 'a' }, data('on revision 1'));
+    writeRecovery(localStorage, { userId: 7, revisionId: null, baseVersion: null, lessonId: 4, instance: 'b' }, data('new draft'));
+    writeRecovery(localStorage, { userId: 7, revisionId: 30, baseVersion: 1, lessonId: 5, instance: 'a' }, data('other lesson'));
+    expect(findLessonRecovery(localStorage, 7, 4).map((e) => e.data.title).sort()).toEqual(['new draft', 'on revision 1']);
+    expect(findLessonRecovery(localStorage, 8, 4)).toEqual([]);
+  });
+
+  it('purges one user’s copies at sign-out and every copy past the maximum age', () => {
+    writeRecovery(localStorage, { userId: 7, revisionId: 1, baseVersion: 1, instance: 'a' }, data('mine'));
+    writeRecovery(localStorage, { userId: 8, revisionId: 2, baseVersion: 1, instance: 'a' }, data('fresh'), 'unsaved', undefined, at('2026-11-25T10:00:00Z'));
+    writeRecovery(localStorage, { userId: 8, revisionId: 3, baseVersion: 1, instance: 'a' }, data('old'), 'unsaved', undefined, at('2026-11-01T10:00:00Z'));
+    localStorage.setItem(`${RECOVERY_PREFIX}u8:r4:v1:z`, 'garbage');
+    localStorage.setItem('unrelated', 'keep');
+    purgeRecovery(localStorage, { userId: 7 });
+    expect(findUserRecovery(localStorage, 7)).toEqual([]);
+    expect(findUserRecovery(localStorage, 8)).toHaveLength(2);
+    purgeRecovery(localStorage, { olderThan: new Date('2026-11-11T10:00:00Z') });
+    expect(findUserRecovery(localStorage, 8).map((e) => e.data.title)).toEqual(['fresh']);
+    expect(localStorage.getItem(`${RECOVERY_PREFIX}u8:r4:v1:z`)).toBeNull();
     expect(localStorage.getItem('unrelated')).toBe('keep');
   });
 

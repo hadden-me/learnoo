@@ -15,6 +15,8 @@ import { disableVideos, loadKatex, typeset } from '../preview';
 import { BASE, navigate } from '../router';
 import { lessonExtensions } from '../schema/extensions';
 import { Link } from '../ui/Link';
+import { RecoveryList } from '../ui/RecoveryList';
+import { findLessonRecovery } from '../recovery';
 
 const schema = getSchema(lessonExtensions);
 
@@ -107,8 +109,10 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           chapters={chapters}
           initial={initial}
           revisionLabel={`Brouillon · révision ${revision.number}`}
+          lessonId={lesson.id}
+          revisionNumber={revision.number}
           feedback={feedbackBlock}
-          onSubmitted={() => void reload('Révision soumise pour relecture. Elle ne peut plus être modifiée.')}
+          onSubmitted={() => void reload('Cette révision a quitté l’état de brouillon : elle est affichée en lecture seule.')}
           onDiscarded={() => {
             setFlash('Brouillon supprimé.');
             navigate(`${BASE}/`, { force: true });
@@ -129,8 +133,15 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           chapters={chapters}
           initial={emptyData()}
           revisionLabel="Nouveau brouillon"
+          lessonId={lesson.id}
           feedback={feedbackBlock}
-          onCreated={() => void reload('Brouillon enregistré.')}
+          // The editor stays mounted (no reload), so text typed during this first save is kept.
+          onCreated={() => setNotice('Brouillon enregistré.')}
+          onSubmitted={() => void reload('Révision soumise pour relecture. Elle ne peut plus être modifiée.')}
+          onDiscarded={() => {
+            setFlash('Brouillon supprimé.');
+            navigate(`${BASE}/`, { force: true });
+          }}
         />
       </>
     );
@@ -162,7 +173,8 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
 
 /** A revision that left draft: read-only, with its review state and the way forward. */
 function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: OwnedLesson; revision: Revision; feedback: ReactNode; onDraft: () => void }) {
-  const { api } = useStudio();
+  const { api, session } = useStudio();
+  const [copies, setCopies] = useState(() => findLessonRecovery(localStorage, session.user.id, lesson.id));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -234,6 +246,17 @@ function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: Ow
           </p>
         )}
       </section>
+      <RecoveryList
+        entries={copies}
+        currentRevisionId={revision.id}
+        language={lesson.language}
+        onChanged={() => setCopies(findLessonRecovery(localStorage, session.user.id, lesson.id))}
+        note={
+          canStart
+            ? 'Cette révision ne peut plus être modifiée : créez la nouvelle version ci-dessus pour restaurer une copie, ou copiez-la.'
+            : 'Cette révision ne peut plus être modifiée : copiez ces modifications pour les reprendre dans la prochaine version de la leçon.'
+        }
+      />
       {feedback}
       <section className="panel" aria-labelledby="readonly-heading">
         <h2 id="readonly-heading">Révision {revision.number} — lecture seule</h2>

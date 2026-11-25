@@ -5,7 +5,7 @@ import type { JSONContent } from '@tiptap/core';
 import { Api, ApiError, isApiError, type DraftFields, type Revision } from './api/client';
 import { editorToLesson } from './schema/adapter';
 import { LessonError, serializeLesson, type Lang } from './schema/lesson';
-import type { NewLessonParams } from './recovery';
+import type { NewLessonParams, RecoveryData } from './recovery';
 
 export type SaveTarget =
   /** A lesson not yet created: POST /api/lessons. */
@@ -18,6 +18,8 @@ export type SaveTarget =
 export type SaveOutcome =
   | { kind: 'saved'; revision: Revision }
   | { kind: 'conflict' }
+  /** The draft was submitted (for example from another tab): it can no longer change. */
+  | { kind: 'not_draft' }
   | { kind: 'expired' }
   | { kind: 'failed'; error: unknown };
 
@@ -59,6 +61,7 @@ async function classify(run: () => Promise<Revision>): Promise<SaveOutcome> {
     } catch (error) {
       if (isApiError(error, 'retry') && attempt === 0) continue;
       if (isApiError(error, 'version_conflict')) return { kind: 'conflict' };
+      if (isApiError(error, 'not_draft')) return { kind: 'not_draft' };
       if (isApiError(error, 'unauthenticated')) return { kind: 'expired' };
       return { kind: 'failed', error };
     }
@@ -88,4 +91,11 @@ export async function discardOnServer(api: Api, revisionId: number, version: num
   } catch (error) {
     return error;
   }
+}
+
+/** Text an author can paste elsewhere: the lesson JSON when valid, otherwise everything the editor held. */
+export function recoveryText(data: RecoveryData, language: Lang): string {
+  const built = buildFields({ ...data, doc: data.doc as JSONContent, language });
+  if (built.fields) return JSON.stringify(built.fields.content, null, 2);
+  return JSON.stringify({ title: data.title, objective: data.objective, prerequisites: data.prerequisites, editor: data.doc }, null, 2);
 }

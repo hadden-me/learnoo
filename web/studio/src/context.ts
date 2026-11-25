@@ -6,8 +6,10 @@ export interface Studio {
   session: Session;
   /** False when the server refused the author listing (403): the account cannot author. */
   isAuthor: boolean;
-  /** True after a 401 while signed in: edits stay on screen until the author signs in again. */
+  /** True after a 401, or after another account signed in: no writes; edits stay on screen until the author resumes. */
   expired: boolean;
+  /** The browser's session belongs to another account than this page's. */
+  accountChanged: boolean;
 }
 
 export const StudioContext = createContext<Studio | null>(null);
@@ -35,14 +37,3 @@ export const allowUnload = () => {
   unloadAllowed = true;
 };
 export const isUnloadAllowed = () => unloadAllowed;
-
-/** Set by the save that created a lesson, so the editor reopened at the lesson's address gets the focus back. */
-let editorFocus = false;
-export const requestEditorFocus = () => {
-  editorFocus = true;
-};
-export const takeEditorFocus = () => {
-  const value = editorFocus;
-  editorFocus = false;
-  return value;
-};

@@ -59,6 +59,7 @@ export function navigate(path: string, options: { replace?: boolean; force?: boo
   const go = () => {
     if (options.replace) history.replaceState(null, '', path);
     else history.pushState(null, '', path);
+    shown = path;
     notify();
     // Focus the new page's heading so screen readers announce the change.
     requestAnimationFrame(() => document.querySelector<HTMLElement>('main h1')?.focus());
@@ -77,10 +78,12 @@ if (typeof window !== 'undefined') {
       history.pushState(null, '', shown);
       confirmLeave(() => {
         history.pushState(null, '', target);
+        shown = target;
         notify();
       });
       return;
     }
+    shown = target;
     notify();
   });
 }
@@ -94,6 +97,16 @@ export function useRoute(): Route {
       listeners.delete(listener);
     };
   }, []);
-  shown = path;
   return parseRoute(path);
+}
+
+/**
+ * Changes the address without changing the page (no re-render): used when
+ * the first save creates a lesson, so the open editor, its caret and any
+ * text typed during the save stay as they are, while a reload or a shared
+ * link opens the lesson's own address.
+ */
+export function replacePath(path: string) {
+  history.replaceState(null, '', path);
+  shown = path;
 }

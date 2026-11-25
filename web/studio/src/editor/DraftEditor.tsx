@@ -6,13 +6,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
-import type { Chapter, Media, Revision } from '../api/client';
+import { ApiError, type Chapter, type Media, type Revision } from '../api/client';
 import { describeError } from '../api/messages';
-import { isUnloadAllowed, takeEditorFocus, useStudio } from '../context';
+import { isUnloadAllowed, useStudio } from '../context';
 import { buildFields, discardOnServer, saveToServer, submitToServer, type SaveTarget } from '../drafts';
 import { LANGUAGE_LABELS, formatDateTime, formatTime } from '../labels';
 import { disableVideos, loadKatex, typeset } from '../preview';
-import { findRecovery, newInstance, recoveryKey, removeRecovery, snapshot, writeRecovery, type NewLessonParams, type RecoveryData, type RecoveryEntry, type RecoveryTarget } from '../recovery';
+import { findLessonRecovery, findRecovery, newInstance, recoveryKey, removeRecovery, snapshot, writeRecovery, type NewLessonParams, type RecoveryData, type RecoveryEntry, type RecoveryTarget } from '../recovery';
+import { RecoveryList } from '../ui/RecoveryList';
 import { addNavigationGuard } from '../router';
 import { lessonExtensions } from '../schema/extensions';
 import { prepareSource } from '../schema/importer';
@@ -35,26 +36,34 @@ export interface DraftEditorProps {
   initial: RecoveryData;
   /** Revision number and status line shown in the header. */
   revisionLabel: string;
+  /** The lesson, once it exists on the server; recovery copies of its other revisions are offered too. */
+  lessonId: number | null;
+  /** The open revision's number, for labelling recovery copies. */
+  revisionNumber?: number | null;
   feedback?: ReactNode;
   newLesson?: NewLessonParams;
   /** A recovery copy to apply right away (the author chose to resume it). */
   restore?: RecoveryEntry;
-  /** While the first save creates the lesson; the editor is read-only meanwhile. */
+  /** After the first save created the lesson or draft. The editor stays mounted, so typing during that save is kept. */
   onCreated?: (revision: Revision) => void;
-  onSubmitted?: (revision: Revision) => void;
+  /** The draft left draft status (submitted here or elsewhere): the page shows it read-only. */
+  onSubmitted?: (revision?: Revision) => void;
   onDiscarded?: () => void;
 }
 
 type Message = { text: string; error?: boolean } | null;
 
 export function DraftEditor(props: DraftEditorProps) {
-  const { api, session, expired } = useStudio();
+  const { api, session, expired, accountChanged } = useStudio();
   const { language, chapters } = props;
   const userId = session.user.id;
   const instance = useMemo(newInstance, []);
   const ids = { title: useId(), objective: useId(), chapter: useId(), prerequisites: useId(), upload: useId(), save: useId() };
 
   const [target, setTarget] = useState<SaveTarget>(props.target);
+  const [lessonId, setLessonId] = useState<number | null>(props.lessonId);
+  const [revisionNumber, setRevisionNumber] = useState<number | null>(props.revisionNumber ?? null);
+  const [notDraft, setNotDraft] = useState(false);
   const [title, setTitle] = useState(props.initial.title);
   const [objective, setObjective] = useState(props.initial.objective);
   const [prerequisites, setPrerequisites] = useState(props.initial.prerequisites);
@@ -89,7 +98,7 @@ export function DraftEditor(props: DraftEditorProps) {
     injectCSS: false,
     content: props.initial.doc as JSONContent,
     editorProps: {
-      attributes: { class: 'studio-editor', 'aria-label': 'Contenu de la leçon', 'aria-multiline': 'true', role: 'textbox' },
+      attributes: { class: 'studio-editor', 'aria-label': 'Éditeur du contenu de la leçon', 'aria-multiline': 'true', role: 'textbox' },
       transformPastedHTML: (html) => {
         const result = sanitizePastedHTML(html);
         pasteRef.current(describePaste(result.report));
@@ -115,17 +124,22 @@ export function DraftEditor(props: DraftEditorProps) {
       instance,
       revisionId: t.kind === 'revision' ? t.revisionId : null,
       baseVersion: t.kind === 'revision' ? t.version : null,
-      lessonId: t.kind === 'draft' ? t.lessonId : null,
+      lessonId: t.kind === 'draft' ? t.lessonId : lessonId,
+      revisionNumber: t.kind === 'revision' ? revisionNumber : null,
     }),
-    [target, userId, instance],
+    [target, userId, instance, lessonId, revisionNumber],
   );
 
   const refreshEntries = useCallback(
-    (t: SaveTarget = target) => {
-      const found = findRecovery(localStorage, userId, t.kind === 'revision' ? t.revisionId : null, t.kind === 'draft' ? t.lessonId : null, recoveryKey(recoveryTarget(t)));
-      setEntries(found);
+    (t: SaveTarget = target, lesson: number | null = lessonId) => {
+      const own = recoveryKey(recoveryTarget(t));
+      const found = findRecovery(localStorage, userId, t.kind === 'revision' ? t.revisionId : null, t.kind === 'draft' ? t.lessonId : null, own);
+      // Copies written on the lesson's other revisions (a draft since submitted or discarded, another tab).
+      const others = lesson === null ? [] : findLessonRecovery(localStorage, userId, lesson, own);
+      const byKey = new Map([...found, ...others].map((e) => [e.key, e]));
+      setEntries([...byKey.values()].sort((a, b) => b.savedAt.localeCompare(a.savedAt)));
     },
-    [target, userId, recoveryTarget],
+    [target, userId, recoveryTarget, lessonId],
   );
 
   /** Puts data in the editor and fields; `clean` makes it the new saved baseline. */
@@ -157,8 +171,6 @@ export function DraftEditor(props: DraftEditorProps) {
       setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
     }
     refreshEntries();
-    // Coming straight from the save that created the lesson: put the caret back where the author was typing.
-    if (takeEditorFocus()) editor.commands.focus('end');
   }, [editor]);
 
   // Copies identical to the current server state are redundant: drop them silently.
@@ -210,11 +222,21 @@ export function DraftEditor(props: DraftEditorProps) {
   useEffect(() => {
     if (conflict) conflictRef.current?.focus();
   }, [conflict]);
+  const notDraftRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (notDraft) notDraftRef.current?.focus();
+  }, [notDraft]);
 
   /* ---------- saving ---------- */
 
   const save = useCallback(async (): Promise<Revision | null> => {
     if (!editor || saving) return null;
+    if (expired) {
+      // Nothing is sent until the author resumes with their own account (banner at the top).
+      writeRecovery(localStorage, recoveryTarget(), data());
+      setMessage({ text: `Rien n’a été envoyé : ${accountChanged ? 'un autre compte est connecté dans ce navigateur' : 'la session a expiré'}. Vos modifications restent ici et dans la copie de secours ; reconnectez-vous puis choisissez « Reprendre ici ».`, error: true });
+      return null;
+    }
     const sent = data();
     const built = buildFields({ ...sent, doc: sent.doc as JSONContent, language });
     setErrors(built.errors);
@@ -222,15 +244,12 @@ export function DraftEditor(props: DraftEditorProps) {
       setMessage({ text: 'Le document ne respecte pas le format de leçon ; rien n’a été enregistré. Corrigez les points ci-dessous.', error: true });
       return null;
     }
-    const creating = target.kind === 'lesson';
     setSaving(true);
     setMessage(null);
-    // While the lesson is being created the page will move to its own address: freeze edits meanwhile.
-    if (creating) editor.setEditable(false);
     const before = recoveryTarget();
+    // Edits typed while the request is in flight stay dirty: the baseline becomes what was sent, not what is shown.
     const outcome = await saveToServer(api, target, built.fields);
     setSaving(false);
-    if (creating) editor.setEditable(true);
     switch (outcome.kind) {
       case 'saved': {
         const revision = outcome.revision;
@@ -239,10 +258,12 @@ export function DraftEditor(props: DraftEditorProps) {
         setRestoredKey(null);
         const next: SaveTarget = { kind: 'revision', revisionId: revision.id, version: revision.version };
         setTarget(next);
+        setLessonId(revision.lessonId);
+        setRevisionNumber(revision.number);
         setBaseline(snapshot(sent));
         setLastSaved(new Date());
         setErrors([]);
-        refreshEntries(next);
+        refreshEntries(next, revision.lessonId);
         if (props.target.kind !== 'revision' && props.onCreated) props.onCreated(revision);
         return revision;
       }
@@ -251,15 +272,20 @@ export function DraftEditor(props: DraftEditorProps) {
         setConflict(true);
         setMessage({ text: 'Enregistrement refusé : conflit de version. Vos modifications sont conservées.', error: true });
         return null;
+      case 'not_draft':
+        writeRecovery(localStorage, before, sent, 'conflict');
+        setNotDraft(true);
+        return null;
       case 'expired':
         writeRecovery(localStorage, before, sent);
         setMessage({ text: 'Session expirée : rien n’a été enregistré. Vos modifications restent ici et dans la copie de secours. Reconnectez-vous puis enregistrez à nouveau.', error: true });
         return null;
       case 'failed':
+        writeRecovery(localStorage, before, sent);
         setMessage({ text: `Enregistrement impossible. ${describeError(outcome.error)}`, error: true });
         return null;
     }
-  }, [editor, saving, data, language, target, recoveryTarget, api, restoredKey, refreshEntries, props]);
+  }, [editor, saving, expired, accountChanged, data, language, target, recoveryTarget, api, restoredKey, refreshEntries, props]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -319,6 +345,10 @@ export function DraftEditor(props: DraftEditorProps) {
 
   const submit = async () => {
     setDialog(null);
+    if (expired) {
+      void save();
+      return;
+    }
     let version = target.kind === 'revision' ? target.version : null;
     let revisionId = target.kind === 'revision' ? target.revisionId : null;
     if (dirty || revisionId === null) {
@@ -336,6 +366,9 @@ export function DraftEditor(props: DraftEditorProps) {
     } else if (outcome.kind === 'conflict') {
       setConflict(true);
       setMessage({ text: 'Soumission refusée : le brouillon a changé ailleurs depuis son ouverture.', error: true });
+    } else if (outcome.kind === 'not_draft') {
+      writeRecovery(localStorage, recoveryTarget(), data(), 'conflict');
+      setNotDraft(true);
     } else if (outcome.kind === 'expired') {
       setMessage({ text: 'Session expirée : la leçon n’a pas été soumise. Reconnectez-vous puis réessayez.', error: true });
     } else {
@@ -345,11 +378,12 @@ export function DraftEditor(props: DraftEditorProps) {
 
   const discard = async () => {
     setDialog(null);
-    if (target.kind !== 'revision') return;
+    if (target.kind !== 'revision' || expired) return;
     const result = await discardOnServer(api, target.revisionId, target.version);
     if (result === true) {
-      for (const e of findRecovery(localStorage, userId, target.revisionId)) removeRecovery(localStorage, e.key);
+      // Only this tab's copy: other tabs' unsaved copies stay offered on the lesson.
       removeRecovery(localStorage, recoveryKey(recoveryTarget()));
+      if (restoredKey) removeRecovery(localStorage, restoredKey);
       dirtyRef.current = false;
       props.onDiscarded?.();
     } else if ((result as { code?: string }).code === 'version_conflict') {
@@ -367,6 +401,10 @@ export function DraftEditor(props: DraftEditorProps) {
     event.target.value = '';
     if (!file) return;
     setUploadError(null);
+    if (expired) {
+      setUploadError(describeError(new ApiError(0, accountChanged ? 'account_changed' : 'unauthenticated', '')));
+      return;
+    }
     if (!IMAGE_TYPES.includes(file.type)) {
       setUploadError('Format refusé : seules les images PNG, JPEG et WebP sont acceptées (pas de SVG ni de GIF).');
       return;
@@ -534,47 +572,44 @@ export function DraftEditor(props: DraftEditorProps) {
         </section>
       )}
 
-      {offered.length > 0 && (
-        <section className="recovery" aria-labelledby="recovery-heading">
-          <h2 id="recovery-heading">Copies de secours locales (non enregistrées)</h2>
-          <p className="hint">Ces modifications n’ont jamais été enregistrées sur le serveur. Elles ne sont conservées que dans ce navigateur, pour éviter de les perdre.</p>
-          <ul>
-            {offered.map((e) => (
-              <li key={e.key}>
-                <p>
-                  Copie du {formatDateTime(e.savedAt)}
-                  {e.baseVersion !== null ? `, faite à partir de la version ${e.baseVersion}` : ''}
-                  {e.reason === 'conflict' ? ' (gardée lors d’un conflit)' : ''} : « {e.data.title || 'sans titre'} »
-                </p>
-                <div className="actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      load(e.data, false);
-                      setRestoredKey(e.key);
-                      setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
-                    }}
-                  >
-                    Restaurer dans l’éditeur
-                  </button>
-                  <button type="button" onClick={() => void copyText(localText(e.data), 'La copie de secours')}>
-                    Copier
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      removeRecovery(localStorage, e.key);
-                      refreshEntries();
-                    }}
-                  >
-                    Supprimer cette copie
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+      {notDraft && (
+        <section className="conflict" aria-labelledby="notdraft-heading">
+          <h2 id="notdraft-heading" tabIndex={-1} ref={notDraftRef}>
+            Ce brouillon a été soumis ailleurs
+          </h2>
+          <p>
+            Une autre fenêtre ou un autre appareil a soumis ce brouillon pour relecture : il ne peut plus être modifié. <strong>Vos modifications ne sont pas perdues</strong> : elles sont toujours dans l’éditeur, et une copie de secours de cette leçon a été faite sur cet appareil. Elle vous sera proposée sur la révision soumise et sur la prochaine version de la leçon.
+          </p>
+          <div className="actions">
+            <button type="button" onClick={() => void copyText(localText(data()), 'Votre contenu local')}>
+              Copier mon contenu local
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                writeRecovery(localStorage, recoveryTarget(), data(), 'conflict');
+                dirtyRef.current = false;
+                props.onSubmitted?.();
+              }}
+            >
+              Voir la révision soumise
+            </button>
+          </div>
         </section>
       )}
+
+      <RecoveryList
+        entries={offered}
+        currentRevisionId={target.kind === 'revision' ? target.revisionId : null}
+        language={language}
+        onRestore={(e) => {
+          load(e.data, false);
+          setRestoredKey(e.key);
+          setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
+        }}
+        onChanged={() => refreshEntries()}
+      />
 
       {props.feedback}
 
@@ -619,7 +654,7 @@ export function DraftEditor(props: DraftEditorProps) {
           <section className="media" aria-labelledby="media-heading">
             <h3 id="media-heading">Images jointes</h3>
             <p className="hint">
-              Le format de leçon actuel (schéma 1) ne permet pas encore de placer une image téléversée dans le texte. Les images sont jointes à la révision comme références immuables : enregistrées avec le brouillon et figées à la soumission.
+              Le format de leçon actuel (schéma 1) ne permet pas encore de placer une image téléversée dans le texte. Les images sont jointes à la révision comme références immuables : enregistrées avec le brouillon, figées à la soumission et visibles des relecteurs. Elles ne sont pas encore montrées aux élèves (évolution suivie dans l’issue #77).
             </p>
             {mediaIds.length > 0 ? (
               <ul className="media-list">
@@ -694,7 +729,7 @@ export function DraftEditor(props: DraftEditorProps) {
       )}
       {dialog === 'discard' && (
         <Dialog title="Supprimer ce brouillon ?" onCancel={() => setDialog(null)} cancelLabel="Garder le brouillon" actions={[{ label: 'Supprimer définitivement', kind: 'danger', onClick: () => void discard() }]}>
-          <p>Le brouillon et ses références d’images seront supprimés du serveur. Cette action est définitive. Les versions déjà soumises ou publiées ne sont pas touchées.</p>
+          <p>Le brouillon et ses références d’images seront supprimés du serveur. Cette action est définitive. Les versions déjà soumises ou publiées ne sont pas touchées. Les copies de secours d’autres onglets restent proposées sur cette leçon.</p>
         </Dialog>
       )}
     </div>

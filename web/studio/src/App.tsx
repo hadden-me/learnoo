@@ -1,14 +1,15 @@
-// Studio shell: session, navigation, sign-out and the "session expired"
-// state. Pages are chosen by the client route (router.ts). The next slice
+// Studio shell: session, navigation, sign-out and the "session expired" /
+// "another account signed in" states. Pages are chosen by the client route (router.ts). The next slice
 // adds reviewer, publisher and administrator spaces next to "Mes leçons",
 // each shown only to accounts the server lets use it.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Api, isApiError, type Session } from './api/client';
+import { ACCOUNT_CHANGED, Api, isApiError, type Session } from './api/client';
 import { describeError } from './api/messages';
 import { StudioContext, allowUnload, useStudio, type Studio } from './context';
 import { Link } from './ui/Link';
 import { BASE, hasBlockingGuard, setLeaveConfirmation, useRoute } from './router';
 import { Dialog } from './ui/Dialog';
+import { findUserRecovery, purgeRecovery, RECOVERY_MAX_AGE_MS, suspendRecovery } from './recovery';
 import { LessonList } from './pages/LessonList';
 import { NewLesson } from './pages/NewLesson';
 import { EditorPage } from './pages/EditorPage';
@@ -23,7 +24,7 @@ export function loginURL(pathname: string): string {
 type Boot = { state: 'loading' } | { state: 'ready'; session: Session; isAuthor: boolean } | { state: 'error'; message: string };
 
 export function App() {
-  const [expired, setExpired] = useState(false);
+  const [problem, setProblem] = useState<'expired' | 'account' | null>(null);
   const booted = useRef(false);
   const api = useMemo(
     () =>
@@ -33,8 +34,9 @@ export function App() {
           if (!booted.current) {
             allowUnload();
             location.assign(loginURL(location.pathname));
-          } else setExpired(true);
+          } else setProblem((p) => p ?? 'expired');
         },
+        onAccountChanged: () => setProblem('account'),
       }),
     [],
   );
@@ -43,6 +45,8 @@ export function App() {
 
   useEffect(() => {
     setLeaveConfirmation((proceed) => setLeave(() => proceed));
+    // Recovery copies are short-lived crash protection: forget old ones.
+    purgeRecovery(localStorage, { olderThan: new Date(Date.now() - RECOVERY_MAX_AGE_MS) });
     (async () => {
       try {
         const session = await api.session();
@@ -73,10 +77,10 @@ export function App() {
       </main>
     );
 
-  const studio: Studio = { api, session: boot.session, isAuthor: boot.isAuthor, expired };
+  const studio: Studio = { api, session: boot.session, isAuthor: boot.isAuthor, expired: problem !== null, accountChanged: problem === 'account' };
   return (
     <StudioContext.Provider value={studio}>
-      <Shell onRenewed={() => setExpired(false)} />
+      <Shell onRenewed={() => setProblem(null)} />
       {leave && (
         <Dialog
           title="Quitter sans enregistrer ?"
@@ -107,20 +111,25 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   const [signingOut, setSigningOut] = useState<'ask' | 'busy' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const userId = studio.session.user.id;
   const signOut = useCallback(async () => {
     setSigningOut('busy');
     try {
       await studio.api.logout();
     } catch (error) {
-      if (!isApiError(error, 'unauthenticated')) {
+      // Another account's session is not ours to end; an expired one is already gone.
+      if (!isApiError(error, 'unauthenticated') && !isApiError(error, ACCOUNT_CHANGED)) {
         setSigningOut(null);
         setMessage(`Déconnexion impossible : ${describeError(error)}`);
         return;
       }
     }
+    // Shared devices: this account's unsaved-edit copies do not outlive its session.
+    suspendRecovery();
+    purgeRecovery(localStorage, { userId });
     allowUnload();
     location.assign('/login');
-  }, [studio.api]);
+  }, [studio.api, userId]);
 
   let page: ReactNode;
   if (!studio.isAuthor) page = <NoAuthoring />;
@@ -155,7 +164,11 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
         </nav>
         <div className="account">
           <span className="who">{studio.session.user.displayName}</span>
-          <button type="button" onClick={() => (hasBlockingGuard() ? setSigningOut('ask') : void signOut())} disabled={signingOut === 'busy'}>
+          <button
+            type="button"
+            onClick={() => (hasBlockingGuard() || findUserRecovery(localStorage, userId).length > 0 ? setSigningOut('ask') : void signOut())}
+            disabled={signingOut === 'busy'}
+          >
             Se déconnecter
           </button>
         </div>
@@ -174,7 +187,9 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
           cancelLabel="Revenir à l’édition"
           actions={[{ label: 'Se déconnecter quand même', kind: 'danger', onClick: () => void signOut() }]}
         >
-          <p>Des modifications ne sont pas enregistrées sur le serveur. Enregistrez-les d’abord. Si vous vous déconnectez, elles ne resteront que dans la copie de secours de cet appareil.</p>
+          <p>
+            Des modifications ne sont pas enregistrées sur le serveur (dans cette page ou dans des copies de secours de cet appareil). Enregistrez-les d’abord : à la déconnexion, les copies de secours de votre compte sont effacées de cet appareil et ces modifications seront perdues.
+          </p>
         </Dialog>
       )}
     </div>
@@ -193,22 +208,31 @@ function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
   useEffect(() => ref.current?.focus(), []);
   const resume = async () => {
     try {
-      const session = await studio.api.session();
-      if (session.user.id !== studio.session.user.id) {
-        setError(`Vous êtes maintenant connecté avec un autre compte (${session.user.email}). Reconnectez-vous avec ${studio.session.user.email} pour enregistrer ces modifications.`);
-        return;
-      }
+      // session() refuses another account before keeping anything from it.
+      await studio.api.session();
       setError(null);
       onRenewed();
     } catch (e) {
-      setError(isApiError(e, 'unauthenticated') ? 'Toujours pas connecté. Connectez-vous dans l’autre onglet, puis réessayez.' : describeError(e));
+      setError(
+        isApiError(e, 'unauthenticated')
+          ? 'Toujours pas connecté. Connectez-vous dans l’autre onglet, puis réessayez.'
+          : isApiError(e, ACCOUNT_CHANGED)
+            ? `Un autre compte est toujours connecté dans ce navigateur. Déconnectez-le dans l’autre onglet et reconnectez-vous avec ${studio.session.user.email}, puis réessayez.`
+            : describeError(e),
+      );
     }
   };
   return (
     <div className="banner expired" role="alert" tabIndex={-1} ref={ref}>
-      <p>
-        <strong>Session expirée.</strong> Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil, mais rien ne peut être enregistré tant que vous n’êtes pas reconnecté.
-      </p>
+      {studio.accountChanged ? (
+        <p>
+          <strong>Un autre compte est connecté dans ce navigateur.</strong> Pour protéger vos leçons, cette page n’envoie plus rien au serveur. Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil. Reconnectez-vous avec {studio.session.user.email}, puis reprenez ici.
+        </p>
+      ) : (
+        <p>
+          <strong>Session expirée.</strong> Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil, mais rien ne peut être enregistré tant que vous n’êtes pas reconnecté.
+        </p>
+      )}
       <p>
         <a href={loginURL(location.pathname)} target="_blank" rel="noopener">
           Se reconnecter dans un nouvel onglet

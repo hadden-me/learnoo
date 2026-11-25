@@ -5,12 +5,12 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import type { Chapter, OwnedLesson, Revision, Subject } from '../api/client';
 import { describeError } from '../api/messages';
-import { requestEditorFocus, setFlash, useStudio } from '../context';
+import { setFlash, useStudio } from '../context';
 import { DraftEditor } from '../editor/DraftEditor';
 import { emptyData } from '../editor/convert';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { findRecovery, removeRecovery, type NewLessonParams, type RecoveryEntry } from '../recovery';
-import { BASE, navigate } from '../router';
+import { BASE, navigate, replacePath } from '../router';
 import { Link } from '../ui/Link';
 
 export function NewLesson() {
@@ -67,10 +67,13 @@ export function NewLesson() {
     }
   };
 
+  const [createdId, setCreatedId] = useState<number | null>(null);
   const created = (revision: Revision) => {
-    setFlash('Leçon créée et enregistrée sur le serveur.');
-    requestEditorFocus();
-    navigate(`${BASE}/lessons/${revision.lessonId}/edit`, { replace: true, force: true });
+    setCreatedId(revision.lessonId);
+    replacePath(`${BASE}/lessons/${revision.lessonId}/edit`);
+  };
+  const reopen = () => {
+    if (createdId !== null) navigate(`${BASE}/lessons/${createdId}/edit`, { replace: true, force: true });
   };
 
   if (started)
@@ -80,6 +83,11 @@ export function NewLesson() {
           <Link to={`${BASE}/`}>Mes leçons</Link>
         </p>
         <h1 tabIndex={-1}>Nouvelle leçon</h1>
+        {createdId !== null && (
+          <p className="banner success" role="status">
+            Leçon créée et enregistrée sur le serveur.
+          </p>
+        )}
         <DraftEditor
           target={{ kind: 'lesson', params: started.params }}
           language={started.params.language}
@@ -87,9 +95,15 @@ export function NewLesson() {
           chapters={started.chapters}
           initial={emptyData(started.chapterId)}
           restore={started.restore}
-          revisionLabel="Pas encore créée : le premier enregistrement crée la leçon"
+          revisionLabel={createdId === null ? 'Pas encore créée : le premier enregistrement crée la leçon' : 'Brouillon · révision 1'}
+          lessonId={null}
           newLesson={started.params}
           onCreated={created}
+          onSubmitted={reopen}
+          onDiscarded={() => {
+            setFlash('Brouillon supprimé.');
+            navigate(`${BASE}/`, { force: true });
+          }}
         />
       </main>
     );
