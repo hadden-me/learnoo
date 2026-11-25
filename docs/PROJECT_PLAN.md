@@ -854,7 +854,7 @@ Restore actions should be audited.
 
 # 13. Exercise Architecture
 
-For the pilot, exercise questions and worked solutions live inside the immutable lesson revision. They are reviewed and published as part of that lesson. There is one active draft/review candidate per lesson, with draft-save version checks and a transactional publication-base comparison.
+For the pilot, exercise questions and worked solutions live inside the immutable lesson revision. They are reviewed and published as part of that lesson. There is one active candidate per lesson (a draft, a revision in review, or an approved revision not yet published or withdrawn), with draft-save version checks and a transactional publication-base comparison.
 
 Independent exercise identities, reusable exercise banks, pinned exercise dependencies and cross-lesson withdrawal lookup are future expansion features, not pilot requirements. Examination reproduction rights must be verified before publishing third-party materials.
 

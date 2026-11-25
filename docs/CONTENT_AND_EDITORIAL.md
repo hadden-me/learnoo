@@ -37,7 +37,7 @@ Withdraw the affected lesson revision with a reason, block it from publication/r
 
 ## One active candidate
 
-Allow only one open draft/review candidate per lesson, enforced by a database constraint. Submission makes content immutable. A changes-requested revision is retained while a new successor draft is created. Use optimistic version checks on draft saves and a locked current-publication comparison at publish time. Two browser tabs must not silently overwrite one another.
+Allow only one open candidate per lesson, enforced by a database constraint: a draft, a revision in review, or an approved revision awaiting publication. An approved revision blocks another draft until it is published or withdrawn; once published it never blocks again, even when the pointer later moves away or back to it. Submission makes content immutable. A changes-requested revision is retained while a new successor draft is created. Use optimistic version checks on draft saves and a locked current-publication comparison at publish time. Two browser tabs must not silently overwrite one another.
 
 ## Attribution and rights
 

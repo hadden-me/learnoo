@@ -141,7 +141,7 @@ Phase 2 adds richer reviewer dashboards, assignments, notifications and advanced
 
 Minimum revision conflict handling is part of Phase 1.
 
-Every draft records a `base_revision_id`. Allow one active draft/review candidate per lesson, enforced in the database. Use version-checked draft saves to prevent lost updates between browser tabs.
+Every draft records a `base_revision_id`. Allow one active candidate per lesson (a draft, a revision in review, or an approved revision not yet published or withdrawn), enforced in the database. Use version-checked draft saves to prevent lost updates between browser tabs.
 
 When publishing, the backend must verify that the revision was created against the expected published version or has undergone an explicit, audited reconciliation.
 

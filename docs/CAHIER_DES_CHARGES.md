@@ -155,7 +155,7 @@ Suggested order (each step is one or more small PRs):
 
 1. **Foundation** — LRN-005 (server, migrations, sessions, CSRF, password hashing, role tables, and basic login abuse protection: rate limiting, enumeration-safe errors, session rotation; required before any login is reachable outside loopback, even for invited pilot users) + LRN-013 (CLI to create the first admin and grant/revoke `author`, `reviewer` per subject, `publisher` and `administrator` independently).
 2. **Catalogue** — LRN-014 seed of section → subject → chapters.
-3. **Lessons** — LRN-006 revisions with immutable submitted snapshots, one active draft per lesson, safe image upload.
+3. **Lessons** — LRN-006 revisions with immutable submitted snapshots, one active candidate per lesson (draft, in review, or approved but unpublished), safe image upload.
 4. **Workflow** — LRN-007 submit / request changes / approve / publish with transactional publication and audit, recording author and reviewer on each revision; Studio integrates the LRN-003 editor.
 5. **Students** — LRN-008 registration (invited pilot users), navigation, protected reader showing basic author/reviewer credit, bookmarks, title search; LRN-015 error reports.
 6. **Safety** — LRN-009 withdraw / unpublish / restore.

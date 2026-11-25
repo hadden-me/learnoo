@@ -10,7 +10,7 @@ Read [editorial rules](../../../docs/CONTENT_AND_EDITORIAL.md) and the relevant 
 For each affected invariant, enforce it server-side and verify the corresponding behavior. Use real database transactions for concurrency tests, not only mocked repositories.
 
 - **Immutable submissions:** reject changes to submitted content and educational metadata; corrections create a successor. Test attempted edits and unchanged stored snapshots, including exercises/media references.
-- **One active candidate:** enforce one draft/review candidate per lesson with a database constraint. Test concurrent creation and the changes-requested → successor transition without deleting history.
+- **One active candidate:** enforce one candidate per lesson (draft, in review, or approved but never published nor withdrawn) with a database constraint. Test concurrent creation, the changes-requested → successor transition without deleting history, and that publication or withdrawal of an approved revision releases the lesson.
 - **Versioned saves:** reject stale draft writes. Test two editor tabs saving the same version; the losing save must not overwrite the winner.
 - **Atomic publication:** compare the expected base and update the pointer in one locked transaction. Test racing publishes, stale bases, wrong-lesson/unapproved revisions, and retaining the published version during drafting. Corrections still require review.
 - **Independent review:** authors never approve their own revision, including users with admin or multiple roles. Test self-approval denial, subject authorization, separate publishing permission, and a valid different reviewer.

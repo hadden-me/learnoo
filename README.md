@@ -26,7 +26,7 @@ Learnoo will combine curriculum-aligned lessons, exercises, and educational vide
 
 ## First milestone
 
-Prove that one representative lesson can be edited, saved, reopened, and rendered correctly with Arabic, French, mathematics, an image, a YouTube reference, and a worked example. Begin with restricted Go rendering and locally hosted browser-side KaTeX; measure mobile performance before considering server-side JavaScript. Pilot exercises live inside lesson revisions, with one active draft/review candidate per lesson.
+Prove that one representative lesson can be edited, saved, reopened, and rendered correctly with Arabic, French, mathematics, an image, a YouTube reference, and a worked example. Begin with restricted Go rendering and locally hosted browser-side KaTeX; measure mobile performance before considering server-side JavaScript. Pilot exercises live inside lesson revisions, with one active candidate (draft, in review, or approved but unpublished) per lesson.
 
 Next, implement the author → reviewer/publisher → student workflow with real permissions, safe revisions, and tested recovery.
 
