@@ -203,14 +203,27 @@ func TestGrantAndRevokeCommands(t *testing.T) {
 		t.Fatal("refused revoke changed the database")
 	}
 
+	// Every change above was made by the CLI: each audit row carries the
+	// local operator label and no actor.
+	label := permissions.LocalOperatorLabel()
+	var total, labelled int
+	err = c.pool.QueryRow(context.Background(), `SELECT count(*), count(*) FILTER (WHERE actor_id IS NULL AND operator_label = $1)
+		FROM permission_audit`, label).Scan(&total, &labelled)
+	if err != nil || total == 0 || labelled != total {
+		t.Fatalf("%d of %d audit rows carry operator label %q (%v)", labelled, total, label, err)
+	}
+
 	out := c.ok("", "show-user", "-email", "teacher@example.test")
 	for _, want := range []string{
-		"global permissions: author, administrator",
-		"reviewer subjects: simulated-physics",
-		"grant reviewer subject=simulated-math by operator",
-		"revoke publisher by operator",
+		"global permissions: author, administrator\n",
+		"reviewer subjects: simulated-physics\n",
+		" grant reviewer subject=simulated-math by operator " + label + "\n",
+		" revoke publisher by operator " + label + "\n",
 	} {
 		wantOut(t, out, want)
+	}
+	if n := strings.Count(out, " by operator "+label+"\n"); n != strings.Count(out, " by ") || n == 0 {
+		t.Fatalf("show-user audit lines without the exact operator label:\n%s", out)
 	}
 }
 
