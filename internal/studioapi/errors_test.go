@@ -104,6 +104,7 @@ func TestWriteReviewErrorCodes(t *testing.T) {
 		"not found":                {review.ErrNotFound, http.StatusNotFound, "not_found"},
 		"not approved":             {review.ErrNotApproved, http.StatusConflict, "not_approved"},
 		"already published":        {review.ErrAlreadyPublished, http.StatusConflict, "already_published"},
+		"withdrawn":                {review.ErrWithdrawn, http.StatusConflict, "withdrawn"},
 		"stale base":               {review.ErrStaleBase, http.StatusConflict, "stale_base"},
 		"archived":                 {review.ErrArchived, http.StatusConflict, "archived"},
 		"guard":                    {review.ErrRejected, http.StatusConflict, "immutable"},
@@ -112,6 +113,45 @@ func TestWriteReviewErrorCodes(t *testing.T) {
 		h.writePublishError(w, c.err)
 		if w.Code != c.status || decode(w) != c.code {
 			t.Errorf("publish %s: %d %s, want %d %s", name, w.Code, decode(w), c.status, c.code)
+		}
+	}
+}
+
+func TestWriteWithdrawalErrorCodes(t *testing.T) {
+	h := New(Config{Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	wrapped := func(code string) error { return fmt.Errorf("restore: %w", &pgconn.PgError{Code: code}) }
+	decode := func(w *httptest.ResponseRecorder) string {
+		var b struct{ Error struct{ Code string } }
+		_ = json.Unmarshal(w.Body.Bytes(), &b)
+		return b.Error.Code
+	}
+	for name, c := range map[string]struct {
+		err    error
+		status int
+		code   string
+	}{
+		"deadlock":                 {wrapped("40P01"), http.StatusConflict, "retry"},
+		"denied (revoked)":         {review.ErrDenied, http.StatusForbidden, "forbidden"},
+		"denied with database err": {errors.Join(review.ErrDenied, &pgconn.PgError{Code: "57014"}), http.StatusInternalServerError, "internal"},
+		"not found":                {review.ErrNotFound, http.StatusNotFound, "not_found"},
+		"reason required":          {review.ErrReasonRequired, http.StatusUnprocessableEntity, "reason_required"},
+		"invalid reason":           {review.ErrInvalidReason, http.StatusUnprocessableEntity, "invalid_reason"},
+		"stale pointer":            {review.ErrStalePointer, http.StatusConflict, "stale_pointer"},
+		"not approved":             {review.ErrNotApproved, http.StatusConflict, "not_approved"},
+		"already withdrawn":        {review.ErrAlreadyWithdrawn, http.StatusConflict, "already_withdrawn"},
+		"withdrawn":                {review.ErrWithdrawn, http.StatusConflict, "withdrawn"},
+		"not published":            {review.ErrNotPublished, http.StatusConflict, "not_published"},
+		"never published":          {review.ErrNeverPublished, http.StatusConflict, "never_published"},
+		"already current":          {review.ErrAlreadyCurrent, http.StatusConflict, "already_current"},
+		"archived":                 {review.ErrArchived, http.StatusConflict, "archived"},
+		"ineligible":               {fmt.Errorf("%w: detail", review.ErrIneligible), http.StatusConflict, "ineligible"},
+		"guard":                    {review.ErrRejected, http.StatusConflict, "immutable"},
+		"other database error":     {wrapped("23514"), http.StatusInternalServerError, "internal"},
+	} {
+		w := httptest.NewRecorder()
+		h.writeWithdrawalError(w, "test", c.err)
+		if w.Code != c.status || decode(w) != c.code {
+			t.Errorf("%s: %d %s, want %d %s", name, w.Code, decode(w), c.status, c.code)
 		}
 	}
 }

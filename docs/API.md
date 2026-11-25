@@ -40,14 +40,22 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 409 | `immutable` | A database guard rejected a change to a frozen snapshot or asset (normally preceded by a more specific code) |
 | 409 | `not_in_review` | The revision is not in review (a draft, or already decided, for example by a concurrent reviewer). Nothing was written |
 | 409 | `not_approved` | Publication of a revision that is not approved |
-| 409 | `already_published` | Publication of a revision that is or was already published; re-pointing to an earlier revision is restoration (LRN-009) |
+| 409 | `already_published` | Publication of a revision that is or was already published; re-pointing to an earlier revision is [restoration](#post-apirevisionsrevisionidrestore) |
 | 409 | `stale_base` | The lesson's published revision changed since the revision was drafted. Nothing was published |
+| 409 | `withdrawn` | The revision was withdrawn and can never be published or restored |
+| 409 | `already_withdrawn` | Withdrawal of a revision that is already withdrawn |
+| 409 | `stale_pointer` | `expectedPublishedRevisionId` is not the lesson's current published revision. Nothing was changed |
+| 409 | `not_published` | Unpublication of a lesson that has no published revision |
+| 409 | `never_published` | Restoration of a revision that was never published (publish it instead) |
+| 409 | `already_current` | Restoration of the revision that is already published |
+| 409 | `ineligible` | Restoration of a revision whose content no longer passes the current schema v1 validator, or whose media references do not resolve |
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
 | 422 | `invalid_content` | The document fails schema v1 validation, or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
 | 422 | `language_mismatch` | The document's `language` differs from the lesson's |
 | 422 | `unknown_subject` / `unknown_chapter` / `unknown_media` | Referenced subject, chapter (of this subject) or media asset does not exist |
+| 422 | `reason_required` / `invalid_reason` | Withdrawal or unpublication without a reason, or with one over 2000 characters or not valid text |
 | 422 | `unknown_lesson` | `translationOf` names a lesson that does not exist or that the caller does not own |
 | 422 | `translation_subject` | A translation names a subject other than its source lesson's |
 | 422 | `invalid_image` | The image is corrupt or truncated |
@@ -228,7 +236,7 @@ Starts a new draft of an existing lesson (for example the successor of a `change
 - `201` revision object, `Location` as above.
 - `404 not_found` (unknown lesson, or a lesson the caller does not own; same body), `409 active_candidate_exists` (a draft, an in-review revision, or an approved revision awaiting publication exists; concurrent requests: exactly one succeeds), `409 archived`, `422` as above.
 
-An approved revision keeps blocking new drafts until it is [published](#post-apirevisionsrevisionidpublish) or withdrawn (LRN-009, not yet available).
+An approved revision keeps blocking new drafts until it is [published](#post-apirevisionsrevisionidpublish) or [withdrawn](#post-apirevisionsrevisionidwithdraw).
 
 ### `GET /api/revisions/{revisionId}`
 
@@ -352,9 +360,61 @@ Body `{}` (an empty JSON object; any key is rejected). Publishes the approved re
 ```
 
 - `200` as above. The revision stops being the active candidate, so the lesson accepts a new draft based on it.
-- `409 stale_base`: the published revision changed since this revision was drafted (for example after an unpublication or restoration, LRN-009). Nothing changes; a reconciled revision must be drafted and reviewed. While this revision stays approved it keeps blocking new drafts (open question in DECISIONS.md).
-- `409 not_approved | already_published | archived`, `404 not_found` (missing revision), `403 forbidden`, `400`, `415`. Of concurrent publications of one revision exactly one succeeds and is audited once; the others get `409 already_published`.
+- `409 stale_base`: the published revision changed since this revision was drafted (for example after an unpublication or restoration, LRN-009). Nothing changes; a reconciled revision must be drafted and reviewed. While this revision stays approved it keeps blocking new drafts until an administrator [withdraws](#post-apirevisionsrevisionidwithdraw) it (open question in DECISIONS.md).
+- `409 not_approved | withdrawn | already_published | archived`, `404 not_found` (missing revision), `403 forbidden`, `400`, `415`. Of concurrent publications of one revision exactly one succeeds and is audited once; the others get `409 already_published`.
+
+## Withdrawal, unpublication and restoration (LRN-009)
+
+Implemented in `internal/studioapi/withdraw.go` over `internal/review` and `migrations/0007_withdrawal_restoration.sql`. Decisions and open questions: [DECISIONS.md](DECISIONS.md#withdrawal-unpublication-and-restoration-lrn-009).
+
+### Authorization
+
+Session, CSRF token and strict JSON as for the Studio API. Withdrawal and unpublication need the global `administrator` permission; restoration needs `publisher` or `administrator`. The permission is checked before any lookup (`403 forbidden`, so existing and missing IDs look the same) and again inside the transaction with the grant and account rows share-locked; a revocation committed in between also gives `403`. These permissions are global, so their holders may learn which revisions and lessons exist (`404 not_found` for a missing or malformed ID).
+
+### Expected published revision
+
+Every request carries `expectedPublishedRevisionId`: the lesson's published revision the caller saw (a positive integer), or `null` if the lesson had none. It is required (a missing key is `400`). The server compares it with the current pointer while holding the lesson row lock; a mismatch is `409 stale_pointer` and nothing changes. Every change of the published revision, including clearing it, writes a row to the pointer audit in the same transaction; the database refuses a pointer change without one.
+
+### Pointer change object
+
+Returned by unpublication and restoration, and embedded in a withdrawal that unpublished:
+
+```json
+{"lessonId": 4, "action": "restore", "publishedRevisionId": 9, "previousRevisionId": 12, "actorId": 3, "reason": null, "occurredAt": "2026-11-24T09:00:00Z"}
+```
+
+`action` is `restore` or `unpublish`; `publishedRevisionId` is the new pointer (`null` after unpublication); `reason` is set for unpublication only.
+
+### `POST /api/revisions/{revisionId}/withdraw`
+
+Body `{"reason": "…", "expectedPublishedRevisionId": 12}`. `reason` is required, trimmed, at most 2000 characters. Withdraws an approved revision as incorrect or unlawful: it can never again be published or restored. In one transaction:
+
+- the withdrawal (revision, administrator, reason, time) is recorded;
+- if the revision is the published one, the lesson is unpublished (pointer to `null`, audited with the same reason);
+- if the revision is an approved candidate awaiting publication, it stops being the lesson's active candidate, so the lesson accepts a new draft.
+
+```json
+{"revisionId": 12, "lessonId": 4, "withdrawnBy": 1, "reason": "Incorrect worked solution.", "withdrawnAt": "2026-11-24T09:00:00Z", "unpublication": {"lessonId": 4, "action": "unpublish", "publishedRevisionId": null, "previousRevisionId": 12, "actorId": 1, "reason": "Incorrect worked solution.", "occurredAt": "2026-11-24T09:00:00Z"}}
+```
+
+`unpublication` is `null` when the revision was not the published one.
+
+- `409 not_approved` (only approved revisions can be withdrawn), `409 already_withdrawn`, `409 stale_pointer`, `422 reason_required | invalid_reason`, `404`, `403`, `400`, `415`. Withdrawal racing a publication of the same revision: either the withdrawal wins (the publication gets `409 withdrawn`) or the publication wins (the withdrawal gets `409 stale_pointer`).
+
+### `POST /api/lessons/{lessonId}/unpublish`
+
+Body `{"reason": "…", "expectedPublishedRevisionId": 12}`; here `expectedPublishedRevisionId` must be the published revision to remove (`null` is `400`). Emergency unpublication: the lesson's pointer goes to `null`, audited with the administrator and reason. The revision stays approved and can be restored.
+
+- `200` pointer change object with `action` `unpublish`.
+- `409 not_published | stale_pointer`, `422 reason_required | invalid_reason`, `404` (unknown lesson), `403`, `400`, `415`.
+
+### `POST /api/revisions/{revisionId}/restore`
+
+Body `{"expectedPublishedRevisionId": 12}` (or `null` for an unpublished lesson). Points the lesson back at a revision that was published before. The revision must be an approved revision of the lesson, never withdrawn, previously published, and still eligible: its content must pass the current schema v1 validator and its media references must resolve. The historical base check of publication is not applied. Restoration does not reopen the restored revision as a candidate, so it never itself blocks new drafts (their base is the restored revision); an approved candidate already pending for the lesson still blocks them until it is published or withdrawn (open question in DECISIONS.md).
+
+- `200` pointer change object with `action` `restore`.
+- `409 never_published` (an approved revision that was never published goes through [publication](#post-apirevisionsrevisionidpublish) and its base check; see the open question in DECISIONS.md), `409 withdrawn | not_approved | already_current | stale_pointer | archived | ineligible`, `404`, `403`, `400`, `415`. Restoration racing a publication or another restoration: exactly one applies and is audited once; the other gets `409 stale_pointer` or `409 stale_base`.
 
 ## Not yet defined
 
-Registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); unpublication, withdrawal and restoration (LRN-009); reader pages and reader media access (LRN-008); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2).
+Registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader pages and reader media access (LRN-008); catalogue endpoints (LRN-014); lesson listing for the Studio; a publisher's list of approved revisions awaiting publication; reviewer dashboards and notifications (M2).

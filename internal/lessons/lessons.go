@@ -530,24 +530,9 @@ func (s *Store) Submit(ctx context.Context, actor, revisionID int64, expectedVer
 		if st.archived {
 			return ErrArchived
 		}
-		// Re-check the stored snapshot: only valid, canonical schema v1
-		// content enters review. Equality with the canonical re-encoding
-		// rejects content altered outside the store with keys the decoder
-		// reads differently from the stored JSON (case-folded duplicates).
-		var content []byte
-		if err := tx.QueryRow(ctx, `SELECT content FROM lesson_revisions WHERE id = $1`, revisionID).Scan(&content); err != nil {
+		// Only valid, canonical schema v1 content enters review.
+		if err := CheckStoredContentTx(ctx, tx, revisionID); err != nil {
 			return err
-		}
-		_, canon, err := canonicalize(content)
-		if err != nil {
-			return err
-		}
-		var same bool
-		if err := tx.QueryRow(ctx, `SELECT content = $2::jsonb FROM lesson_revisions WHERE id = $1`, revisionID, canon).Scan(&same); err != nil {
-			return err
-		}
-		if !same {
-			return fmt.Errorf("%w: stored content is not in canonical form", ErrInvalidContent)
 		}
 		now := s.now().UTC()
 		tag, err := tx.Exec(ctx, `
@@ -565,6 +550,31 @@ func (s *Store) Submit(ctx context.Context, actor, revisionID int64, expectedVer
 		return err
 	})
 	return rev, err
+}
+
+// CheckStoredContentTx re-checks a stored snapshot against the current
+// schema v1 validator inside tx: it returns an ErrInvalidContent error unless
+// the content is valid and in canonical form. Equality with the canonical
+// re-encoding rejects content altered outside the store with keys the
+// decoder reads differently from the stored JSON (case-folded duplicates).
+// Submission and restoration (LRN-009) use it.
+func CheckStoredContentTx(ctx context.Context, tx pgx.Tx, revisionID int64) error {
+	var content []byte
+	if err := tx.QueryRow(ctx, `SELECT content FROM lesson_revisions WHERE id = $1`, revisionID).Scan(&content); err != nil {
+		return err
+	}
+	_, canon, err := canonicalize(content)
+	if err != nil {
+		return err
+	}
+	var same bool
+	if err := tx.QueryRow(ctx, `SELECT content = $2::jsonb FROM lesson_revisions WHERE id = $1`, revisionID, canon).Scan(&same); err != nil {
+		return err
+	}
+	if !same {
+		return fmt.Errorf("%w: stored content is not in canonical form", ErrInvalidContent)
+	}
+	return nil
 }
 
 // DiscardDraft deletes the actor's own draft at expectedVersion, with its

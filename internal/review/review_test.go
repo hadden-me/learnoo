@@ -593,8 +593,9 @@ func TestPublishStaleBaseConflicts(t *testing.T) {
 	second := e.successor(e.author, first.LessonID, "Second")
 	approve(second)
 
-	// Unpublication (LRN-009) simulated with direct SQL: the pointer is cleared.
-	if err := e.exec(`UPDATE lessons SET published_revision_id = NULL WHERE id = $1`, first.LessonID); err != nil {
+	// Unpublication simulated with direct SQL: the pointer is cleared, with
+	// the audit row the database requires since LRN-009.
+	if err := e.inTx(unpublishSQL(first.LessonID, first.ID, e.user("admin", permissions.Administrator)), pointerSQL(first.LessonID, "NULL")); err != nil {
 		t.Fatal(err)
 	}
 	before := e.state(second)
@@ -607,7 +608,7 @@ func TestPublishStaleBaseConflicts(t *testing.T) {
 	// Restoration (LRN-009) simulated with direct SQL: the pointer goes back
 	// to the first edition, the second edition's base; it publishes again.
 	if err := e.inTx(
-		fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, actor_id, action) VALUES (%d, %d, %d, 'publish')`, first.LessonID, first.ID, publisher),
+		fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, actor_id, action) VALUES (%d, %d, %d, 'restore')`, first.LessonID, first.ID, publisher),
 		fmt.Sprintf(`UPDATE lessons SET published_revision_id = %d WHERE id = %d`, first.ID, first.LessonID)); err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +620,7 @@ func TestPublishStaleBaseConflicts(t *testing.T) {
 	third := e.successor(e.author, first.LessonID, "Third")
 	approve(third)
 	if err := e.inTx(
-		fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action) VALUES (%d, %d, %d, %d, 'publish')`,
+		fmt.Sprintf(`INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action) VALUES (%d, %d, %d, %d, 'restore')`,
 			first.LessonID, first.ID, second.ID, publisher),
 		fmt.Sprintf(`UPDATE lessons SET published_revision_id = %d WHERE id = %d`, first.ID, first.LessonID)); err != nil {
 		t.Fatal(err)
