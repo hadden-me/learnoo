@@ -471,6 +471,8 @@ func (h *Handlers) writeLessonError(w http.ResponseWriter, op string, err error,
 		unprocessable("unknown_lesson", "The lesson named by translationOf does not exist.")
 	case errors.Is(err, lessons.ErrNotFound):
 		notFound(w)
+	case errors.Is(err, lessons.ErrUnattachedMedia):
+		unprocessable("unattached_media", "Every image placed in the text must be among the revision's media (mediaIds).")
 	case errors.Is(err, lessons.ErrInvalidContent):
 		unprocessable("invalid_content", "The lesson is not valid: "+contentMessage(err))
 	case errors.Is(err, lessons.ErrLanguageMismatch):

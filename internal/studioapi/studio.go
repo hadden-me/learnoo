@@ -154,13 +154,26 @@ func (h *Handlers) listOwned(w http.ResponseWriter, r *http.Request) {
 
 type previewRequest struct {
 	Content json.RawMessage `json:"content"`
+	// MediaRoute picks the route embedded uploaded images are linked to:
+	// "author" (the default, GET /api/media/{id}) or "review"
+	// (GET /api/review/media/{id}). It only changes those URLs; each route
+	// checks its own access when the image is fetched.
+	MediaRoute *string `json:"mediaRoute" api:"nonnull"`
 }
 
-var previewKeys = []string{"content"}
+var previewKeys = []string{"content", "mediaRoute"}
+
+// previewMedia maps previewRequest.MediaRoute to the Studio's media routes.
+var previewMedia = map[string]rendering.MediaURL{
+	"author": rendering.MediaPrefix("/api/media/"),
+	"review": rendering.MediaPrefix("/api/review/media/"),
+}
 
 // preview validates a schema v1 document exactly as a draft save does and
 // returns the reader's markup for it (rendering.RenderLesson). Nothing is
-// stored.
+// stored. The markup equals the reader's except for the URLs of embedded
+// uploaded images, which point to the Studio's author or reviewer media
+// route instead of the reader's.
 func (h *Handlers) preview(w http.ResponseWriter, r *http.Request) {
 	var req previewRequest
 	if !decodeJSON(w, r, &req, previewKeys) {
@@ -171,6 +184,15 @@ func (h *Handlers) preview(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "content is required.")
 		return
 	}
+	route := "author"
+	if req.MediaRoute != nil {
+		route = *req.MediaRoute
+	}
+	mediaURL, ok := previewMedia[route]
+	if !ok {
+		badRequest(w, `mediaRoute must be "author" or "review".`)
+		return
+	}
 	if !checkFields(w, f) {
 		return
 	}
@@ -179,7 +201,7 @@ func (h *Handlers) preview(w http.ResponseWriter, r *http.Request) {
 		h.writeLessonError(w, "preview", err, false)
 		return
 	}
-	parts, err := rendering.RenderLesson(doc)
+	parts, err := rendering.RenderLesson(doc, mediaURL)
 	if err != nil {
 		h.internal(w, "preview", err)
 		return

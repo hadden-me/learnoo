@@ -315,7 +315,7 @@ func TestPreviewMatchesTheReader(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		parts, err := rendering.RenderLesson(doc)
+		parts, err := rendering.RenderLesson(doc, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
