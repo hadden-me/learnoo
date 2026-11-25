@@ -98,3 +98,19 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 		t.Fatal("partial migration was not rolled back")
 	}
 }
+
+// Check must not write: the runtime role has no CREATE privilege (LRN-010).
+func TestCheckCreatesNothing(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.EmptySchema(t)
+	if err := database.Check(ctx, pool, migrations.FS); !errors.Is(err, database.ErrPending) {
+		t.Fatalf("fresh schema: want ErrPending, got %v", err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("Check created schema_migrations")
+	}
+}

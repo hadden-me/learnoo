@@ -31,7 +31,7 @@ Create directories when implementation needs them. Do not build an empty framewo
 
 ## Operations
 
-The shared server's capacity is reported, not measured for Learnoo. Check peak load, disk capacity/I/O, memory, and concurrent use. Use resource limits, persistent storage, internal-only database access, off-site database/media backups, restoration tests, monitoring, application rollback, and a migration recovery strategy. Never commit secrets or deployment credentials.
+The shared server's capacity is reported, not measured for Learnoo. Check peak load, disk capacity/I/O, memory, and concurrent use. Use resource limits, persistent storage, internal-only database access, off-site database/media backups, restoration tests, monitoring, application rollback, and a migration recovery strategy. Never commit secrets or deployment credentials. The deployment artifacts and recovery runbook are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Current experiment
 

@@ -1,0 +1,238 @@
+# Learnoo production-oriented Compose file (LRN-010). NOT deployed anywhere by
+# this repository; see docs/DEPLOYMENT.md for the runbook.
+#
+#   cp deploy/production.env.example deploy/production.env   # then decide values
+#   docker compose -f deploy/compose.production.yaml --env-file deploy/production.env up -d
+#
+# Every operational value comes from a variable. Defaults marked EXAMPLE are
+# placeholders "to be decided by the infrastructure maintainer" (docs/DECISIONS.md,
+# "Resource limits, backup retention and recovery targets"); they are not
+# measured or recommended values.
+#
+# Start-up order: postgres (first start: deploy/db/initdb.sh creates the roles
+# and database) -> migrate (owner role) -> grants (owner role, grants.sql)
+# -> app (runtime role). The database has no published port and sits on an
+# internal network; only the app port is published, to LEARNOO_HTTP_PUBLISH.
+name: ${LEARNOO_COMPOSE_PROJECT:-learnoo}
+
+x-db-names: &db-names
+  LEARNOO_DB_NAME: ${LEARNOO_DB_NAME:-learnoo}
+  LEARNOO_OWNER_ROLE: ${LEARNOO_OWNER_ROLE:-learnoo_owner}
+  LEARNOO_RUNTIME_ROLE: ${LEARNOO_RUNTIME_ROLE:-learnoo_app}
+
+x-postgres-image: &postgres-image postgres:16.13@sha256:5d143123fdf80462d1778cd4f24b9f7ca13c87174bca19141fb194c5a1ebca59
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: ${LEARNOO_LOG_MAX_SIZE:-10m}   # EXAMPLE
+      max-file: ${LEARNOO_LOG_MAX_FILES:-5}    # EXAMPLE
+
+services:
+  postgres:
+    <<: *hardening
+    image: *postgres-image
+    restart: unless-stopped
+    environment:
+      <<: *db-names
+      # Fixed: local socket connections use peer authentication, so the
+      # bootstrap superuser must match the container's OS user.
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_superuser_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=peer
+      LEARNOO_OWNER_PASSWORD_FILE: /run/secrets/db_owner_password
+      LEARNOO_RUNTIME_PASSWORD_FILE: /run/secrets/db_runtime_password
+    secrets: [pg_superuser_password, db_owner_password, db_runtime_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/learnoo-db:ro
+      - ./db/initdb.sh:/docker-entrypoint-initdb.d/10-learnoo-roles.sh:ro
+    networks: [backend]
+    # TCP check: the image's first-start initialisation server listens only on
+    # the socket, so this stays unhealthy until initdb.sh has finished.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$LEARNOO_DB_NAME\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    shm_size: ${LEARNOO_PG_SHM_SIZE:-128m}      # EXAMPLE
+    deploy:
+      resources:
+        limits:
+          cpus: "${LEARNOO_PG_CPUS:-1.0}"       # EXAMPLE
+          memory: ${LEARNOO_PG_MEMORY:-1g}      # EXAMPLE
+          pids: ${LEARNOO_PG_PIDS:-200}         # EXAMPLE
+
+  # Applies pending migrations as the owner role, then exits.
+  migrate:
+    <<: *hardening
+    image: ${LEARNOO_IMAGE:-learnoo:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["migrate"]
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    environment:
+      LEARNOO_DATABASE_URL: postgres://${LEARNOO_OWNER_ROLE:-learnoo_owner}@postgres:5432/${LEARNOO_DB_NAME:-learnoo}?sslmode=disable
+      LEARNOO_DATABASE_PASSWORD_FILE: /run/secrets/db_owner_password
+    secrets: [db_owner_password]
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Grants the runtime role access to the tables that now exist (grants.sql
+  # also verifies the role cannot create objects or bypass the guards).
+  grants:
+    <<: *hardening
+    image: *postgres-image
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    user: "999:999"
+    environment:
+      <<: *db-names
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        PGPASSWORD="$$(cat /run/secrets/db_owner_password)" exec psql -X -q -v ON_ERROR_STOP=1
+        -h postgres -U "$$LEARNOO_OWNER_ROLE" -d "$$LEARNOO_DB_NAME"
+        -v runtime_role="$$LEARNOO_RUNTIME_ROLE" -f /learnoo-db/grants.sql
+    secrets: [db_owner_password]
+    volumes:
+      - ./db:/learnoo-db:ro
+    networks: [backend]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  app:
+    <<: *hardening
+    image: ${LEARNOO_IMAGE:-learnoo:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["serve"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    environment:
+      LEARNOO_DATABASE_URL: postgres://${LEARNOO_RUNTIME_ROLE:-learnoo_app}@postgres:5432/${LEARNOO_DB_NAME:-learnoo}?sslmode=disable
+      LEARNOO_DATABASE_PASSWORD_FILE: /run/secrets/db_runtime_password
+      LEARNOO_ADDR: 0.0.0.0:8090
+      LEARNOO_ALLOW_NON_LOOPBACK: "1"
+      LEARNOO_MEDIA_DIR: /var/lib/learnoo/media
+    secrets: [db_runtime_password]
+    volumes:
+      - media:/var/lib/learnoo/media
+    networks: [backend, frontend]
+    # Publish only to the address the reverse proxy connects to (default:
+    # host loopback). Never 0.0.0.0 on the shared server.
+    ports:
+      - "${LEARNOO_HTTP_PUBLISH:-127.0.0.1:8090}:8090"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/learnoo-server", "probe", "-path", "/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "${LEARNOO_APP_CPUS:-1.0}"      # EXAMPLE
+          memory: ${LEARNOO_APP_MEMORY:-512m}   # EXAMPLE
+          pids: ${LEARNOO_APP_PIDS:-200}        # EXAMPLE
+    depends_on:
+      grants:
+        condition: service_completed_successfully
+
+  # Operator one-shots (profile "ops"); see docs/DEPLOYMENT.md.
+  #   docker compose ... --profile ops run --rm backup
+  # Runs as the app's uid (65532), which owns the media files, with no
+  # capability; the host backup directory must be writable by that uid.
+  backup:
+    <<: *hardening
+    profiles: [ops]
+    image: *postgres-image
+    restart: "no"
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs: [/tmp]
+    entrypoint: ["bash", "/learnoo-deploy/backup.sh"]
+    environment:
+      LEARNOO_BACKUP_DATABASE_URL: postgres://${LEARNOO_OWNER_ROLE:-learnoo_owner}@postgres:5432/${LEARNOO_DB_NAME:-learnoo}?sslmode=disable
+      LEARNOO_DB_PASSWORD_FILE: /run/secrets/db_owner_password
+      LEARNOO_BACKUP_MEDIA_DIR: /media
+      LEARNOO_BACKUP_DIR: /backups
+    secrets: [db_owner_password]
+    volumes:
+      - media:/media:ro
+      - ${LEARNOO_BACKUP_HOST_DIR:-./backups}:/backups
+      - ./backup.sh:/learnoo-deploy/backup.sh:ro
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Restores into THIS project's (empty) database and media volume. Use it
+  # only in an isolated project (-p learnoo-rehearsal) or a fresh recovery
+  # environment; it refuses non-empty targets.
+  #   docker compose -p learnoo-rehearsal ... --profile ops run --rm restore /backups/learnoo-<timestamp>
+  restore:
+    <<: *hardening
+    profiles: [ops]
+    image: *postgres-image
+    restart: "no"
+    # Root with only the capabilities needed to write the volume and hand
+    # the files to the app user.
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    tmpfs: [/tmp]
+    entrypoint: ["bash", "/learnoo-deploy/restore.sh"]
+    environment:
+      LEARNOO_RESTORE_DATABASE_URL: postgres://${LEARNOO_OWNER_ROLE:-learnoo_owner}@postgres:5432/${LEARNOO_DB_NAME:-learnoo}?sslmode=disable
+      LEARNOO_DB_PASSWORD_FILE: /run/secrets/db_owner_password
+      LEARNOO_RESTORE_MEDIA_DIR: /media
+      LEARNOO_MEDIA_OWNER: "65532:65532"
+      LEARNOO_RUNTIME_ROLE: ${LEARNOO_RUNTIME_ROLE:-learnoo_app}
+    secrets: [db_owner_password]
+    volumes:
+      - media:/media
+      - ${LEARNOO_BACKUP_HOST_DIR:-./backups}:/backups:ro
+      - ./restore.sh:/learnoo-deploy/restore.sh:ro
+      - ./db:/learnoo-deploy/db:ro
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  media:
+
+networks:
+  backend:
+    internal: true
+  frontend: {}
+
+# Compose bind-mounts these files. Create them with one password each
+# (single line, generated, never committed; deploy/secrets/ is ignored by git)
+# readable by the container users: postgres and psql (999) and the app
+# (65532). Compose without Swarm cannot set the owner or mode of a secret, so
+# make each file 0444 inside a 0700 directory owned by the operator.
+secrets:
+  pg_superuser_password:
+    file: ${LEARNOO_SECRETS_DIR:-./secrets}/pg_superuser_password
+  db_owner_password:
+    file: ${LEARNOO_SECRETS_DIR:-./secrets}/db_owner_password
+  db_runtime_password:
+    file: ${LEARNOO_SECRETS_DIR:-./secrets}/db_runtime_password

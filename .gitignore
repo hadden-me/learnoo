@@ -31,3 +31,12 @@ test-results/
 
 # Local third-party visual reference exports; not build inputs
 web/design/refero-udemy/
+
+# Deployment secrets and local backups (LRN-010)
+deploy/secrets/
+deploy/backups/
+deploy/production.env
+
+# Root build outputs (go build ./cmd/...)
+/server
+/renderer

@@ -44,16 +44,29 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Reports:     reports.NewStore(db),
 		Log:         log,
 	}).Register(mux)
+	// Liveness: the process serves HTTP. No dependency is checked, so a
+	// database outage does not make an orchestrator restart the app.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		writeStatusOK(w)
+	})
+	// Readiness: the database answers and the media directory is writable
+	// (a permission check that writes nothing). Internal use only: the
+	// reverse proxy must not expose the probes (docs/DEPLOYMENT.md).
+	// Failures are logged; the response names no component or error.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := db.Ping(ctx); err != nil {
-			log.Error("health check", "err", err)
-			auth.WriteError(w, http.StatusServiceUnavailable, "unavailable", "Database unavailable.")
+			log.Error("readiness: database", "err", err)
+			auth.WriteError(w, http.StatusServiceUnavailable, "unavailable", "Not ready.")
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+		if err := mediaStore.CheckWritable(); err != nil {
+			log.Error("readiness: media directory", "err", err)
+			auth.WriteError(w, http.StatusServiceUnavailable, "unavailable", "Not ready.")
+			return
+		}
+		writeStatusOK(w)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		auth.WriteError(w, http.StatusNotFound, "not_found", "Not found.")
@@ -67,6 +80,11 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		auth.WriteError(w, http.StatusForbidden, "cross_origin_rejected", "Cross-origin request rejected.")
 	}))
 	return securityHeaders(cop.Handler(mux))
+}
+
+func writeStatusOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
 }
 
 func securityHeaders(next http.Handler) http.Handler {

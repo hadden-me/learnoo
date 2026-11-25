@@ -109,7 +109,11 @@ Requires a session and `X-CSRF-Token`. Deletes the session server-side and clear
 
 ### `GET /healthz`
 
-`200 {"status":"ok"}` when the database answers; `503 unavailable` otherwise. Not authenticated; reveals nothing else.
+Liveness: `200 {"status":"ok"}` whenever the process serves HTTP. It checks no dependency, so a database outage does not restart the container. Not authenticated.
+
+### `GET /readyz`
+
+Readiness: `200 {"status":"ok"}` when the database answers a ping and the media directory is writable by the server (an `access(2)` check that writes nothing; a full disk is not detected); otherwise `503 unavailable` with the message "Not ready.". The failing component and error are logged, never returned. Not authenticated. Both probes send `Cache-Control: no-store`. They are for the container health checks and internal monitoring only; the reverse proxy must not expose them publicly ([DEPLOYMENT.md](DEPLOYMENT.md#monitoring)).
 
 ## Session lifetime
 

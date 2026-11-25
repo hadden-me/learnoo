@@ -26,8 +26,10 @@ No secrets have defaults or belong in the repository. Put local values in your s
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | `LEARNOO_DATABASE_URL` | `serve`, `migrate` and every operator command | PostgreSQL URL, e.g. `postgres://learnoo@127.0.0.1:5432/learnoo?sslmode=disable` |
+| `LEARNOO_DATABASE_PASSWORD_FILE` | same | Optional. File whose content (one line) is the database password, instead of putting it in the URL; used by the container deployment |
 | `LEARNOO_MEDIA_DIR` | `serve` | Required. Absolute path of the persistent directory for uploaded images (created 0750 if missing). No default, so uploads never land in the repository or working directory. Must support hard links; back it up with the database |
-| `LEARNOO_ADDR` | `serve`, `invite-student` | Listen address (`invite-student` uses it to print the link). Default `127.0.0.1:8090`. Only loopback addresses are accepted until deployment work defines TLS and the proxy chain |
+| `LEARNOO_ADDR` | `serve`, `invite-student`, `probe` | Listen address (`invite-student` uses it to print the link). Default `127.0.0.1:8090`. Only loopback addresses are accepted unless `LEARNOO_ALLOW_NON_LOOPBACK=1` |
+| `LEARNOO_ALLOW_NON_LOOPBACK` | `serve` | `1` lets `serve` listen beyond loopback. Set only by the production Compose file for the container, whose port it publishes to the reverse proxy's address; see [DEPLOYMENT.md](DEPLOYMENT.md). Client throttling then sees the proxy's address |
 | `LEARNOO_TEST_DATABASE_URL` | `go test` | Disposable database for database-backed tests. Unset: those tests are skipped |
 | `LEARNOO_REQUIRE_DB_TESTS` | `go test` | `1` makes database-backed tests fail instead of skip when the URL is missing (CI sets it) |
 
@@ -141,6 +143,10 @@ Subjects (and chapters) have no seed or endpoint yet (LRN-014); insert simulated
 
 Endpoints, errors, CSRF, authorization and throttling are specified in [API.md](API.md).
 
+### Deployment and recovery commands (LRN-010)
+
+`server verify-restore [-strict]` checks a restored database and media directory (`LEARNOO_DATABASE_URL`, `LEARNOO_MEDIA_DIR`) and prints a report; `server probe [-path /readyz]` is the container health check. The Dockerfile, the production Compose file, the database role scripts and the backup/restore scripts are described in [DEPLOYMENT.md](DEPLOYMENT.md). `GET /healthz` is liveness and `GET /readyz` readiness ([API.md](API.md#get-healthz)). The root `compose.yaml` stays a local development database only.
+
 ### Migrations
 
 Files live in `migrations/` as `NNNN_description.sql` and are embedded in the binary. Each runs in its own transaction under a PostgreSQL advisory lock; `schema_migrations` records a SHA-256 checksum of each file. The runner refuses a database whose history contains an unknown version, an edited file or an out-of-order gap. Never edit a merged migration: add the next number. Only one open PR adds migrations at a time ([§5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)).
@@ -242,7 +248,7 @@ For a restricted environment, put the Go build cache in a writable temporary dir
 
 ### Continuous integration
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the commands above on every pull request to `develop` or `main` (including fork PRs) and on pushes to those branches. GitHub reports the check as **`verify`** under the **CI** workflow; select that check from the list when configuring branch protection rather than typing a name. It runs on Ubuntu 24.04 with Go 1.25.x and Node 22, in this order: `npm ci --ignore-scripts`, `npm run design:check`, `npm run assets`, `npm run design:contrast`, then in `web/studio` `npm ci --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run build`, then `go test ./...`, `go vet ./...`, `npx playwright install --with-deps chromium`, `npm run test:browser`, `npm run test:reader`. Any failing step fails the job; no step is allowed to fail. A `postgres:16.13` service container (loopback port, trust authentication, no secret) backs the database tests; the job sets `LEARNOO_TEST_DATABASE_URL` and `LEARNOO_REQUIRE_DB_TESTS=1`, so those tests fail rather than skip if the database is unreachable.
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the commands above on every pull request to `develop` or `main` (including fork PRs) and on pushes to those branches. GitHub reports the check as **`verify`** under the **CI** workflow; select that check from the list when configuring branch protection rather than typing a name. It runs on Ubuntu 24.04 with Go 1.25.x and Node 22, in this order: `npm ci --ignore-scripts`, `npm run design:check`, `npm run assets`, `npm run design:contrast`, then in `web/studio` `npm ci --ignore-scripts`, `npm run typecheck`, `npm test`, `npm run build`, then `go test ./...`, `go vet ./...`, `npx playwright install --with-deps chromium`, `npm run test:browser`, `npm run test:reader`. Any failing step fails the job; no step is allowed to fail. Before `go test` it checks that `psql`, `pg_dump` and `pg_restore` (preinstalled on the runner) are available for the deployment rehearsal tests. A second job, **`image`**, builds the application `Dockerfile` (no push, no secrets) and checks that the image runs as uid 65532 and contains the server but no renderer experiment. A `postgres:16.13` service container (loopback port, trust authentication, no secret) backs the database tests; the job sets `LEARNOO_TEST_DATABASE_URL` and `LEARNOO_REQUIRE_DB_TESTS=1`, so those tests fail rather than skip if the database is unreachable.
 
 Security: the workflow uses the `pull_request` trigger (never `pull_request_target`), a read-only `contents: read` token, no repository secrets, and checkout without persisted credentials. Third-party actions are pinned to commit SHAs. If a step fails, the `test-results/` folder (local fixture screenshots and metrics only) is uploaded as the `playwright-test-results` artifact for 7 days.
 
