@@ -9,14 +9,27 @@ import (
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/lessons"
+	"github.com/hadden-me/learnoo/internal/media"
+	"github.com/hadden-me/learnoo/internal/permissions"
+	"github.com/hadden-me/learnoo/internal/studioapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // New returns the root handler: routes wrapped in origin-based CSRF
-// protection and security headers.
-func New(db *pgxpool.Pool, svc *auth.Service, log *slog.Logger) http.Handler {
+// protection and security headers. mediaStore holds uploaded images.
+func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
-	auth.NewHandlers(svc, log).Register(mux)
+	authH := auth.NewHandlers(svc, log)
+	authH.Register(mux)
+	studioapi.New(studioapi.Config{
+		DB:      db,
+		Auth:    authH,
+		Perms:   permissions.NewMiddleware(permissions.NewStore(db), log),
+		Lessons: lessons.NewStore(db, nil),
+		Media:   mediaStore,
+		Log:     log,
+	}).Register(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
