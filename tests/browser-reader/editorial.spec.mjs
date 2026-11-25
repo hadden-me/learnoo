@@ -104,12 +104,15 @@ async function approveInUI(page, title, comment = '') {
   await expect(page.getByText(`Révision approuvée : « ${title} »`)).toBeVisible();
 }
 
-async function publishInUI(page, title) {
+async function publishInUI(page, title, { first = null } = {}) {
   await nav(page).getByRole('link', { name: 'Publication' }).click();
   await page.getByRole('link', { name: title }).click();
   await expect(page.getByTestId('publish-preview').getByRole('heading', { level: 1 })).toHaveText(title);
   await page.getByRole('button', { name: 'Publier cette révision…' }).click();
-  await page.getByRole('dialog', { name: `Publier « ${title} » ?` }).getByRole('button', { name: 'Publier', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: `Publier « ${title} » ?` });
+  if (first === true) await expect(dialog).toContainText('première publication');
+  if (first === false) await expect(dialog).toContainText('remplacera immédiatement');
+  await dialog.getByRole('button', { name: 'Publier', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Révision publiée' })).toBeVisible();
 }
 
@@ -166,7 +169,7 @@ test('full editorial journey: review, change request, second reviewer, publicati
   const queued = p.page.getByRole('listitem').filter({ hasText: title });
   await expect(queued).toContainText('Première publication');
   await expect(queued).toContainText('approuvée par TEST Relectrice Nadia');
-  await publishInUI(p.page, title);
+  await publishInUI(p.page, title, { first: true });
   const readerLink = p.page.getByRole('link', { name: 'Voir la leçon publiée' });
   const lessonPath = await readerLink.getAttribute('href');
   expect(lessonPath).toMatch(/^\/learn\/lessons\/[0-9a-f-]{36}$/);
@@ -211,7 +214,7 @@ test('full editorial journey: review, change request, second reviewer, publicati
   await approveInUI(r.page, title);
   await nav(p.page).getByRole('link', { name: 'Publication' }).click();
   await expect(p.page.getByRole('listitem').filter({ hasText: title })).toContainText('Remplacera la version publiée');
-  await publishInUI(p.page, title);
+  await publishInUI(p.page, title, { first: false });
   await s.page.goto(lessonPath);
   await expect(s.page.locator('article')).toContainText('Correction : le module');
 
@@ -241,7 +244,7 @@ test('full editorial journey: review, change request, second reviewer, publicati
   await expect(dialog).toContainText('la leçon sera aussi dépubliée');
   await expect(dialog.getByRole('button', { name: 'Ne rien changer' })).toBeFocused();
   await dialog.getByRole('button', { name: 'Retirer définitivement' }).click();
-  await expect(ad.page.getByText('Révision 3 retirée définitivement.')).toBeVisible();
+  await expect(ad.page.getByText('Révision 3 retirée définitivement.')).toBeFocused();
   await expect(ad.page.getByRole('heading', { name: 'Aucune version publiée' })).toBeVisible();
   await expect(revision(3)).toContainText('Retirée définitivement');
   await expect(revision(3)).toContainText('TEST Erreur de calcul dans la correction.');
@@ -263,6 +266,7 @@ test('full editorial journey: review, change request, second reviewer, publicati
   await ad.page.getByRole('button', { name: 'Dépublier…' }).click();
   await ad.page.getByRole('dialog', { name: 'Dépublier la leçon ?' }).getByRole('button', { name: 'Dépublier', exact: true }).click();
   await expect(ad.page.getByRole('heading', { name: 'Aucune version publiée' })).toBeVisible();
+  await expect(ad.page.getByText('Leçon dépubliée')).toBeFocused();
   await s.page.goto(lessonPath);
   await expect(s.page.getByRole('heading', { name: title })).toHaveCount(0);
 
@@ -298,6 +302,14 @@ test('full editorial journey: review, change request, second reviewer, publicati
   await p.page.goto(publicationURL);
   await expect(p.page.getByRole('heading', { name: 'Version publiée : révision 2' })).toBeVisible();
   await expect(p.page.getByRole('button', { name: /Retirer|Dépublier/ })).toHaveCount(0);
+  // The publisher view has what restoration needs only: no audit log, reasons, names or unapproved revisions.
+  await expect(p.page.getByText('Vue éditeur')).toBeVisible();
+  await expect(p.page.getByRole('list', { name: /Historique de publication/ })).toHaveCount(0);
+  for (const hidden of ['TEST Vérification en urgence.', 'TEST Erreur de calcul', 'TEST Autrice Amel', 'TEST Admin Lina', 'Modifications demandées']) {
+    await expect(p.page.getByText(hidden)).toHaveCount(0);
+  }
+  await expect(p.page.getByRole('listitem', { name: 'Révision 3', exact: true })).toContainText('Retirée définitivement');
+  await expect(p.page.getByRole('listitem', { name: 'Révision 1', exact: true })).toHaveCount(0);
 
   for (const who of [a, r, b, p, s, ad]) {
     expect(who.problems).toEqual([]);
@@ -415,4 +427,95 @@ test('an Arabic lesson is reviewed right to left at 360px with the keyboard, and
     expect(who.problems).toEqual([]);
     await who.context.close();
   }
+});
+
+/** An API session for test setup only (the UI is what is under test). */
+async function apiSession(browser, baseURL, user) {
+  const context = await browser.newContext({ baseURL });
+  const login = await context.request.post('/api/auth/login', { data: user });
+  expect(login.status()).toBe(200);
+  const { csrfToken } = await login.json();
+  const call = async (method, path, data) => {
+    const res = await context.request.fetch(path, { method, data, headers: { 'X-CSRF-Token': csrfToken } });
+    expect(res.status(), `${method} ${path}: ${await res.text()}`).toBeLessThan(300);
+    return res.json();
+  };
+  return { context, call };
+}
+
+const doc = (title, text) => ({ schemaVersion: 1, title, language: 'fr', status: 'unreviewed', objective: '', blocks: [{ type: 'paragraph', children: [{ type: 'text', text }] }] });
+
+test('stale base, a stale restore by a publisher, withdrawal of a pending candidate, and an account switch', async ({ browser, baseURL }) => {
+  const title = 'TEST Base périmée';
+  // Setup through the API: revisions 1 and 2 published, revision 3 approved and pending.
+  const au = await apiSession(browser, baseURL, author);
+  const rv = await apiSession(browser, baseURL, reviewerA);
+  const pu = await apiSession(browser, baseURL, publisher);
+  const adm = await apiSession(browser, baseURL, admin);
+  const { subjects } = await au.call('GET', '/api/catalogue/subjects');
+  const subjectId = subjects.find((x) => x.code === 'test-math').id;
+  let rev = await au.call('POST', '/api/lessons', { subjectId, language: 'fr', content: doc(title, 'Édition 1.') });
+  const lessonId = rev.lessonId;
+  const cycle = async (r, publish) => {
+    const submitted = await au.call('POST', `/api/revisions/${r.id}/submit`, { expectedVersion: r.version });
+    await rv.call('POST', `/api/review/revisions/${submitted.id}/approve`, {});
+    if (publish) await pu.call('POST', `/api/revisions/${submitted.id}/publish`, {});
+    return submitted;
+  };
+  const r1 = await cycle(rev, true);
+  const r2 = await cycle(await au.call('POST', `/api/lessons/${lessonId}/drafts`, { content: doc(title, 'Édition 2.') }), true);
+  await cycle(await au.call('POST', `/api/lessons/${lessonId}/drafts`, { content: doc(title, 'Édition 3.') }), false);
+
+  // The publisher opens the lesson (revision 2 published) and offers to restore revision 1.
+  const p = await signedIn(browser, baseURL, publisher, { path: `/studio/publication/${lessonId}` });
+  await expect(p.page.getByRole('heading', { name: 'Version publiée : révision 2' })).toBeVisible();
+  // Meanwhile an administrator unpublishes; the publisher's restore names revision 2 and is refused.
+  await adm.call('POST', `/api/lessons/${lessonId}/unpublish`, { reason: 'TEST Urgence ailleurs.', expectedPublishedRevisionId: r2.id });
+  await p.page.getByRole('listitem', { name: 'Révision 1', exact: true }).getByRole('button', { name: 'Restaurer cette révision…' }).click();
+  await expect(p.page.getByRole('dialog')).toContainText('Version publiée attendue : la révision 2.');
+  await p.page.getByRole('dialog').getByRole('button', { name: 'Restaurer' }).click();
+  await expect(p.page.getByRole('alert')).toContainText('a changé depuis l’ouverture de la page');
+  await p.page.getByRole('alert').getByRole('button', { name: 'Recharger l’état actuel' }).click();
+  await expect(p.page.getByRole('heading', { name: 'Aucune version publiée' })).toBeVisible();
+
+  // Revision 3's base (revision 2) is no longer published: flagged, and no publish button.
+  await nav(p.page).getByRole('link', { name: 'Publication' }).click();
+  const card = p.page.getByRole('listitem').filter({ hasText: title });
+  await expect(card).toContainText('Base périmée : publication impossible');
+  await card.getByRole('link', { name: title }).click();
+  await expect(p.page.getByRole('heading', { name: 'Publication impossible' })).toBeVisible();
+  await expect(p.page.getByRole('button', { name: 'Publier cette révision…' })).toHaveCount(0);
+
+  // The administrator withdraws the pending, never-published candidate: the lesson stays unpublished.
+  const ad = await signedIn(browser, baseURL, admin, { path: `/studio/publication/${lessonId}` });
+  const r3 = ad.page.getByRole('listitem', { name: 'Révision 3', exact: true });
+  await expect(r3).toContainText('Approuvée, en attente de publication');
+  await r3.getByRole('button', { name: 'Retirer cette révision…' }).click();
+  await ad.page.getByLabel('Motif (obligatoire)').fill('TEST Base périmée, à réécrire.');
+  await r3.getByRole('button', { name: 'Retirer…' }).click();
+  const dialog = ad.page.getByRole('dialog', { name: 'Retirer la révision 3 ?' });
+  await expect(dialog).toContainText('Version publiée attendue : aucune version publiée.');
+  await expect(dialog).not.toContainText('dépubliée');
+  await dialog.getByRole('button', { name: 'Retirer définitivement' }).click();
+  await expect(ad.page.getByText('Révision 3 retirée définitivement.')).toBeFocused();
+  await expect(r3).toContainText('Retirée définitivement');
+  await nav(p.page).getByRole('link', { name: 'Publication' }).click();
+  await expect(p.page.getByRole('heading', { name: 'Publication', level: 1 })).toBeVisible();
+  await expect(p.page.getByRole('link', { name: title })).toHaveCount(0);
+
+  // Another account signs in on the administrator's browser: the open page sends nothing.
+  await ad.page.getByRole('listitem', { name: 'Révision 1', exact: true }).getByRole('button', { name: 'Restaurer cette révision…' }).click();
+  const other = await ad.context.request.post('/api/auth/login', { data: reviewerB });
+  expect(other.status()).toBe(200);
+  await ad.page.getByRole('dialog').getByRole('button', { name: 'Restaurer' }).click();
+  await expect(ad.page.getByRole('alert').filter({ hasText: 'Un autre compte est connecté' }).first()).toBeVisible();
+  const after = await adm.call('GET', `/api/lessons/${lessonId}/publication`);
+  expect(after.publishedRevisionId).toBeNull();
+  expect(r1.id).toBeGreaterThan(0);
+
+  for (const who of [p, ad]) {
+    expect(who.problems).toEqual([]);
+    await who.context.close();
+  }
+  for (const c of [au, rv, pu, adm]) await c.context.close();
 });
