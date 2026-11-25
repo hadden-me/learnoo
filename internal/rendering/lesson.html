@@ -1,0 +1,3 @@
+{{define "lesson-heading"}}<h1 lang="{{.Language}}" dir="{{.Dir}}">{{.Title}}</h1>{{end}}
+{{define "lesson-objective"}}{{if .Objective}}<p class="objective" lang="{{.Language}}" dir="{{.Dir}}">{{.Objective}}</p>{{end}}{{end}}
+{{define "lesson-body"}}<article class="lesson-body" aria-label="Contenu de la leçon" lang="{{.Language}}" dir="{{.Dir}}">{{template "blocks" .}}</article>{{end}}

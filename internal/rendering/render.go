@@ -13,7 +13,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/strictjson"
 )
 
-//go:embed page.html static/* fixtures/*.json
+//go:embed page.html lesson.html static/* fixtures/*.json
 var Files embed.FS
 
 const MaxDocumentBytes = 128 << 10
@@ -40,7 +40,7 @@ type Node struct {
 }
 
 var youtubeID = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
-var page = template.Must(template.ParseFS(Files, "page.html"))
+var page = template.Must(template.ParseFS(Files, "page.html", "lesson.html"))
 
 func Decode(r io.Reader) (Document, error) {
 	var doc Document
@@ -162,6 +162,54 @@ func RenderBlocks(doc Document) (template.HTML, error) {
 	}
 	// The output of html/template is safe HTML by construction.
 	return template.HTML(out.String()), nil
+}
+
+// Dir returns the base text direction of a lesson language.
+func Dir(lang string) string {
+	if lang == "ar" {
+		return "rtl"
+	}
+	return "ltr"
+}
+
+// LessonParts is the canonical markup of a lesson's heading, objective and
+// body, shared by the reader's lesson page and the Studio preview so that
+// both show the same HTML for the same document.
+type LessonParts struct {
+	// Heading is the h1 title.
+	Heading template.HTML
+	// Objective is the objective paragraph, empty without an objective.
+	Objective template.HTML
+	// Body is the article element wrapping RenderBlocks' output.
+	Body template.HTML
+}
+
+// HTML concatenates the parts in reading order: the Studio preview fragment.
+func (p LessonParts) HTML() template.HTML { return p.Heading + p.Objective + p.Body }
+
+// RenderLesson validates doc and renders its LessonParts. Language and
+// direction come from the document's language.
+func RenderLesson(doc Document) (LessonParts, error) {
+	if err := Validate(doc); err != nil {
+		return LessonParts{}, err
+	}
+	data := struct {
+		Document
+		Dir string
+	}{doc, Dir(doc.Language)}
+	var parts LessonParts
+	for _, p := range []struct {
+		name string
+		out  *template.HTML
+	}{{"lesson-heading", &parts.Heading}, {"lesson-objective", &parts.Objective}, {"lesson-body", &parts.Body}} {
+		var buf bytes.Buffer
+		if err := page.ExecuteTemplate(&buf, p.name, data); err != nil {
+			return LessonParts{}, err
+		}
+		// The output of html/template is safe HTML by construction.
+		*p.out = template.HTML(buf.String())
+	}
+	return parts, nil
 }
 
 func Fixture(name string) (Document, error) {

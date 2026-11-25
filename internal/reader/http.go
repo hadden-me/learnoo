@@ -479,8 +479,7 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 
 type lessonData struct {
 	Lesson
-	Dir    string
-	Body   template.HTML
+	Parts  rendering.LessonParts
 	Report reportForm
 }
 
@@ -494,12 +493,7 @@ type reportForm struct {
 }
 
 // Dir returns the base direction of a lesson language.
-func Dir(lang string) string {
-	if lang == "ar" {
-		return "rtl"
-	}
-	return "ltr"
-}
+func Dir(lang string) string { return rendering.Dir(lang) }
 
 func (h *Handlers) lesson(w http.ResponseWriter, r *http.Request) {
 	h.showLesson(w, r, http.StatusOK, reportForm{})
@@ -517,7 +511,9 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 		h.internal(w, r, "lesson", err)
 		return
 	}
-	body, err := rendering.RenderBlocks(l.Document)
+	// The same parts as the Studio preview (POST /api/preview): heading,
+	// objective and body come from the published document.
+	parts, err := rendering.RenderLesson(l.Document)
 	if err != nil {
 		h.internal(w, r, "render lesson", err)
 		return
@@ -525,7 +521,7 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 	form.Max = reports.MaxMessage
 	w.Header().Set("Content-Security-Policy", cspLesson)
 	h.render(w, r, status, "lesson", view{Title: l.Title, Lesson: true,
-		Data: lessonData{Lesson: l, Dir: Dir(l.Language), Body: body, Report: form}})
+		Data: lessonData{Lesson: l, Parts: parts, Report: form}})
 }
 
 // revisionField accepts a positive decimal revision number.
