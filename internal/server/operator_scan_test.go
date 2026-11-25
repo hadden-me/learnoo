@@ -48,12 +48,17 @@ func goListLines(t *testing.T, root string, args ...string) []string {
 	return strings.Split(strings.TrimSpace(string(out)), "\n")
 }
 
-// exportImporter resolves imports from compiler export data of serverPath's
-// dependencies, as built by go list -export.
-func exportImporter(t *testing.T, root string, fset *token.FileSet) types.Importer {
+// exportImporter resolves imports from compiler export data of the
+// dependencies of patterns (by default serverPath and permissionsPath), as
+// built by go list -export.
+func exportImporter(t *testing.T, root string, fset *token.FileSet, patterns ...string) types.Importer {
 	t.Helper()
+	if len(patterns) == 0 {
+		patterns = []string{serverPath, permissionsPath}
+	}
 	exports := map[string]string{}
-	for _, line := range goListLines(t, root, "-deps", "-export", "-f", "{{.ImportPath}}={{.Export}}", serverPath, permissionsPath) {
+	args := append([]string{"-deps", "-export", "-f", "{{.ImportPath}}={{.Export}}"}, patterns...)
+	for _, line := range goListLines(t, root, args...) {
 		if path, file, ok := strings.Cut(line, "="); ok && file != "" {
 			exports[path] = file
 		}
