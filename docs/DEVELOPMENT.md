@@ -124,7 +124,24 @@ LEARNOO_MEDIA_DIR="$HOME/.local/share/learnoo/media" LEARNOO_STUDIO_DIR="$PWD/we
   go run ./cmd/server serve                                    # http://127.0.0.1:8090/studio
 ```
 
-Client routes of the Studio must not have a dot in their last segment: the server treats such paths as files (404 when missing) and every other path under `/studio/` as a route that gets `index.html`. Rebuild after changing the Studio; the server reads files on each request and caches nothing. Anonymous visitors are sent to `/login?next=/studio`; accounts without `author`, `publisher`, `administrator` or a reviewer assignment (students) get a 403 page. The Studio calls the same-origin API with the session cookie and the CSRF token from `GET /api/auth/session`: catalogue (`/api/catalogue/…`), the author's lessons (`/api/lessons/mine`), drafts (`/api/lessons`, `/api/revisions/…`) and the canonical preview (`POST /api/preview`, rendered by `internal/rendering`). Connecting the frontend to these endpoints (instead of `localStorage` and the renderer experiment's `/preview`) is a separate issue; until then the served prototype's own preview button has no backend. The Vite dev server (`npm run dev`, below) stays loopback-only and proxies to the renderer experiment, never to the application.
+Client routes of the Studio must not have a dot in their last segment: the server treats such paths as files (404 when missing) and every other path under `/studio/` as a route that gets `index.html`. Rebuild after changing the Studio; the server reads files on each request and caches nothing. Anonymous visitors are sent to `/login?next=/studio`; accounts without `author`, `publisher`, `administrator` or a reviewer assignment (students) get a 403 page. The Studio calls the same-origin API with the session cookie and the CSRF token from `GET /api/auth/session`: catalogue (`/api/catalogue/…`), the author's lessons (`/api/lessons/mine`), drafts (`/api/lessons`, `/api/revisions/…`), media (`/api/media`) and the canonical preview (`POST /api/preview`, rendered by `internal/rendering`).
+
+#### Using the Studio (authoring)
+
+Sign in as an account with `author` (and add at least one subject with `add-subject`; chapters are optional). Routes: `/studio/` lists your lessons, `/studio/lessons/new` starts one, `/studio/lessons/{lessonId}/edit` opens a lesson's latest revision.
+
+- **My lessons** shows each lesson's title, subject, chapter, language, state (Brouillon, En relecture, Modifications demandées, Approuvée en attente de publication, Publiée), revision number and version, and "Retour du relecteur à traiter" when a reviewer requested changes.
+- **New lesson**: pick the subject and optional chapter from the catalogue, the language (French or Arabic, fixed afterwards) and optionally one of your lessons of the same subject as translation source. The lesson is created on the server by the first **Enregistrer** (`POST /api/lessons`), since a lesson must start with a valid draft.
+- **Saving** is explicit (button or `Ctrl/Cmd+S`) and version-checked (`PUT` with `expectedVersion`). The save status is announced politely to screen readers. If another tab or device saved first, a conflict panel keeps your edits in the editor and offers to load the server version (your version then stays offered as a local copy to restore or copy) or to copy your content. Leaving the page or signing out with unsaved edits asks first.
+- **Recovery copies**: while edits are unsaved, a copy is kept in this browser's `localStorage` (crash protection only, see DECISIONS.md). It is offered, labelled "Copies de secours locales (non enregistrées)", the next time the lesson is opened, and deleted once its content is saved or when you delete it. It is never sent to the server by itself.
+- **Session expired**: a banner says so; nothing on the page is discarded. Sign in again in a new tab (link in the banner), then choose "Reprendre ici" and save.
+- **Images**: upload PNG, JPEG or WebP (5 MiB, 4096 px per side) with "Téléverser une image". Server refusals are explained (for example `trailing_data`: re-export the image or save it as PNG). Schema v1 cannot yet place an uploaded image inside the text, so uploads are attached to the revision as immutable media references (`mediaIds`), saved with the draft and frozen at submission; the toolbar's "Image de démonstration" is the only in-text image schema v1 allows.
+- **Preview** (`POST /api/preview`) shows the reader's exact markup in the page, styled by the reader's `site.css` and `reader.css` (scoped under `.lesson-preview` at build time) and typeset with the KaTeX served at `/static/vendor/katex/` (run `npm run assets` first). Videos are not loaded in the preview.
+- **Submit** asks for confirmation, saves pending edits, then `POST …/submit`. A submitted revision is read-only; after a change request the reviewer's comment is shown and "Créer la version corrigée" starts the successor draft (`POST /api/lessons/{id}/drafts`). The server's `active_candidate_exists` refusal (a draft, a revision in review or an approved revision awaiting publication) is explained.
+- **Delete a draft** asks for confirmation (`DELETE` with `expectedVersion`).
+- Accounts without `author` see a placeholder; reviewer, publisher and administrator spaces are the next slice of issue #66.
+
+Development server: `cd web/studio && npm run dev` serves the Studio on http://127.0.0.1:5173/studio/ and proxies `/api`, `/static`, `/login` and `/logout` to a running application server (`LEARNOO_APP_URL`, default `http://127.0.0.1:8080`; `LEARNOO_STUDIO_PORT` changes 5173), keeping the browser's `Host` so the server's same-origin checks pass. Sign in through the proxied `/login`. The renderer experiment is not used.
 
 Try it (curl stores `Secure` cookies for `127.0.0.1`; browsers do the same for loopback):
 
@@ -232,32 +249,22 @@ The JSON laboratory is not TipTap. No server-side draft storage or approval beha
 
 The reader consumes generated design tokens. Edit `web/design/tokens.json`, run `npm run design:build`, and rebuild the Go server. See [shared design exports](../web/design/README.md) for plain CSS and future Tailwind v4 Studio integration.
 
-## Studio editor prototype (LRN-003)
+## Studio editor (LRN-003, issue #66)
 
-`web/studio` is a React/TypeScript/TipTap prototype with its own `package.json` and lockfile, built with Vite `base: '/studio/'` so the application server can serve `dist` (see [Studio in the application](#studio-in-the-application)). It edits the restricted lesson JSON through a validated adapter; it has no accounts, server storage or publication. Saves stay in the current browser (`localStorage`) or a downloaded file. Verified versions: React 19.3.1, TipTap 3.35.0, Vite 8.3.8, TypeScript 6.0.3, Vitest 5.1.1, jsdom 29.1.1, on Node 22.20.0.
-
-Start the renderer in one terminal, then the Studio in another:
-
-```sh
-go run ./cmd/renderer
-cd web/studio
-npm ci --ignore-scripts
-npm run dev
-```
-
-Open http://127.0.0.1:5173/studio/. Vite binds to loopback and proxies `/preview` and `/static` to the renderer (`LEARNOO_RENDERER_URL`, default `http://127.0.0.1:8080`; `LEARNOO_STUDIO_PORT` changes 5173). The preview pane shows the renderer's canonical HTML; the Studio has no second renderer.
+`web/studio` is the React/TypeScript/TipTap authoring application with its own `package.json` and lockfile, built with Vite `base: '/studio/'` and served by the application server (see [Using the Studio](#using-the-studio-authoring)). It edits the restricted lesson JSON through a validated adapter and saves only to the server. Verified versions: React 19.3.1, TipTap 3.35.0, Vite 8.3.8, TypeScript 6.0.3, Vitest 5.1.1, jsdom 29.1.1, on Node 22.20.0.
 
 Checks, from `web/studio`:
 
 ```sh
+npm ci --ignore-scripts
 npm run typecheck
 npm test
 npm run build
 ```
 
-`npm test` covers fixture round trips, save/reopen, paste filtering, invalid input and the Go-parity cases in `test/contract/cases.json`, which `go test ./internal/rendering` also runs. `test/golden/studio-features.json` is an editor-authored export that Go validates and renders; regenerate it deliberately with `UPDATE_GOLDEN=1 npm test`. The root `npm run test:browser` also builds the Studio and serves it at `/studio/` on `LEARNOO_STUDIO_TEST_PORT` (default 18180), so install its dependencies first.
+`npm test` covers fixture round trips, stored revisions opening and saving back unchanged, paste filtering, invalid input, the Go-parity cases in `test/contract/cases.json` (which `go test ./internal/rendering` also runs), the API client (CSRF handling, typed errors, raw image uploads), save outcomes (version conflict, retry, expired session) and the recovery buffer. `test/golden/studio-features.json` is an editor-authored export that Go validates and renders; regenerate it deliberately with `UPDATE_GOLDEN=1 npm test`. Browser tests of the Studio run with `npm run test:reader` (below), against the Go server and PostgreSQL.
 
-Keyboard: `Ctrl/Cmd+B` bold, `Ctrl/Cmd+Alt+2` section heading, `$…$` inline formula, `$$ ` on an empty line for a display formula, `- ` for a list. Toolbar buttons are reachable with Tab; selected formulas, media, containers and paragraph language/direction are edited in the "Propriétés de la sélection" panel.
+Keyboard: `Ctrl/Cmd+S` save, `Ctrl/Cmd+B` bold, `Ctrl/Cmd+Alt+2` section heading, `$…$` inline formula, `$$ ` on an empty line for a display formula, `- ` for a list. Toolbar buttons are reachable with Tab; selected formulas, media, containers and paragraph language/direction are edited in the "Propriétés de la sélection" panel. Dialogs use the native `<dialog>` (focus trapped, Escape cancels, focus returns to the opener).
 
 ## Combined verification
 
@@ -274,7 +281,7 @@ go test ./internal/rendering -run '^$' -bench BenchmarkRenderLesson -benchmem
 
 Playwright always starts its own loopback server on port 18080 and refuses to reuse an existing process, in development and CI alike. Set `LEARNOO_TEST_PORT=18081` to select another port. Tests derive URLs and request-origin checks from this configuration; the interactive preview on 8080 is independent. Results and screenshots are written to ignored `test-results/`. Run `npm run assets` before compiling: Go embeds the prepared local browser assets into the binary.
 
-`npm run test:reader` (`playwright.reader.config.mjs`, `tests/browser-reader/`) needs `LEARNOO_TEST_DATABASE_URL` and a built Studio (`cd web/studio && npm run build`): the same Go helper serves `web/studio/dist` at `/studio`, and `studio.spec.mjs` signs in as the TEST author, opens the Studio and fails on any Content Security Policy violation, an external request or an editor that does not keep `white-space: pre-wrap` (TipTap's injected `<style>` is disabled with `injectCSS: false`; its base rules are in `web/studio/src/styles.css`). Its web server is the Go helper `TestBrowserReaderServer` in `internal/server`, started with `go test` on `127.0.0.1:18280` (`LEARNOO_READER_TEST_PORT` changes it): it seeds two TEST lessons (French with an Arabic block, and Arabic) in an isolated schema, writes a one-time invitation token to a temporary file and drops the schema when Playwright stops it. At a 360 px viewport the test accepts the invitation, browses subject and chapter, checks KaTeX output, computed RTL/LTR directions, the author and reviewer credit, no horizontal overflow and no external requests, opens the error report form, submits it empty (refused, form reopened) and then with text (confirmation page), bookmarks the lesson, searches without accents, confirms an anonymous context is sent to sign-in, and signs out. Screenshots go to `test-results/reader-*.png`. This is desktop Chromium with a phone-sized viewport, not a physical phone or throttled network.
+`npm run test:reader` (`playwright.reader.config.mjs`, `tests/browser-reader/`) needs `LEARNOO_TEST_DATABASE_URL`, `npm run assets` and a built Studio (`cd web/studio && npm run build`): the same Go helper serves `web/studio/dist` at `/studio`. `studio.spec.mjs` signs in as the TEST author and covers, failing on any Content Security Policy violation or external request: creating a lesson, writing with bold, math and an Arabic paragraph, an image upload (and the `trailing_data` explanation), the canonical preview with KaTeX, saving, signing out and in and reopening the draft; a second tab's save making the first tab's save conflict without losing its edits, reloading the server version and restoring the local copy; submission; a reviewer change request (through the review API) shown to the author, the corrected draft and resubmission; an Arabic lesson edited right to left at 360 px with no horizontal overflow; an expired session that keeps the edits until the author signs in again; a crashed tab's recovery copy; draft deletion with confirmation; paste filtering and a refused import. Screenshots go to `test-results/studio-*.png`. Its web server is the Go helper `TestBrowserReaderServer` in `internal/server`, started with `go test` on `127.0.0.1:18280` (`LEARNOO_READER_TEST_PORT` changes it): it seeds two TEST lessons (French with an Arabic block, and Arabic) in an isolated schema, writes a one-time invitation token to a temporary file and drops the schema when Playwright stops it. At a 360 px viewport the test accepts the invitation, browses subject and chapter, checks KaTeX output, computed RTL/LTR directions, the author and reviewer credit, no horizontal overflow and no external requests, opens the error report form, submits it empty (refused, form reopened) and then with text (confirmation page), bookmarks the lesson, searches without accents, confirms an anonymous context is sent to sign-in, and signs out. Screenshots go to `test-results/reader-*.png`. This is desktop Chromium with a phone-sized viewport, not a physical phone or throttled network.
 
 For a restricted environment, put the Go build cache in a writable temporary directory by prefixing commands with `GOCACHE=/tmp/learnoo-go-cache`.
 
@@ -288,7 +295,7 @@ Security: the workflow uses the `pull_request` trigger (never `pull_request_targ
 
 ### Security limits
 
-Schema allowlists, escaped templates, local image allowlists, content/depth/formula limits, CSP, same-origin preview checks, and KaTeX `trust: false` reduce rendering risks. They do not establish production security. The only HTTP mutation is a read-only rendering request; browser saves are local fixtures. Authentication, durable storage, role checks, review and publication invariants belong to later work and remain required for the real platform.
+Schema allowlists, escaped templates, local image allowlists, content/depth/formula limits, CSP, same-origin preview checks, and KaTeX `trust: false` reduce rendering risks. They do not establish production security. For the renderer experiment, the only HTTP mutation is a read-only rendering request. The authenticated application (`cmd/server`) enforces authentication, durable storage, role checks, review and publication invariants on the server; the Studio's controls are a convenience, never the enforcement.
 
 ### Dependency licensing
 
