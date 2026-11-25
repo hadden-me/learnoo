@@ -1,0 +1,222 @@
+package studioapi
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/lessons"
+	"github.com/hadden-me/learnoo/internal/permissions"
+	"github.com/hadden-me/learnoo/internal/review"
+)
+
+// Read endpoints for the Studio's publisher and administrator views (issue
+// #66 second slice), documented in docs/API.md: the publisher queue, a
+// publisher's read of a revision awaiting publication, a lesson's
+// publication state and history (publisher or administrator, who may both
+// restore), and the administrator's lesson list. They change nothing. The
+// permission is checked by the middleware before any lookup (403) and again
+// inside the store's transaction; these are global permissions, so a
+// missing ID is a plain 404.
+
+func (h *Handlers) registerPublishing(mux *http.ServeMux) {
+	guard := func(pattern string, perms []permissions.Permission, fn http.HandlerFunc) {
+		mux.Handle(pattern, h.Auth.Middleware(h.Auth.RequireUser(h.Auth.RequireCSRF(
+			h.Perms.RequireAny(perms, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Cache-Control", privateNoStore)
+				fn(w, r)
+			}))))))
+	}
+	publisher := []permissions.Permission{permissions.Publisher}
+	guard("GET /api/publish/queue", publisher, h.publishQueue)
+	guard("GET /api/publish/revisions/{revisionId}", publisher, h.publishRevision)
+	guard("GET /api/lessons/{lesson}/publication",
+		[]permissions.Permission{permissions.Publisher, permissions.Administrator}, h.lessonPublication)
+	guard("GET /api/admin/lessons", []permissions.Permission{permissions.Administrator}, h.adminLessons)
+}
+
+type publishQueueItemJSON struct {
+	RevisionID          int64     `json:"revisionId"`
+	LessonID            int64     `json:"lessonId"`
+	LessonPublicID      string    `json:"lessonPublicId"`
+	Number              int       `json:"number"`
+	Title               string    `json:"title"`
+	Language            string    `json:"language"`
+	SubjectID           int64     `json:"subjectId"`
+	SubjectCode         string    `json:"subjectCode"`
+	AuthorID            int64     `json:"authorId"`
+	AuthorName          string    `json:"authorName"`
+	ApprovedBy          int64     `json:"approvedBy"`
+	ApproverName        string    `json:"approverName"`
+	ApprovedAt          time.Time `json:"approvedAt"`
+	BaseRevisionID      *int64    `json:"baseRevisionId"`
+	PublishedRevisionID *int64    `json:"publishedRevisionId"`
+	StaleBase           bool      `json:"staleBase"`
+}
+
+func (h *Handlers) publishQueue(w http.ResponseWriter, r *http.Request) {
+	if len(r.URL.RawQuery) > 0 {
+		badRequest(w, "This endpoint takes no query parameters.")
+		return
+	}
+	items, err := h.Review.PublishQueue(r.Context(), actor(r))
+	if err != nil {
+		h.writeReadError(w, "publish queue", err)
+		return
+	}
+	out := make([]publishQueueItemJSON, len(items))
+	for i, it := range items {
+		out[i] = publishQueueItemJSON{RevisionID: it.RevisionID, LessonID: it.LessonID, LessonPublicID: it.LessonPublicID,
+			Number: it.Number, Title: it.Title, Language: it.Language, SubjectID: it.SubjectID, SubjectCode: it.SubjectCode,
+			AuthorID: it.AuthorID, AuthorName: it.AuthorName, ApprovedBy: it.ApprovedBy, ApproverName: it.ApproverName,
+			ApprovedAt: it.ApprovedAt, BaseRevisionID: it.BaseRevisionID, PublishedRevisionID: it.PublishedRevisionID,
+			StaleBase: it.Stale()}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Revisions []publishQueueItemJSON `json:"revisions"`
+	}{out})
+}
+
+func (h *Handlers) publishRevision(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(r.PathValue("revisionId"))
+	if !ok {
+		notFound(w)
+		return
+	}
+	rev, err := h.Review.PublishRevision(r.Context(), actor(r), id)
+	if err != nil {
+		h.writeReadError(w, "publish revision", err)
+		return
+	}
+	h.writeRevision(w, http.StatusOK, rev)
+}
+
+type withdrawalInfoJSON struct {
+	WithdrawnBy     int64     `json:"withdrawnBy"`
+	WithdrawnByName string    `json:"withdrawnByName"`
+	Reason          string    `json:"reason"`
+	WithdrawnAt     time.Time `json:"withdrawnAt"`
+}
+
+type lessonRevisionJSON struct {
+	ID             int64               `json:"id"`
+	Number         int                 `json:"number"`
+	Status         lessons.Status      `json:"status"`
+	Title          string              `json:"title"`
+	AuthorID       int64               `json:"authorId"`
+	AuthorName     string              `json:"authorName"`
+	BaseRevisionID *int64              `json:"baseRevisionId"`
+	SubmittedAt    *time.Time          `json:"submittedAt"`
+	ApprovedBy     *int64              `json:"approvedBy"`
+	ApproverName   *string             `json:"approverName"`
+	ApprovedAt     *time.Time          `json:"approvedAt"`
+	EverPublished  bool                `json:"everPublished"`
+	Candidate      bool                `json:"candidate"`
+	Withdrawal     *withdrawalInfoJSON `json:"withdrawal"`
+}
+
+type pointerEventJSON struct {
+	Action              string    `json:"action"`
+	PublishedRevisionID *int64    `json:"publishedRevisionId"`
+	PreviousRevisionID  *int64    `json:"previousRevisionId"`
+	ActorID             int64     `json:"actorId"`
+	ActorName           string    `json:"actorName"`
+	Reason              *string   `json:"reason"`
+	OccurredAt          time.Time `json:"occurredAt"`
+}
+
+type lessonPublicationJSON struct {
+	LessonID            int64                `json:"lessonId"`
+	PublicID            string               `json:"publicId"`
+	SubjectID           int64                `json:"subjectId"`
+	SubjectCode         string               `json:"subjectCode"`
+	Language            string               `json:"language"`
+	Archived            bool                 `json:"archived"`
+	PublishedRevisionID *int64               `json:"publishedRevisionId"`
+	Revisions           []lessonRevisionJSON `json:"revisions"`
+	History             []pointerEventJSON   `json:"history"`
+}
+
+func (h *Handlers) lessonPublication(w http.ResponseWriter, r *http.Request) {
+	// A malformed reference is a 404 like a missing lesson; the store checks
+	// the permission first either way.
+	lp, err := h.Review.LessonPublication(r.Context(), actor(r), r.PathValue("lesson"))
+	if err != nil {
+		h.writeReadError(w, "lesson publication", err)
+		return
+	}
+	out := lessonPublicationJSON{LessonID: lp.LessonID, PublicID: lp.PublicID, SubjectID: lp.SubjectID,
+		SubjectCode: lp.SubjectCode, Language: lp.Language, Archived: lp.Archived, PublishedRevisionID: lp.PublishedRevisionID,
+		Revisions: make([]lessonRevisionJSON, len(lp.Revisions)), History: make([]pointerEventJSON, len(lp.History))}
+	for i, rv := range lp.Revisions {
+		out.Revisions[i] = lessonRevisionJSON{ID: rv.ID, Number: rv.Number, Status: rv.Status, Title: rv.Title,
+			AuthorID: rv.AuthorID, AuthorName: rv.AuthorName, BaseRevisionID: rv.BaseRevisionID, SubmittedAt: rv.SubmittedAt,
+			ApprovedBy: rv.ApprovedBy, ApproverName: rv.ApproverName, ApprovedAt: rv.ApprovedAt,
+			EverPublished: rv.EverPublished, Candidate: rv.Candidate}
+		if wd := rv.Withdrawal; wd != nil {
+			out.Revisions[i].Withdrawal = &withdrawalInfoJSON{WithdrawnBy: wd.ActorID, WithdrawnByName: rv.WithdrawnByName,
+				Reason: wd.Reason, WithdrawnAt: wd.WithdrawnAt}
+		}
+	}
+	for i, e := range lp.History {
+		out.History[i] = pointerEventJSON{Action: e.Action, PublishedRevisionID: e.RevisionID,
+			PreviousRevisionID: e.PreviousRevisionID, ActorID: e.ActorID, ActorName: e.ActorName, OccurredAt: e.OccurredAt}
+		if e.Reason != "" {
+			reason := e.Reason
+			out.History[i].Reason = &reason
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type adminLessonJSON struct {
+	LessonID            int64     `json:"lessonId"`
+	PublicID            string    `json:"publicId"`
+	SubjectCode         string    `json:"subjectCode"`
+	Language            string    `json:"language"`
+	Archived            bool      `json:"archived"`
+	PublishedRevisionID *int64    `json:"publishedRevisionId"`
+	Title               string    `json:"title"`
+	PendingRevisionID   *int64    `json:"pendingRevisionId"`
+	LastChange          time.Time `json:"lastChange"`
+}
+
+func (h *Handlers) adminLessons(w http.ResponseWriter, r *http.Request) {
+	if len(r.URL.RawQuery) > 0 {
+		badRequest(w, "This endpoint takes no query parameters.")
+		return
+	}
+	list, err := h.Review.AdminLessons(r.Context(), actor(r))
+	if err != nil {
+		h.writeReadError(w, "admin lessons", err)
+		return
+	}
+	out := make([]adminLessonJSON, len(list))
+	for i, l := range list {
+		out[i] = adminLessonJSON{LessonID: l.LessonID, PublicID: l.PublicID, SubjectCode: l.SubjectCode, Language: l.Language,
+			Archived: l.Archived, PublishedRevisionID: l.PublishedRevisionID, Title: l.Title,
+			PendingRevisionID: l.PendingRevisionID, LastChange: l.LastChange}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Lessons []adminLessonJSON `json:"lessons"`
+	}{out})
+}
+
+// writeReadError maps errors of the read endpoints above. Their permissions
+// are global, so a denial (revoked between the middleware and the
+// transaction) is 403 and a missing resource 404.
+func (h *Handlers) writeReadError(w http.ResponseWriter, op string, err error) {
+	switch {
+	case isRetryable(err):
+		writeRetry(w)
+	case deniedWithCause(err):
+		h.internal(w, op, err)
+	case errors.Is(err, review.ErrDenied):
+		auth.WriteError(w, http.StatusForbidden, "forbidden", "You do not have permission to do this.")
+	case errors.Is(err, review.ErrNotFound):
+		notFound(w)
+	default:
+		h.internal(w, op, err)
+	}
+}

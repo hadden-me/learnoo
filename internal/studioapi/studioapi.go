@@ -101,6 +101,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	h.registerWithdrawal(mux)
 	h.registerReports(mux)
 	h.registerStudio(mux)
+	h.registerPublishing(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or
