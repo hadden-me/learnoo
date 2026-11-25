@@ -75,6 +75,12 @@ type Service struct {
 	cfg       Config
 	now       func() time.Time
 	dummyHash string
+
+	// Test hooks; nil in production. afterVerify runs between the
+	// credential check and the session transaction, inSessionTx inside
+	// that transaction after the account row is locked.
+	afterVerify func()
+	inSessionTx func(tx pgx.Tx)
 }
 
 // New builds a Service. now may be nil to use the wall clock.
@@ -137,7 +143,28 @@ func (s *Service) Login(ctx context.Context, email, password, clientAddr, previo
 	if sess.IdleExpiresAt.After(sess.AbsoluteExpiresAt) {
 		sess.IdleExpiresAt = sess.AbsoluteExpiresAt
 	}
+	if s.afterVerify != nil {
+		s.afterVerify()
+	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		// The account may have been disabled since the credential check.
+		// Locking its row first serializes this with a disable (which
+		// updates the row, then deletes the sessions): either the disable
+		// waits and deletes the session created here, or this re-reads
+		// the disabled row and fails like any other invalid login. Taking
+		// the users row before any session row also keeps the lock order
+		// the same as a disable's, so the two cannot deadlock.
+		var disabled bool
+		err := tx.QueryRow(ctx, `SELECT disabled_at IS NOT NULL FROM users WHERE id = $1 FOR SHARE`, u.ID).Scan(&disabled)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && disabled) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return err
+		}
+		if s.inSessionTx != nil {
+			s.inSessionTx(tx)
+		}
 		// Successful login clears this account's failures and this attempt's
 		// address entry, so legitimate users are not penalised by their own success.
 		if _, err := tx.Exec(ctx, `DELETE FROM login_attempts WHERE key_hash = $1 OR id = ANY($2)`, accountKey, attemptIDs); err != nil {
@@ -151,12 +178,15 @@ func (s *Service) Login(ctx context.Context, email, password, clientAddr, previo
 		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND (idle_expires_at <= $2 OR absolute_expires_at <= $2)`, u.ID, now); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx,
+		_, err = tx.Exec(ctx,
 			`INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
 			 VALUES ($1, $2, $3, $4, $4, $5, $6)`,
 			hashToken(token), u.ID, sess.CSRFToken, now, sess.IdleExpiresAt, sess.AbsoluteExpiresAt)
 		return err
 	})
+	if errors.Is(err, ErrInvalidCredentials) {
+		return "", Session{}, ErrInvalidCredentials
+	}
 	if err != nil {
 		return "", Session{}, fmt.Errorf("create session: %w", err)
 	}
