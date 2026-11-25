@@ -28,6 +28,8 @@ export function App() {
 
   const editor = useEditor({
     extensions: lessonExtensions,
+    // The CSP refuses injected <style> elements; the base rules are in styles.css.
+    injectCSS: false,
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
     editorProps: {
       attributes: { class: 'studio-editor', 'aria-label': 'Contenu de la leçon', 'aria-multiline': 'true', role: 'textbox' },

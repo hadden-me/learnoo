@@ -110,9 +110,13 @@ func headers(next http.Handler) http.Handler {
 	})
 }
 
-// nextPattern limits post-login redirects to reader paths made of plain
-// segments: no scheme, host, query or "//".
-var nextPattern = regexp.MustCompile(`^/learn(/[A-Za-z0-9._~-]+)*$`)
+// nextPattern limits post-login redirects to reader and Studio paths made
+// of plain segments: no scheme, host, query or "//".
+var nextPattern = regexp.MustCompile(`^/(?:learn|studio)(/[A-Za-z0-9._~-]+)*$`)
+
+// SafeNext returns next if it is a reader or Studio path the sign-in page
+// may redirect to, and /learn otherwise.
+func SafeNext(next string) string { return safeNext(next) }
 
 func safeNext(next string) string {
 	if nextPattern.MatchString(next) && !strings.Contains(next, "/..") && !strings.Contains(next, "/./") {
@@ -224,6 +228,12 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, na
 	if r.Method != http.MethodHead {
 		_, _ = buf.WriteTo(w)
 	}
+}
+
+// ErrorPage renders the reader's error page (used by the Studio shell for
+// its 403 page). The caller sets the response's cache and CSP headers.
+func (h *Handlers) ErrorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {
+	h.errorPage(w, r, status, heading, message)
 }
 
 func (h *Handlers) errorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {

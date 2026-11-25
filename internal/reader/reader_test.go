@@ -25,6 +25,12 @@ func TestSafeNext(t *testing.T) {
 		`/learn\evil`:         "/learn",
 		"/api/auth/session":   "/learn",
 		"/learn/%2e%2e":       "/learn",
+		"/studio":             "/studio",
+		"/studio/lessons/12":  "/studio/lessons/12",
+		"/studio/":            "/learn",
+		"/studiox":            "/learn",
+		"/studio/../api":      "/learn",
+		"/studio//evil.test":  "/learn",
 	} {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)

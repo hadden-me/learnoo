@@ -4,7 +4,9 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('LEA
 const studioPort = Number(process.env.LEARNOO_STUDIO_TEST_PORT || 18180);
 if (!Number.isInteger(studioPort) || studioPort < 1024 || studioPort > 65535 || studioPort === port) throw new Error('LEARNOO_STUDIO_TEST_PORT must be another integer from 1024 to 65535');
 const baseURL = `http://127.0.0.1:${port}`;
-export const studioURL = `http://127.0.0.1:${studioPort}`;
+export const studioOrigin = `http://127.0.0.1:${studioPort}`;
+// The bundle is built with base /studio/, as the application server serves it.
+export const studioURL = `${studioOrigin}/studio/`;
 export default defineConfig({
   testDir: './tests/browser', timeout: 30000, fullyParallel: false,
   use: { baseURL, browserName: 'chromium' },

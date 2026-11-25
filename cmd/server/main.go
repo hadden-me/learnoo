@@ -203,9 +203,21 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 		return err
 	}
 	defer mediaStore.Close()
+	var opts []server.Option
+	studio, err := openStudio()
+	if err != nil {
+		return err
+	}
+	if studio != nil {
+		defer studio.Close()
+		opts = append(opts, server.WithStudio(studio.FS()))
+		log.Info("serving the Studio", "dir", studio.Name())
+	} else {
+		log.Warn("LEARNOO_STUDIO_DIR is not set: /studio is not served")
+	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           clientip.Middleware(resolver, server.New(pool, svc, mediaStore, log)),
+		Handler:           clientip.Middleware(resolver, server.New(pool, svc, mediaStore, log, opts...)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -238,6 +250,29 @@ func mediaDirectory() (string, error) {
 		return "", fmt.Errorf("LEARNOO_MEDIA_DIR %q must be an absolute path", dir)
 	}
 	return filepath.Clean(dir), nil
+}
+
+// openStudio opens LEARNOO_STUDIO_DIR, the built Studio bundle
+// (web/studio/dist; /opt/learnoo/studio in the image), as an os.Root so
+// served paths cannot leave it. Unset means the Studio is not served. A set
+// value must be an absolute directory containing index.html.
+func openStudio() (*os.Root, error) {
+	dir := os.Getenv("LEARNOO_STUDIO_DIR")
+	if dir == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(dir) {
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR %q must be an absolute path", dir)
+	}
+	root, err := os.OpenRoot(filepath.Clean(dir))
+	if err != nil {
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR: %w", err)
+	}
+	if fi, err := root.Stat("index.html"); err != nil || !fi.Mode().IsRegular() {
+		root.Close()
+		return nil, fmt.Errorf("LEARNOO_STUDIO_DIR %q has no index.html (build it: cd web/studio && npm run build)", dir)
+	}
+	return root, nil
 }
 
 // requireLoopback keeps the server off public interfaces by default, also in

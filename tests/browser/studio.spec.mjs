@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { studioURL } from '../../playwright.config.mjs';
+import { studioOrigin, studioURL } from '../../playwright.config.mjs';
 
 const json = page => page.getByTestId('exported-json');
 const status = page => page.locator('#studio-status');
@@ -12,7 +12,7 @@ async function preview(page) {
 
 test('Studio preview of each fixture equals the reader page', async ({ page, request }) => {
   const external = [];
-  page.on('request', r => { const o = new URL(r.url()).origin; if (o !== studioURL) external.push(r.url()); });
+  page.on('request', r => { const o = new URL(r.url()).origin; if (o !== studioOrigin) external.push(r.url()); });
   await page.goto(studioURL);
   for (const [label, route] of [['Nombres complexes (non relu)', '/lesson'], ['Test arabe/français (RTL)', '/bidi'], ['Formule invalide (test d’échec)', '/failure']]) {
     await loadExample(page, label);

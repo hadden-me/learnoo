@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/learnoo-server ./c
 
 FROM ${RUNTIME_IMAGE}
 COPY --from=build /out/learnoo-server /usr/local/bin/learnoo-server
-# Built but not yet served: the Studio is not connected to the API (LRN-006 follow-up).
+# The Studio bundle, served under /studio to signed-in staff (LEARNOO_STUDIO_DIR).
 COPY --from=assets /src/web/studio/dist /opt/learnoo/studio
 # Mount point of the persistent media volume; a new named volume inherits this owner.
 COPY --from=build --chown=65532:65532 /out/media /var/lib/learnoo/media
@@ -42,6 +42,7 @@ USER 65532:65532
 # LEARNOO_ADDR=0.0.0.0:8090 and the explicit LEARNOO_ALLOW_NON_LOOPBACK=1
 # opt-in, and publishes the port only to the reverse proxy's address.
 ENV LEARNOO_MEDIA_DIR=/var/lib/learnoo/media
+ENV LEARNOO_STUDIO_DIR=/opt/learnoo/studio
 EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/learnoo-server", "probe", "-path", "/healthz"]
