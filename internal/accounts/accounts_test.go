@@ -515,3 +515,43 @@ func TestGrantRacingActorDisableIsDenied(t *testing.T) {
 		t.Fatal("grant committed after the actor was disabled")
 	}
 }
+
+// Status and audit times are the database transaction time: a disable's
+// audit row has occurred_at equal to the disabled_at it set, and an enable's
+// equals the updated_at written in the same transaction.
+func TestAuditTimeMatchesStatusTime(t *testing.T) {
+	e := newEnv(t)
+	e.user("admin", permissions.Admin)
+	u := e.user("student", permissions.Student)
+	times := func() (disabledAt, updatedAt *time.Time) {
+		t.Helper()
+		if err := e.db.QueryRow(e.ctx, `SELECT disabled_at, updated_at FROM users WHERE id = $1`, u).Scan(&disabledAt, &updatedAt); err != nil {
+			t.Fatal(err)
+		}
+		return disabledAt, updatedAt
+	}
+	if _, err := e.accts.Disable(e.ctx, operator, u); err != nil {
+		t.Fatal(err)
+	}
+	disabledAt, updatedAt := times()
+	if _, err := e.accts.Enable(e.ctx, operator, u); err != nil {
+		t.Fatal(err)
+	}
+	enabledDisabledAt, enabledAt := times()
+	log, err := e.accts.Audit(e.ctx, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 2 || log[0].Action != "disable" || log[1].Action != "enable" {
+		t.Fatalf("audit = %+v", log)
+	}
+	if disabledAt == nil || !log[0].OccurredAt.Equal(*disabledAt) || !updatedAt.Equal(*disabledAt) {
+		t.Errorf("disable: occurred_at %v, disabled_at %v, updated_at %v; want all equal", log[0].OccurredAt, disabledAt, updatedAt)
+	}
+	if enabledDisabledAt != nil || !log[1].OccurredAt.Equal(*enabledAt) {
+		t.Errorf("enable: occurred_at %v, updated_at %v, disabled_at %v; want occurred_at = updated_at and disabled_at NULL", log[1].OccurredAt, enabledAt, enabledDisabledAt)
+	}
+	if !log[1].OccurredAt.After(log[0].OccurredAt) {
+		t.Errorf("enable at %v not after disable at %v", log[1].OccurredAt, log[0].OccurredAt)
+	}
+}
