@@ -347,7 +347,8 @@ func validLabel(label string) bool {
 
 // forbiddenLabelRune reports control, format and line/paragraph separator
 // characters. It must stay at least as strict as the database constraint
-// permission_audit_operator_label (migrations/0002_permissions.sql).
+// permission_audit_operator_label (migrations/0002_permissions.sql) and its
+// copy account_status_audit_operator_label (0003_account_status.sql).
 func forbiddenLabelRune(r rune) bool {
 	return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
 }
@@ -395,6 +396,11 @@ func (a Actor) AuditID() *int64 {
 	id := a.userID
 	return &id
 }
+
+// AuditLabel is the operator_label recorded in audit tables alongside
+// AuditID: the operator's label, or nil for users. Exactly one of the two is
+// non-nil.
+func (a Actor) AuditLabel() *string { return a.auditLabel() }
 
 // Authorize returns nil if actor may administer users and permissions in
 // tx: an operator always, a user actor only while it is an active

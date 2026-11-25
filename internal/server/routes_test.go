@@ -14,19 +14,29 @@ import (
 	"testing"
 )
 
-// changeMethods are the methods that change permissions, by the package
-// path of the Store type that declares them.
+const accountsPath = modulePath + "/internal/accounts"
+
+// changeMethods are the methods that change permissions or account status,
+// by the package path of the Store type that declares them.
 var changeMethods = map[string]map[string]bool{
 	permissionsPath: {"Grant": true, "Revoke": true, "GrantReviewer": true, "RevokeReviewer": true, "GrantDefaults": true, "Bootstrap": true},
+	accountsPath:    {"Disable": true, "Enable": true},
 }
 
-// allowedChangeFiles may call changeMethods or refer to operatorIdents: the
-// operator CLI and the defining file. cmd/server/main.go also starts the
-// HTTP server, but its handlers live in internal/server, and any call inside
-// an HTTP handler is flagged in every file anyway.
-var allowedChangeFiles = map[string]bool{
-	"cmd/server/main.go":                  true,
-	"internal/permissions/permissions.go": true,
+// allowedChangeFiles may refer to operatorIdents and, per declaring
+// package, call that package's changeMethods: the operator CLI and the
+// defining file. cmd/server/main.go also starts the HTTP server, but its
+// handlers live in internal/server, and any call or use inside an HTTP
+// handler is flagged in every file anyway. internal/accounts calls only the
+// permissions guards, never the permissions change methods.
+var allowedChangeFiles = map[string]map[string]bool{
+	permissionsPath: {
+		"cmd/server/main.go":                  true,
+		"internal/permissions/permissions.go": true,
+	},
+	accountsPath: {
+		"cmd/server/main.go": true,
+	},
 }
 
 // sqlOwners lists, per protected write, the only package that may contain
@@ -38,10 +48,11 @@ var sqlOwners = []struct {
 	owner string
 }{
 	{sqlWrite(`(user_permissions|reviewer_assignments|permission_audit)`), "internal/permissions"},
+	{sqlWrite(`account_status_audit`), "internal/accounts"},
 	// Disabling an account can remove an active administrator, so it must
-	// go through the last-administrator guard. No application package
-	// writes disabled_at yet; tests set it directly.
-	{regexp.MustCompile(`update\s+(only\s+)?` + sqlTable(`users`) + `[^;]*\bdisabled_at\b`), ""},
+	// go through the last-administrator guard in accounts.Store. Tests set
+	// disabled_at directly.
+	{regexp.MustCompile(`update\s+(only\s+)?` + sqlTable(`users`) + `[^;]*\bdisabled_at\b`), "internal/accounts"},
 }
 
 // sqlViolations reports the protected SQL writes in the string literal s
@@ -72,12 +83,13 @@ func sqlWrite(tables string) *regexp.Regexp {
 }
 
 // TestNoHTTPPathChangesPermissions type-checks every non-test package of the
-// module and fails if code outside the operator CLI and internal/permissions
-// changes permissions: calls to the change methods of permissions.Store, any
-// operator actor (operatorIdents), any such call or use inside an HTTP
-// handler, or SQL literals that write the permission or audit tables
-// directly. TestHTTPLayerDoesNotUseOperator separately covers every package
-// the HTTP layer imports.
+// module and fails if code outside the operator CLI and the owning packages
+// changes permissions or account status: calls to the change methods of
+// permissions.Store or accounts.Store, any operator actor (operatorIdents),
+// any such call or use inside an HTTP handler, or SQL literals that write
+// the permission, account status or audit tables directly.
+// TestHTTPLayerDoesNotUseOperator separately covers every package the HTTP
+// layer imports.
 func TestNoHTTPPathChangesPermissions(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -108,7 +120,9 @@ func TestNoHTTPPathChangesPermissions(t *testing.T) {
 		}
 		rel := strings.TrimPrefix(strings.TrimPrefix(pkg.path, modulePath), "/")
 		for _, f := range files {
-			checkFile(t, fset, root, rel, f, info)
+			for _, v := range checkFile(fset, root, rel, f, info) {
+				t.Error(v)
+			}
 			checked++
 		}
 	}
@@ -117,8 +131,9 @@ func TestNoHTTPPathChangesPermissions(t *testing.T) {
 	}
 }
 
-func checkFile(t *testing.T, fset *token.FileSet, root, pkgRel string, f *ast.File, info *types.Info) {
-	t.Helper()
+// checkFile returns the violations in f, a file of package pkgRel.
+func checkFile(fset *token.FileSet, root, pkgRel string, f *ast.File, info *types.Info) []string {
+	var out []string
 	pos := func(p token.Pos) string {
 		position := fset.Position(p)
 		rel, _ := filepath.Rel(root, position.Filename)
@@ -178,15 +193,15 @@ func checkFile(t *testing.T, fset *token.FileSet, root, pkgRel string, f *ast.Fi
 			}
 			if named, ok := rt.(*types.Named); ok && named.Obj().Name() == "Store" && named.Obj().Pkg() != nil &&
 				changeMethods[named.Obj().Pkg().Path()][fn.Name()] {
-				if !allowedChangeFiles[fileRel] || inHandler(x.Pos()) {
-					t.Errorf("%s: %s.%s changes permissions outside the operator CLI", pos(x.Pos()), named.Obj().Name(), fn.Name())
+				if !allowedChangeFiles[named.Obj().Pkg().Path()][fileRel] || inHandler(x.Pos()) {
+					out = append(out, fmt.Sprintf("%s: %s.%s changes permissions or account status outside the operator CLI", pos(x.Pos()), named.Obj().Name(), fn.Name()))
 				}
 			}
 		case *ast.Ident:
 			if obj := info.Uses[x]; obj != nil && operatorIdents[obj.Name()] && obj.Pkg() != nil &&
 				obj.Pkg().Path() == permissionsPath {
-				if !allowedChangeFiles[fileRel] || inHandler(x.Pos()) {
-					t.Errorf("%s: permissions.%s used outside the operator CLI", pos(x.Pos()), obj.Name())
+				if !allowedChangeFiles[permissionsPath][fileRel] || inHandler(x.Pos()) {
+					out = append(out, fmt.Sprintf("%s: permissions.%s used outside the operator CLI", pos(x.Pos()), obj.Name()))
 				}
 			}
 		case *ast.BasicLit:
@@ -198,11 +213,12 @@ func checkFile(t *testing.T, fset *token.FileSet, root, pkgRel string, f *ast.Fi
 				return true
 			}
 			for _, v := range sqlViolations(pkgRel, s) {
-				t.Errorf("%s: %s", pos(x.Pos()), v)
+				out = append(out, fmt.Sprintf("%s: %s", pos(x.Pos()), v))
 			}
 		}
 		return true
 	})
+	return out
 }
 
 // The SQL rules flag protected writes in probe handlers and allow them only
@@ -218,6 +234,7 @@ var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	db.Exec(`+"`DELETE FROM user_permissions WHERE user_id = $1`"+`, 1)
 	db.Exec(`+"`INSERT INTO public.permission_audit (action) VALUES ('grant')`"+`)
 	db.Exec(`+"`UPDATE users SET display_name = $1`"+`, "x")
+	db.Exec(`+"`INSERT INTO account_status_audit (actor_id, target_user_id, action) VALUES (1, 2, 'disable')`"+`)
 })`, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
@@ -230,8 +247,8 @@ var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	})
-	if len(lits) != 5 {
-		t.Fatalf("probe has %d SQL literals, want 5", len(lits))
+	if len(lits) != 6 {
+		t.Fatalf("probe has %d SQL literals, want 6", len(lits))
 	}
 	for i, s := range lits {
 		got := len(sqlViolations("internal/server", s))
@@ -239,12 +256,98 @@ var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			t.Errorf("%q in internal/server: %d violations, want %d", s, got, want)
 		}
 	}
-	// The owner may write its tables; disabled_at has no owner yet.
-	if v := sqlViolations("internal/permissions", lits[2]); len(v) != 0 {
-		t.Errorf("owner flagged: %v", v)
+	// Each owner may write its own tables and only those.
+	for _, c := range []struct {
+		pkg  string
+		lit  int
+		want int
+	}{
+		{"internal/permissions", 2, 0},
+		{"internal/permissions", 3, 0},
+		{"internal/permissions", 0, 1},
+		{"internal/permissions", 5, 1},
+		{"internal/accounts", 0, 0},
+		{"internal/accounts", 1, 0},
+		{"internal/accounts", 5, 0},
+		{"internal/accounts", 2, 1},
+		{"internal/accounts", 3, 1},
+		{"internal/auth", 0, 1},
+		{"cmd/server", 1, 1},
+		{"cmd/server", 5, 1},
+	} {
+		if got := len(sqlViolations(c.pkg, lits[c.lit])); got != c.want {
+			t.Errorf("%q in %s: %d violations, want %d", lits[c.lit], c.pkg, got, c.want)
+		}
 	}
-	if v := sqlViolations("internal/permissions", lits[0]); len(v) != 1 {
-		t.Errorf("disabled_at write allowed in internal/permissions: %v", v)
+}
+
+// The method rules flag accounts.Store.Disable and Enable (calls, method
+// values, method expressions and promoted methods) everywhere except the
+// operator CLI outside HTTP handlers, and permissions change methods outside
+// their allowed files. Probes are type-checked as if they were the named
+// file of the module.
+func TestChangeMethodScanDetectsProbes(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	imp := exportImporter(t, root, fset, "./...")
+	const head = `package probe
+import (
+	"context"
+	"net/http"
+	"` + accountsPath + `"
+	"` + permissionsPath + `"
+)
+var (
+	ctx   = context.Background()
+	store *accounts.Store
+	perms *permissions.Store
+	actor = permissions.UserActor(1)
+)
+type wrapped struct{ *accounts.Store }
+var _ http.Handler
+`
+	probes := map[string]string{
+		"disable call":       `var _, _ = store.Disable(ctx, actor, 2)`,
+		"enable call":        `var _, _ = store.Enable(ctx, actor, 2)`,
+		"method value":       `var f = store.Disable`,
+		"method expression":  `var f = (*accounts.Store).Enable`,
+		"promoted":           `var _, _ = wrapped{}.Disable(ctx, actor, 2)`,
+		"permissions change": `var _, _ = perms.Grant(ctx, actor, 2, permissions.Author)`,
+		"in handler": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _ = store.Disable(r.Context(), actor, 2)
+})`,
+	}
+	// allowed[file] lists the probes that are not violations when the probe
+	// is the named file; every other probe must be flagged exactly once.
+	allowed := map[string]map[string]bool{
+		"cmd/server/main.go": {"disable call": true, "enable call": true, "method value": true,
+			"method expression": true, "promoted": true, "permissions change": true},
+		"internal/accounts/accounts.go":       {},
+		"internal/permissions/permissions.go": {"permissions change": true},
+		"internal/server/server.go":           {},
+	}
+	for file, ok := range allowed {
+		for name, body := range probes {
+			wantN := 1
+			if ok[name] {
+				wantN = 0
+			}
+			f, err := parser.ParseFile(fset, filepath.Join(root, file), head+body, parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
+			if _, err := (&types.Config{Importer: imp}).Check(modulePath+"/probe", fset, []*ast.File{f}, info); err != nil {
+				t.Fatalf("%s as %s: type-check: %v", name, file, err)
+			}
+			pkgRel := filepath.ToSlash(filepath.Dir(file))
+			if got := checkFile(fset, root, pkgRel, f, info); len(got) != wantN {
+				t.Errorf("%s as %s: %d violations, want %d: %v", name, file, len(got), wantN, got)
+			}
+		}
 	}
 }
 
