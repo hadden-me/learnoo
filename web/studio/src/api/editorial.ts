@@ -71,8 +71,9 @@ export interface LessonRevisionState {
   number: number;
   status: 'in_review' | 'changes_requested' | 'approved';
   title: string;
-  authorId: number;
-  authorName: string;
+  /** null in the publisher view (names are for administrators). */
+  authorId: number | null;
+  authorName: string | null;
   baseRevisionId: number | null;
   submittedAt: string | null;
   approvedBy: number | null;
@@ -80,6 +81,8 @@ export interface LessonRevisionState {
   approvedAt: string | null;
   everPublished: boolean;
   candidate: boolean;
+  withdrawn: boolean;
+  /** Reason and actor: administrator view only. */
   withdrawal: { withdrawnBy: number; withdrawnByName: string; reason: string; withdrawnAt: string } | null;
 }
 
@@ -94,6 +97,8 @@ export interface PointerEvent {
 }
 
 export interface LessonPublication {
+  /** `publisher`: only what restoration needs (approved revisions, no names, reasons or history). */
+  view: 'administrator' | 'publisher';
   lessonId: number;
   publicId: string;
   subjectId: number;
@@ -147,7 +152,8 @@ export function editorialApi(api: Api) {
     requestChanges: (id: number, comment: string) => api.request<Revision>('POST', `/api/review/revisions/${id}/request-changes`, { json: { comment } }),
 
     publishQueue: async () => (await api.request<{ revisions: PublishQueueItem[] }>('GET', '/api/publish/queue')).revisions,
-    publishRevision: (id: number) => api.request<Revision>('GET', `/api/publish/revisions/${id}`),
+    /** The revision with its queue facts (current pointer, stale base, names). */
+    publishRevision: (id: number) => api.request<{ item: PublishQueueItem; revision: Revision }>('GET', `/api/publish/revisions/${id}`),
     publish: (id: number) => api.request<Publication>('POST', `/api/revisions/${id}/publish`, { json: {} }),
 
     adminLessons: async () => (await api.request<{ lessons: AdminLesson[] }>('GET', '/api/admin/lessons')).lessons,

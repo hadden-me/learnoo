@@ -66,7 +66,7 @@ export function ReportListPage() {
                 </Link>
               </h2>
               <p className="lesson-meta">
-                <span className={`state ${r.status === 'open' ? 'state-changes' : 'state-published'}`}>{REPORT_STATUS_LABELS[r.status]}</span>
+                <span className={`state state-report-${r.status}`}>{REPORT_STATUS_LABELS[r.status]}</span>
                 {!r.currentlyPublished && <span className="state">Révision signalée plus publiée</span>}
               </p>
               <p className="lesson-context">
@@ -144,7 +144,7 @@ export function ReportPage({ reportId }: { reportId: number }) {
       </p>
       <h1 tabIndex={-1}>Signalement n° {report.id}</h1>
       <p className="lesson-meta">
-        <span className={`state ${report.status === 'open' ? 'state-changes' : 'state-published'}`}>{REPORT_STATUS_LABELS[report.status]}</span>
+        <span className={`state state-report-${report.status}`}>{REPORT_STATUS_LABELS[report.status]}</span>
       </p>
       <dl className="facts">
         <div>

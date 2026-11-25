@@ -118,6 +118,7 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
 
   if (loaded.state === 'loading') return <LoadingPage label="Chargement de la leçon…" />;
   if (loaded.state === 'error')
@@ -172,6 +173,8 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
       setReason('');
       setError(null);
       await reload();
+      // The button that was pressed may be gone (withdrawn revision, closed form): move focus to the outcome.
+      requestAnimationFrame(() => doneRef.current?.focus());
     } catch (e) {
       setPending(null);
       setDone(null);
@@ -251,7 +254,7 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
         {reasonForm('unpublish', 'Dépublier…', () => askWithReason({ kind: 'unpublish' }))}
       </section>
       {done && (
-        <p className="banner success" role="status">
+        <p className="banner success" role="status" tabIndex={-1} ref={doneRef}>
           {done}
         </p>
       )}
@@ -265,8 +268,8 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
           )}
         </div>
       )}
-      <h2>Révisions</h2>
-      {lesson.revisions.length === 0 && <p>Aucune révision soumise.</p>}
+      <h2>{lesson.view === 'administrator' ? 'Révisions' : 'Révisions approuvées'}</h2>
+      {lesson.revisions.length === 0 && <p>{lesson.view === 'administrator' ? 'Aucune révision soumise.' : 'Aucune révision approuvée.'}</p>}
       <ul className="lesson-list" aria-label="Révisions soumises de la leçon">
         {lesson.revisions.map((r) => {
           const state = revisionStateLabel(lesson, r);
@@ -280,10 +283,12 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
                 <span className={`state state-${state.tone}`}>{state.label}</span>
               </p>
               <p className="lesson-context">
-                Par {r.authorName}
+                {r.authorName ? `Par ${r.authorName}` : 'Approuvée'}
                 {r.submittedAt && `, soumise le ${formatDateTime(r.submittedAt)}`}
                 {r.approverName && r.approvedAt && ` · approuvée par ${r.approverName} le ${formatDateTime(r.approvedAt)}`}
+                {!r.approverName && r.approvedAt && ` le ${formatDateTime(r.approvedAt)}`}
               </p>
+              {r.withdrawn && !r.withdrawal && <p className="withdrawal">Retirée : elle ne peut plus être publiée ni restaurée.</p>}
               {r.withdrawal && (
                 <div className="withdrawal">
                   <p>
@@ -311,8 +316,13 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
           );
         })}
       </ul>
-      <h2>Historique de publication</h2>
-      {lesson.history.length === 0 ? (
+      {lesson.view === 'publisher' && (
+        <p className="hint">
+          Vue éditeur : seules les révisions approuvées sont listées. Les auteurs, les motifs de retrait et l’historique de publication sont réservés aux administrateurs.
+        </p>
+      )}
+      {lesson.view === 'administrator' && <h2>Historique de publication</h2>}
+      {lesson.view === 'publisher' ? null : lesson.history.length === 0 ? (
         <p>Cette leçon n’a jamais été publiée.</p>
       ) : (
         <ol className="history" aria-label="Historique de publication, le plus récent d’abord">

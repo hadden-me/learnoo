@@ -42,3 +42,8 @@ textarea[aria-invalid='true'] { border-color: var(--learnoo-color-danger); borde
 .find-lesson .fields { flex: 1 1 18rem; margin: 0; }
 .inline-select { max-width: 20rem; }
 code { overflow-wrap: anywhere; }
+
+/* Report states: written out, and distinct borders (colour never stands alone). */
+.state-report-open { border-color: var(--learnoo-color-warning-border); background: var(--learnoo-color-warning-background); color: var(--learnoo-color-warning-text); }
+.state-report-resolved { border-color: var(--learnoo-color-success-text); }
+.state-report-dismissed { border-style: dashed; color: var(--learnoo-color-muted); }

@@ -18,19 +18,30 @@ export function useEditorial() {
   return useMemo(() => editorialApi(api), [api]);
 }
 
+/** Request sequence guard: only the most recently started request may apply its result. */
+export function latestOnly() {
+  let counter = 0;
+  return { next: () => ++counter, isCurrent: (ticket: number) => ticket === counter };
+}
+
 export type Loaded<T> = { state: 'loading' } | { state: 'ready'; data: T } | { state: 'error'; message: string; notFound: boolean };
 
 /** Runs `load` on mount and whenever `reload` is called; errors become French messages. */
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [Loaded<T>, () => Promise<void>] {
   const [value, setValue] = useState<Loaded<T>>({ state: 'loading' });
   const run = useCallback(load, deps);
+  const [latest] = useState(latestOnly);
   const reload = useCallback(async () => {
+    const ticket = latest.next();
+    let next: Loaded<T>;
     try {
-      setValue({ state: 'ready', data: await run() });
+      next = { state: 'ready', data: await run() };
     } catch (e) {
-      setValue({ state: 'error', message: describeEditorialError(e), notFound: isApiError(e, 'not_found') });
+      next = { state: 'error', message: describeEditorialError(e), notFound: isApiError(e, 'not_found') };
     }
-  }, [run]);
+    // A slower, older request (for example the previous filter) never overwrites a newer one.
+    if (latest.isCurrent(ticket)) setValue(next);
+  }, [run, latest]);
   useEffect(() => {
     void reload();
   }, [reload]);

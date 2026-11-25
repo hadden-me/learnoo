@@ -3,6 +3,7 @@ import { Api, ApiError } from '../src/api/client';
 import { editorialApi, type LessonPublication, type LessonRevisionState } from '../src/api/editorial';
 import { describeEditorialError } from '../src/api/editorialMessages';
 import { groupBySubject } from '../src/editorial/ReviewPages';
+import { latestOnly } from '../src/editorial/common';
 import { excerpt } from '../src/editorial/ReportPages';
 import { routeAccess } from '../src/editorial/spacesUi';
 import { canUnpublish, describeEvent, revisionActions, revisionStateLabel } from '../src/editorial/policy';
@@ -35,6 +36,7 @@ describe('editorial API', () => {
     await ed.approve(12, 'Très clair.');
     await ed.requestChanges(12, 'Précisez.');
     await ed.publishQueue();
+    await ed.publishRevision(12);
     await ed.publish(12);
     await ed.lessonPublication('0b9c1d2e-0000-4000-8000-000000000000');
     await ed.withdraw(12, 'Erreur.', 9);
@@ -50,6 +52,7 @@ describe('editorial API', () => {
       ['POST', '/api/review/revisions/12/approve', { comment: 'Très clair.' }],
       ['POST', '/api/review/revisions/12/request-changes', { comment: 'Précisez.' }],
       ['GET', '/api/publish/queue', undefined],
+      ['GET', '/api/publish/revisions/12', undefined],
       ['POST', '/api/revisions/12/publish', {}],
       ['GET', '/api/lessons/0b9c1d2e-0000-4000-8000-000000000000/publication', undefined],
       ['POST', '/api/revisions/12/withdraw', { reason: 'Erreur.', expectedPublishedRevisionId: 9 }],
@@ -153,10 +156,12 @@ const rev = (over: Partial<LessonRevisionState>): LessonRevisionState => ({
   approvedAt: '2026-11-25T09:00:00Z',
   everPublished: false,
   candidate: false,
+  withdrawn: over.withdrawal != null,
   withdrawal: null,
   ...over,
 });
 const lesson = (publishedRevisionId: number | null, revisions: LessonRevisionState[]): LessonPublication => ({
+  view: 'administrator',
   lessonId: 4,
   publicId: 'x',
   subjectId: 1,
@@ -189,6 +194,11 @@ describe('publication policy', () => {
     expect(revisionActions(lp, inReview, admin)).toEqual({ current: false, withdraw: false, restore: false });
     expect(revisionActions(lp, earlier, reviewer)).toEqual({ current: false, withdraw: false, restore: false });
     expect(revisionActions({ ...lp, archived: true }, earlier, admin).restore).toBe(false);
+    expect(revisionActions({ ...lp, archived: true }, earlier, publisher).restore).toBe(false);
+    // The publisher view has the withdrawn flag but no withdrawal details.
+    const flagged = rev({ id: 7, number: 1, everPublished: true, withdrawn: true });
+    expect(revisionActions(lp, flagged, publisher).restore).toBe(false);
+    expect(revisionStateLabel(lp, flagged).label).toBe('Retirée définitivement');
     expect(canUnpublish(lp, admin)).toBe(true);
     expect(canUnpublish(lp, publisher)).toBe(false);
     expect(canUnpublish(lesson(null, [earlier]), admin)).toBe(false);
@@ -205,6 +215,16 @@ describe('publication policy', () => {
     expect(describeEvent({ action: 'restore', publishedRevisionId: 5, previousRevisionId: null, actorId: 1, actorName: 'A', reason: null, occurredAt: '' }, numberOf)).toBe(
       'Restauration de la révision 1 (la leçon était dépubliée)',
     );
+  });
+});
+
+describe('load sequence', () => {
+  it('lets only the most recently started request apply its result', () => {
+    const latest = latestOnly();
+    const first = latest.next();
+    const second = latest.next();
+    expect(latest.isCurrent(first)).toBe(false);
+    expect(latest.isCurrent(second)).toBe(true);
   });
 });
 

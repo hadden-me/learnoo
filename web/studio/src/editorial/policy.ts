@@ -17,7 +17,7 @@ export interface RevisionActions {
 
 export function revisionActions(lesson: LessonPublication, revision: LessonRevisionState, spaces: Spaces): RevisionActions {
   const current = lesson.publishedRevisionId === revision.id;
-  const approved = revision.status === 'approved' && revision.withdrawal === null;
+  const approved = revision.status === 'approved' && !revision.withdrawn;
   return {
     current,
     withdraw: spaces.administrator && approved,
@@ -30,7 +30,7 @@ export const canUnpublish = (lesson: LessonPublication, spaces: Spaces) => space
 
 /** The revision's state in words; colour never stands alone (DESIGN.md). */
 export function revisionStateLabel(lesson: LessonPublication, revision: LessonRevisionState): { label: string; tone: 'published' | 'withdrawn' | 'approved' | 'review' | 'changes' } {
-  if (revision.withdrawal) return { label: 'Retirée définitivement', tone: 'withdrawn' };
+  if (revision.withdrawn) return { label: 'Retirée définitivement', tone: 'withdrawn' };
   if (lesson.publishedRevisionId === revision.id) return { label: 'Publiée (version lue par les élèves)', tone: 'published' };
   if (revision.status === 'in_review') return { label: 'En relecture', tone: 'review' };
   if (revision.status === 'changes_requested') return { label: 'Modifications demandées', tone: 'changes' };

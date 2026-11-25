@@ -58,10 +58,8 @@ export function PublishQueuePage() {
 
 export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
   const ed = useEditorial();
-  const [loaded] = useLoad<{ revision: Revision; item: PublishQueueItem | null }>(async () => {
-    const [revision, queue] = await Promise.all([ed.publishRevision(revisionId), ed.publishQueue()]);
-    return { revision, item: queue.find((q) => q.revisionId === revisionId) ?? null };
-  }, [ed, revisionId]);
+  // The revision and its queue facts come together, whatever the queue's bound.
+  const [loaded] = useLoad<{ revision: Revision; item: PublishQueueItem }>(() => ed.publishRevision(revisionId), [ed, revisionId]);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +75,8 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
       />
     );
   const { revision, item } = loaded.data;
-  const stale = item?.staleBase ?? false;
+  const stale = item.staleBase;
+  const firstPublication = item.publishedRevisionId === null;
 
   const publish = async () => {
     setBusy(true);
@@ -104,7 +103,7 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
       <p className="lesson-meta">
         <span className={`state ${published ? 'state-published' : 'state-approved'}`}>{published ? 'Publiée' : 'Approuvée, en attente de publication'}</span>
       </p>
-      {item && (
+      {(
         <dl className="facts">
           <div>
             <dt>Matière</dt>
@@ -126,7 +125,7 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
           </div>
           <div>
             <dt>Effet</dt>
-            <dd>{item.publishedRevisionId === null ? 'Première publication de la leçon.' : 'Remplacera la version publiée actuelle.'}</dd>
+            <dd>{firstPublication ? 'Première publication de la leçon.' : 'Remplacera la version publiée actuelle.'}</dd>
           </div>
         </dl>
       )}
@@ -141,16 +140,12 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
           <h2 id="published-heading">Révision publiée</h2>
           <p>Les élèves lisent maintenant cette version (publiée le {formatDateTime(published.publishedAt)}).</p>
           <ul className="link-list">
-            {item && (
-              <li>
-                <a href={paths.readerLesson(item.lessonPublicId)}>Voir la leçon publiée</a>
-              </li>
-            )}
-            {item && (
-              <li>
-                <Link to={paths.publication(item.lessonPublicId)}>Historique de publication</Link>
-              </li>
-            )}
+            <li>
+              <a href={paths.readerLesson(item.lessonPublicId)}>Voir la leçon publiée</a>
+            </li>
+            <li>
+              <Link to={paths.publication(item.lessonPublicId)}>Historique de publication</Link>
+            </li>
             <li>
               <Link to={paths.publishQueue}>Revenir aux révisions à publier</Link>
             </li>
@@ -193,7 +188,7 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
           actions={[{ label: 'Publier', kind: 'primary', disabled: busy, onClick: () => void publish() }]}
         >
           <p>
-            {item?.publishedRevisionId === null
+            {firstPublication
               ? 'C’est la première publication de cette leçon : les élèves invités pourront la lire immédiatement.'
               : 'Cette révision remplacera immédiatement la version que lisent les élèves.'}
           </p>
