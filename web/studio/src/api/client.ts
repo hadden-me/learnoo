@@ -82,6 +82,9 @@ export interface OwnedLesson {
   latestRevision: LatestRevision | null;
 }
 
+/** The Studio media route a preview links embedded images to: the author's, the reviewer's or the publisher's. */
+export type MediaRoute = 'author' | 'review' | 'publish';
+
 export interface Media {
   id: number;
   contentType: string;
@@ -230,7 +233,9 @@ export class Api {
   discard = (id: number, expectedVersion: number) => this.request<void>('DELETE', `/api/revisions/${id}?expectedVersion=${expectedVersion}`);
   /** Raw image body, not multipart (API.md POST /api/media). */
   uploadMedia = (file: Blob) => this.request<Media>('POST', '/api/media', { body: file, contentType: file.type });
-  preview = async (content: unknown) => (await this.request<{ html: string }>('POST', '/api/preview', { json: { content } })).html;
+  /** mediaRoute: which access-checked route embedded uploaded images are linked to (API.md POST /api/preview). */
+  preview = async (content: unknown, mediaRoute: MediaRoute = 'author') =>
+    (await this.request<{ html: string }>('POST', '/api/preview', { json: mediaRoute === 'author' ? { content } : { content, mediaRoute } })).html;
 
   /**
    * Sends a request. A rejected CSRF token (for example after signing in

@@ -2,7 +2,7 @@
 // error-report pages: loading state, the canonical preview of a stored
 // revision, the "no access" page and a confirmation step for decisions.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { isApiError } from '../api/client';
+import { isApiError, type MediaRoute } from '../api/client';
 import { editorialApi } from '../api/editorial';
 import { describeEditorialError } from '../api/editorialMessages';
 import { useStudio } from '../context';
@@ -68,14 +68,14 @@ export const subjectLabel = (codes: Map<number, string>, id: number) => codes.ge
  * revision's content, typeset with the application's KaTeX, as the reader
  * will show it. Read-only.
  */
-export function CanonicalPreview({ content, testId }: { content: unknown; testId: string }) {
+export function CanonicalPreview({ content, testId, mediaRoute }: { content: unknown; testId: string; mediaRoute: MediaRoute }) {
   const { api } = useStudio();
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    api.preview(content).then(
+    api.preview(content, mediaRoute).then(
       async (html) => {
         const root = ref.current;
         if (cancelled || !root) return;
@@ -90,7 +90,7 @@ export function CanonicalPreview({ content, testId }: { content: unknown; testId
     return () => {
       cancelled = true;
     };
-  }, [api, content]);
+  }, [api, content, mediaRoute]);
   return (
     <>
       {!ready && !error && <p role="status">Rendu de la leçon…</p>}

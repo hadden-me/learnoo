@@ -573,6 +573,20 @@ test('a page never shows another account’s lessons after someone else signs in
   expect(problems).toEqual([]);
 });
 
+/** A new browser context signed in to the Studio as `user`, recording CSP violations and external requests. */
+async function signedInStudio(browser, baseURL, user) {
+  const context = await browser.newContext({ baseURL, viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const problems = watch(page, baseURL);
+  await page.addInitScript(() => {
+    window.cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (e) => window.cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  await signIn(page, user);
+  await expect(page).toHaveURL(/\/studio$/);
+  return { context, page, problems };
+}
+
 /** A signed-in API session (another browser context) for the TEST editorial accounts. */
 async function apiSession(browser, baseURL, user) {
   const ctx = await browser.newContext({ baseURL });
@@ -633,20 +647,37 @@ test('an uploaded image placed in the text is previewed, reviewed, published to 
   expect(await page.evaluate(() => window.cspViolations)).toEqual([]);
   expect(problems).toEqual([]);
 
-  // The reviewer sees it through the review API and the review media route (the review views are the next slice).
-  const rev = await apiSession(browser, baseURL, reviewer);
-  const reviewed = await (await rev.get(`/api/review/revisions/${revision.id}`)).json();
-  expect(JSON.stringify(reviewed.content)).toContain(`media:${mediaId}`);
-  const reviewMedia = await rev.get(`/api/review/media/${mediaId}`);
-  expect(reviewMedia.status()).toBe(200);
-  expect(reviewMedia.headers()['content-type']).toBe('image/png');
-  const reviewPreview = await (await rev.post('/api/preview', { content: reviewed.content, mediaRoute: 'review' })).json();
-  expect(reviewPreview.html).toContain(`src="/api/review/media/${mediaId}"`);
-  expect((await rev.post(`/api/review/revisions/${revision.id}/approve`)).status()).toBe(200);
-  await rev.ctx.close();
-  const pub = await apiSession(browser, baseURL, { email: 'test-publisher@example.test', password });
-  expect((await pub.post(`/api/revisions/${revision.id}/publish`)).status()).toBe(200);
-  await pub.ctx.close();
+  // The reviewer sees it in the Studio review page, through the reviewer media route.
+  const rev = await signedInStudio(browser, baseURL, reviewer);
+  await rev.page.getByRole('navigation', { name: 'Studio' }).getByRole('link', { name: 'Relecture' }).click();
+  await rev.page.getByRole('link', { name: 'TEST Image intégrée', exact: true }).click();
+  const reviewImg = rev.page.getByTestId('review-preview').getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(reviewImg).toHaveAttribute('src', `/api/review/media/${mediaId}`);
+  await expect.poll(() => reviewImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await rev.page.getByRole('button', { name: 'Approuver…' }).click();
+  await rev.page.getByRole('dialog').getByRole('button', { name: 'Approuver', exact: true }).click();
+  await expect(rev.page.getByText('Révision approuvée : « TEST Image intégrée »')).toBeVisible();
+  expect(await rev.page.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(rev.problems).toEqual([]);
+  // Approved: out of review, so the reviewer route no longer serves it.
+  expect((await rev.page.request.get(`/api/review/media/${mediaId}`)).status()).toBe(404);
+  await rev.context.close();
+
+  // The publisher sees it in the publication page, through the publisher media route, and publishes.
+  const pub = await signedInStudio(browser, baseURL, { email: 'test-publisher@example.test', password });
+  await pub.page.getByRole('navigation', { name: 'Studio' }).getByRole('link', { name: 'Publication' }).click();
+  await pub.page.getByRole('link', { name: 'TEST Image intégrée', exact: true }).click();
+  const publishImg = pub.page.getByTestId('publish-preview').getByRole('img', { name: 'Rectangle gris de test' });
+  await expect(publishImg).toHaveAttribute('src', `/api/publish/media/${mediaId}`);
+  await expect.poll(() => publishImg.evaluate((img) => img.naturalWidth)).toBe(48);
+  await pub.page.getByRole('button', { name: 'Publier cette révision…' }).click();
+  await pub.page.getByRole('dialog').getByRole('button', { name: 'Publier', exact: true }).click();
+  await expect(pub.page.getByRole('heading', { name: 'Révision publiée' })).toBeVisible();
+  expect(await pub.page.evaluate(() => window.cspViolations)).toEqual([]);
+  expect(pub.problems).toEqual([]);
+  // Published: the publisher reads it in the reader like everyone else.
+  expect((await pub.page.request.get(`/api/publish/media/${mediaId}`)).status()).toBe(404);
+  await pub.context.close();
 
   // A student reads it; the image comes from the lesson-scoped reader route under the reader's CSP.
   const lessonId = Number(/\/studio\/lessons\/(\d+)\/edit/.exec(page.url())[1]);
