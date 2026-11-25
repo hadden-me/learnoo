@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database"
+	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/server"
 	"github.com/hadden-me/learnoo/internal/users"
@@ -109,6 +111,10 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	if err := requireLoopback(addr); err != nil {
 		return err
 	}
+	mediaDir, err := mediaDirectory()
+	if err != nil {
+		return err
+	}
 	url, err := databaseURL()
 	if err != nil {
 		return err
@@ -125,9 +131,14 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	mediaStore, err := media.OpenStore(mediaDir)
+	if err != nil {
+		return err
+	}
+	defer mediaStore.Close()
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(pool, svc, log),
+		Handler:           server.New(pool, svc, mediaStore, log),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -147,6 +158,19 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// mediaDirectory returns LEARNOO_MEDIA_DIR. There is no default, so uploads
+// are never written into the working directory or the repository by accident.
+func mediaDirectory() (string, error) {
+	dir := os.Getenv("LEARNOO_MEDIA_DIR")
+	if dir == "" {
+		return "", errors.New("LEARNOO_MEDIA_DIR is not set (absolute path of the persistent media directory)")
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("LEARNOO_MEDIA_DIR %q must be an absolute path", dir)
+	}
+	return filepath.Clean(dir), nil
 }
 
 // requireLoopback keeps the server off public interfaces until deployment

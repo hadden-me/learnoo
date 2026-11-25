@@ -16,6 +16,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
+	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/server"
 	"github.com/hadden-me/learnoo/internal/users"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,7 +59,12 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	e := &env{t: t, db: db, h: server.New(db, svc, log), clock: c, cfg: cfg}
+	ms, err := media.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ms.Close() })
+	e := &env{t: t, db: db, h: server.New(db, svc, ms, log), clock: c, cfg: cfg}
 	e.createUser(testEmail, testPassword)
 	return e
 }
