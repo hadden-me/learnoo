@@ -20,7 +20,7 @@ Identify any permission, content schema, API, migration, or licensing implicatio
 
 ## Contribution rights
 
-Link the applicable adopted terms, contributor acceptance and third-party provenance, or state that these are pending. A checkbox or this PR alone is not consent to unpublished terms. External contributions remain blocked until the [rights gate](../docs/CONTRIBUTION_TERMS.md) is satisfied.
+Link the applicable adopted terms, contributor acceptance and third-party provenance, or state that these are pending. A checkbox or this PR alone is not consent to unpublished terms. External contributions remain blocked until the [rights gate](https://github.com/hadden-me/learnoo/blob/develop/docs/CONTRIBUTION_TERMS.md) is satisfied.
 
 ## Handoff
 

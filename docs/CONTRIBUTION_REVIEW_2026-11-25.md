@@ -50,3 +50,45 @@ In a disposable checkout of develop `14b2ae1`, applied only the code/test change
 6. If a contributor declines or cannot establish rights, leave the PR unmerged or close it with an explanation. Do not move their code into an owner-authored PR to avoid the requirement.
 
 A merged-PR inventory of up to 100 recent PRs found no PR authors other than the owner. That is not a copyright audit: inspect commit authors, copied material and third-party provenance before claiming all existing material is owner-created.
+
+## Follow-up: all seven open PRs reviewed
+
+Reviewed against develop `14b2ae1`. The five external heads above are unchanged; their code review and targeted integration evidence remain applicable. This pass additionally examined the complete new review/publication implementation, its migration, HTTP integration, test coverage and issue #7 requirements.
+
+### #73 — review decisions and transactional publication
+
+Head: `ffdc0107e80af73898d82b830793b02fd7ecfaa7`. Recommendation: technically acceptable as a partial backend increment, subject to the owner's approval of the disclosed behavior and normal merge controls. No blocking defect found in the reviewed API paths. This is not completion of the full editorial workflow or production readiness.
+
+Evidence checked: subject-scoped reviewer authorization; in-transaction grant/account rechecks; self-approval denial including administrators; immutable review decisions; required change-request comments; separate publisher permission; locked expected-base comparison; publication/audit atomicity; media access scoped to in-review revisions; CSRF and strict request decoding; retryable transaction errors. Tests exercise concurrent decisions/publications, permission revocation, direct database guards and temporary-table shadowing.
+
+Executed on this exact head with disposable PostgreSQL and `LEARNOO_REQUIRE_DB_TESTS=1`:
+
+- `go test -count=1 ./...`: passed, including database-backed tests.
+- `go vet ./...`: passed.
+- `go test -race -count=2 ./internal/review ./internal/lessons ./internal/studioapi ./internal/server ./internal/permissions`: passed.
+- GitHub verify run 45700736147: passed.
+
+Before acceptance, explicitly acknowledge these limits:
+
+- `internal/studioapi/review.go:63` exposes the reviewer ID for change requests as well as approvals. DECISIONS still calls change-request identity an open question. The owner should confirm that behavior or request redaction; the implementation must not silently settle it.
+- `migrations/0006_review_publication.sql:250` permits clearing the publication pointer without an audit row. There is no new unpublish HTTP endpoint in this PR; this is a documented database safeguard gap for LRN-009, not evidence that publication itself lacks an audit. Close the gap before treating the full publication lifecycle as production-ready.
+- Submission uses existing author/timestamp fields, not a separate append-only event. Studio UI (#66), publisher queue, withdrawal/restoration and stale-approved-candidate handling remain separate work. Do not close #7 as fully complete on this backend PR alone.
+- The PR body incorrectly says it is the only open migration PR: #40 also adds a migration. Coordinate numbering and schema integration before accepting #40.
+
+### #72 — contribution documentation
+
+Reviewed the guidance, PR template, licensing status, decision record and review report. It grants no license and does not claim contributor consent. The conflict was in appended sections of docs/DECISIONS.md; resolved by preserving current develop decisions and the separate confirmed contribution-policy section. Recommendation: accept as documentation after required CI and owner approval, not as completed legal terms.
+
+### Final recommendations
+
+| PR | Decision |
+| --- | --- |
+| #73 | Acceptable backend increment after explicit acknowledgment of the policy/coverage limits above and owner approval. |
+| #72 | Acceptable documentation after final CI and owner approval; conflict resolved in this branch. |
+| #52 | Technically acceptable; external rights and owner approval still pending. |
+| #58 | Technically acceptable partial test contribution; external rights and owner approval still pending. |
+| #56 | Acceptable EXIF scope, but resolve docs/DECISIONS.md conflict and rerun current-head CI first; external rights and owner approval still pending. No code conflict was reported by merge-tree. |
+| #47 | Accept only as an optional unvalidated experiment, with external rights and owner approval; do not present it as verified video output or approved teaching material. |
+| #40 | Request changes: duplicate chapters creation conflicts with current schema. Rebuild the migration and test fresh/upgrade paths before reconsideration. |
+
+No PR was merged and no approving review was submitted by this pass. Recommendations are not the owner's explicit approval.
