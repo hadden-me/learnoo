@@ -193,7 +193,7 @@ func TestPublishingReadsRequirePermissions(t *testing.T) {
 		t.Errorf("store list as publisher: %v", err)
 	}
 	// Revocation applies to the next request.
-	if _, err := permissions.NewStore(f.db).Revoke(ctx, permissions.Operator, f.publisher.id, permissions.Publisher); err != nil {
+	if _, err := permissions.NewStore(f.db).Revoke(ctx, testOperator, f.publisher.id, permissions.Publisher); err != nil {
 		t.Fatal(err)
 	}
 	wantStatus(t, "revoked publisher", f.api(f.publisher, http.MethodGet, "/api/publish/queue", nil), http.StatusForbidden, "forbidden")
