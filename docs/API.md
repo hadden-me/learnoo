@@ -575,13 +575,13 @@ The built Studio bundle (`web/studio/dist`, built with Vite `base: '/studio/'`),
 
 ## Studio publication reads (issue #66, second slice)
 
-Read-only endpoints the Studio's publisher and administrator views need ([DECISIONS.md](DECISIONS.md#studio-review-publication-and-administration-issue-66-second-slice)), in `internal/review/publishing.go` and `internal/studioapi/publishing.go`. Session, `Cache-Control: private, no-store`. The permission is checked by the middleware before any lookup (`403 forbidden`, so existing and missing IDs look the same) and again inside the read's transaction with the grant and account rows share-locked, so a revocation committed in between also gives `403`. These are global permissions, so a missing ID is a plain `404 not_found`. No query parameters (`400 invalid_request`).
+Read-only endpoints the Studio's publisher and administrator views need ([DECISIONS.md](DECISIONS.md#studio-review-publication-and-administration-issue-66-second-slice)), in `internal/review/publishing.go` and `internal/studioapi/publishing.go`. Session, `Cache-Control: private, no-store`. The permission is checked by the middleware before any lookup (`403 forbidden`, so existing and missing IDs look the same) and again inside the read's transaction with the grant and account rows share-locked, so a revocation committed in between also gives `403`. These are global permissions, so a missing ID is a plain `404 not_found`. None of them takes query parameters (`400 invalid_request`).
 
 | Endpoint | Who may call it |
 | --- | --- |
 | `GET /api/publish/queue` | `publisher` |
 | `GET /api/publish/revisions/{revisionId}` | `publisher` |
-| `GET /api/lessons/{lesson}/publication` | `publisher` or `administrator` (both may restore) |
+| `GET /api/lessons/{lesson}/publication` | `publisher` or `administrator` (both may restore); publishers get a reduced view, below |
 | `GET /api/admin/lessons` | `administrator` |
 
 **Awaiting publication** means: status `approved`, still the lesson's candidate, never published, not withdrawn, lesson not archived.
@@ -594,14 +594,17 @@ Read-only endpoints the Studio's publisher and administrator views need ([DECISI
   "approvedAt": "2026-11-24T09:00:00Z", "baseRevisionId": 9, "publishedRevisionId": 9, "staleBase": false}]}
 ```
 
-`GET /api/publish/revisions/{revisionId}`: the [revision object](#revision-object) of a revision awaiting publication, so the publisher reads what they publish. Any other revision (in review, published, withdrawn, missing, malformed ID): `404 not_found`.
+`GET /api/publish/revisions/{revisionId}`: `{"item": {…queue item as above…}, "revision": {…revision object…}}` for a revision awaiting publication, so the publisher reads what they publish with its facts (current pointer, `staleBase`, names) however long the queue is. Any other revision (in review, published, withdrawn, archived lesson, missing, malformed ID): `404 not_found`.
 
-`GET /api/lessons/{lesson}/publication`: `{lesson}` is the numeric lesson ID or its public ID (lower-case UUID, as in reader URLs); anything else is `404`. The lesson's publication state, its submitted revisions (drafts are never listed; newest first, at most 200) and the pointer audit (newest first, at most 100):
+`GET /api/lessons/{lesson}/publication`: `{lesson}` is the numeric lesson ID or its public ID (lower-case UUID, as in reader URLs); anything else is `404`. The lesson's publication state, its submitted revisions (drafts are never listed; newest first, at most 200) and the pointer audit (newest first, at most 100). Whether the caller is an administrator is decided inside the transaction:
+
+- `"view": "administrator"`: everything below.
+- `"view": "publisher"` (callers without `administrator`): only what restoration needs, since the audit log is the administrator's (CAHIER_DES_CHARGES §2.2). Only `approved` revisions are listed, with `id`, `number`, `status`, `title`, `approvedAt`, `everPublished`, `candidate` and `withdrawn`; `authorId`, `authorName`, `baseRevisionId`, `submittedAt`, `approvedBy`, `approverName` and `withdrawal` are `null`, and `history` is empty.
 
 ```json
-{"lessonId": 4, "publicId": "0b9c…", "subjectId": 1, "subjectCode": "maths", "language": "fr", "archived": false, "publishedRevisionId": 9,
+{"view": "administrator", "lessonId": 4, "publicId": "0b9c…", "subjectId": 1, "subjectCode": "maths", "language": "fr", "archived": false, "publishedRevisionId": 9,
  "revisions": [{"id": 12, "number": 2, "status": "approved", "title": "…", "authorId": 7, "authorName": "Amel", "baseRevisionId": 9,
-   "submittedAt": "…", "approvedBy": 9, "approverName": "Karim", "approvedAt": "…", "everPublished": true, "candidate": false,
+   "submittedAt": "…", "approvedBy": 9, "approverName": "Karim", "approvedAt": "…", "everPublished": true, "candidate": false, "withdrawn": true,
    "withdrawal": {"withdrawnBy": 1, "withdrawnByName": "Lina", "reason": "…", "withdrawnAt": "…"}}],
  "history": [{"action": "unpublish", "publishedRevisionId": null, "previousRevisionId": 12, "actorId": 1, "actorName": "Lina", "reason": "…", "occurredAt": "…"}]}
 ```
