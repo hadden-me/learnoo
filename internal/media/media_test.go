@@ -406,7 +406,8 @@ func TestProcessRejectsTrailingData(t *testing.T) {
 		{"jpeg script", append(append([]byte{}, jpg...), script...), ErrTrailingData},
 		{"jpeg zip", append(append([]byte{}, jpg...), zipData...), ErrTrailingData},
 		{"jpeg second EOI", append(append([]byte{}, jpg...), 0xFF, 0xD9), ErrTrailingData},
-		{"jpeg one byte", append(append([]byte{}, jpg...), 0), ErrTrailingData},
+		// A lone zero byte is now accepted as padding (TestProcessPhoneJPEG).
+		{"jpeg one byte", append(append([]byte{}, jpg...), 1), ErrTrailingData},
 		{"progressive jpeg script", append(append([]byte{}, progressive...), script...), ErrTrailingData},
 		{"webp script", append(append([]byte{}, webpLossless...), script...), ErrTrailingData},
 		{"webp zip", append(append([]byte{}, webpLossless...), zipData...), ErrTrailingData},
