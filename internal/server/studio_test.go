@@ -968,6 +968,7 @@ func TestStudioMediaRejections(t *testing.T) {
 	}
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
 	trailing := append(append([]byte{}, valid...), []byte("<?php echo 'polyglot'; ?>")...)
+	heic := []byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic\x00\x00\x00\x0cmeta\x00\x00\x00\x00")
 
 	for name, c := range map[string]struct {
 		ctype  string
@@ -984,6 +985,8 @@ func TestStudioMediaRejections(t *testing.T) {
 		"octet-stream":         {"application/octet-stream", valid, 415, "unsupported_media_type"},
 		"multipart":            {"multipart/form-data; boundary=x", valid, 415, "unsupported_media_type"},
 		"trailing data":        {"image/png", trailing, 422, "trailing_data"},
+		"heic declared":        {"image/heic", heic, 415, "unsupported_heic"},
+		"heic as jpeg":         {"image/jpeg", heic, 415, "unsupported_heic"},
 		"truncated":            {"image/png", valid[:len(valid)/2], 422, "invalid_image"},
 		"empty":                {"image/png", nil, 400, "invalid_request"},
 		"content-length > max": {"image/png", make([]byte, media.MaxUploadBytes+1), 413, "too_large"},
