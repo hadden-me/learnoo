@@ -30,13 +30,36 @@ var allowedChangeFiles = map[string]bool{
 }
 
 // sqlOwners lists, per protected write, the only package that may contain
-// it in a SQL string literal. Table names may be schema-qualified and
-// quoted. SQL assembled by concatenation or at run time is out of scope.
+// it in a SQL string literal; an empty owner means no package may (yet).
+// Table names may be schema-qualified and quoted. SQL assembled by
+// concatenation or at run time is out of scope.
 var sqlOwners = []struct {
 	re    *regexp.Regexp
 	owner string
 }{
 	{sqlWrite(`(user_permissions|reviewer_assignments|permission_audit)`), "internal/permissions"},
+	// Disabling an account can remove an active administrator, so it must
+	// go through the last-administrator guard. No application package
+	// writes disabled_at yet; tests set it directly.
+	{regexp.MustCompile(`update\s+(only\s+)?` + sqlTable(`users`) + `[^;]*\bdisabled_at\b`), ""},
+}
+
+// sqlViolations reports the protected SQL writes in the string literal s
+// (already unquoted) that package pkgRel may not contain.
+func sqlViolations(pkgRel, s string) []string {
+	s = strings.ToLower(s)
+	var out []string
+	for _, o := range sqlOwners {
+		if !o.re.MatchString(s) || pkgRel == o.owner {
+			continue
+		}
+		if o.owner == "" {
+			out = append(out, fmt.Sprintf("SQL write %q is not allowed in any package", o.re.FindString(s)))
+		} else {
+			out = append(out, fmt.Sprintf("SQL write %q belongs in %s", o.re.FindString(s), o.owner))
+		}
+	}
+	return out
 }
 
 // sqlTable matches a table name, optionally quoted and schema-qualified.
@@ -174,15 +197,55 @@ func checkFile(t *testing.T, fset *token.FileSet, root, pkgRel string, f *ast.Fi
 			if err != nil {
 				return true
 			}
-			s = strings.ToLower(s)
-			for _, o := range sqlOwners {
-				if o.re.MatchString(s) && pkgRel != o.owner {
-					t.Errorf("%s: SQL write %q belongs in %s", pos(x.Pos()), o.re.FindString(s), o.owner)
-				}
+			for _, v := range sqlViolations(pkgRel, s) {
+				t.Errorf("%s: %s", pos(x.Pos()), v)
 			}
 		}
 		return true
 	})
+}
+
+// The SQL rules flag protected writes in probe handlers and allow them only
+// in their owner.
+func TestSQLWriteScanDetectsProbes(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "probe.go", `package probe
+import "net/http"
+var db interface{ Exec(string, ...any) }
+var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	db.Exec(`+"`UPDATE users SET disabled_at = now() WHERE id = $1`"+`, 1)
+	db.Exec(`+"`update \"public\".\"users\" set display_name = 'x', disabled_at = NULL`"+`)
+	db.Exec(`+"`DELETE FROM user_permissions WHERE user_id = $1`"+`, 1)
+	db.Exec(`+"`INSERT INTO public.permission_audit (action) VALUES ('grant')`"+`)
+	db.Exec(`+"`UPDATE users SET display_name = $1`"+`, "x")
+})`, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lits []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if x, ok := n.(*ast.BasicLit); ok && x.Kind == token.STRING && strings.HasPrefix(x.Value, "`") {
+			s, _ := strconv.Unquote(x.Value)
+			lits = append(lits, s)
+		}
+		return true
+	})
+	if len(lits) != 5 {
+		t.Fatalf("probe has %d SQL literals, want 5", len(lits))
+	}
+	for i, s := range lits {
+		got := len(sqlViolations("internal/server", s))
+		if want := map[bool]int{true: 0, false: 1}[i == 4]; got != want {
+			t.Errorf("%q in internal/server: %d violations, want %d", s, got, want)
+		}
+	}
+	// The owner may write its tables; disabled_at has no owner yet.
+	if v := sqlViolations("internal/permissions", lits[2]); len(v) != 0 {
+		t.Errorf("owner flagged: %v", v)
+	}
+	if v := sqlViolations("internal/permissions", lits[0]); len(v) != 1 {
+		t.Errorf("disabled_at write allowed in internal/permissions: %v", v)
+	}
 }
 
 func TestNoPermissionRoutes(t *testing.T) {
