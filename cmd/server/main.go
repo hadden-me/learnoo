@@ -30,9 +30,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -41,6 +44,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/backupcheck"
+	"github.com/hadden-me/learnoo/internal/clientip"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/media"
@@ -147,12 +151,29 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	if addr == "" {
 		addr = defaultAddr
 	}
+	resolver, err := clientip.FromEnv(os.Getenv("LEARNOO_TRUSTED_PROXIES"), os.Getenv("LEARNOO_CLIENT_ADDRESS_HEADER"))
+	if err != nil {
+		return err
+	}
 	if os.Getenv("LEARNOO_ALLOW_NON_LOOPBACK") == "1" {
 		// Container deployments listen on the container interface; Compose
 		// publishes the port to a host address for the reverse proxy.
-		log.Warn("listening beyond loopback (LEARNOO_ALLOW_NON_LOOPBACK=1); client addresses are the proxy's", "addr", addr)
+		log.Warn("listening beyond loopback (LEARNOO_ALLOW_NON_LOOPBACK=1)", "addr", addr)
+		if resolver.Trusted() == 0 {
+			log.Warn("no trusted proxies (LEARNOO_TRUSTED_PROXIES): behind a reverse proxy every client shares the proxy's address in the throttles")
+		}
 	} else if err := requireLoopback(addr); err != nil {
 		return err
+	}
+	if raw := os.Getenv("LEARNOO_PUBLIC_BASE_URL"); raw != "" {
+		// Not used by serve, but a bad value should stop a deployment early
+		// rather than when the first invitation is issued.
+		if _, err := publicBaseURL(raw); err != nil {
+			return err
+		}
+	}
+	if resolver.Trusted() > 0 {
+		log.Info("client addresses from trusted proxies", "ranges", resolver.Trusted(), "header", string(resolver.Header()))
 	}
 	mediaDir, err := mediaDirectory()
 	if err != nil {
@@ -177,7 +198,7 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	defer mediaStore.Close()
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(pool, svc, mediaStore, log),
+		Handler:           clientip.Middleware(resolver, server.New(pool, svc, mediaStore, log)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -625,11 +646,8 @@ func inviteStudent(ctx context.Context, args []string, stdout io.Writer) error {
 	if *email == "" || fs.NArg() > 0 {
 		return errors.New("invite-student needs -email (and optionally -ttl); it takes no other arguments")
 	}
-	addr := os.Getenv("LEARNOO_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
-	if err := requireLoopback(addr); err != nil {
+	base, err := invitationBase()
+	if err != nil {
 		return err
 	}
 	pool, err := openMigrated(ctx)
@@ -644,8 +662,88 @@ func inviteStudent(ctx context.Context, args []string, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "invitation %d for %s, valid until %s, issued by %s\n",
 		inv.ID, inv.Email, inv.ExpiresAt.UTC().Format(time.RFC3339), inv.OperatorLabel)
 	fmt.Fprintln(stdout, "one-time link (shown only now; send it privately, do not paste it into shared logs or issues):")
-	fmt.Fprintf(stdout, "http://%s/invite/%s\n", addr, token)
+	fmt.Fprintf(stdout, "%s/invite/%s\n", base, token)
 	return nil
+}
+
+// invitationBase is the scheme and host invitation links start with:
+// LEARNOO_PUBLIC_BASE_URL when set, otherwise http:// and the loopback
+// LEARNOO_ADDR (local development).
+func invitationBase() (string, error) {
+	if raw := os.Getenv("LEARNOO_PUBLIC_BASE_URL"); raw != "" {
+		return publicBaseURL(raw)
+	}
+	addr := os.Getenv("LEARNOO_ADDR")
+	if addr == "" {
+		addr = defaultAddr
+	}
+	if err := requireLoopback(addr); err != nil {
+		return "", fmt.Errorf("%w; set LEARNOO_PUBLIC_BASE_URL to print public links", err)
+	}
+	return "http://" + addr, nil
+}
+
+// publicBaseURL validates LEARNOO_PUBLIC_BASE_URL: an absolute https URL of
+// the site root (no credentials, path, query or fragment), returned without
+// a trailing slash. The value is printed in links, so it must hold no secret.
+func publicBaseURL(raw string) (string, error) {
+	bad := func(why string) (string, error) {
+		return "", fmt.Errorf("LEARNOO_PUBLIC_BASE_URL must be an https URL of the site root (%s)", why)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return bad("unparsable")
+	}
+	switch {
+	case u.Scheme != "https":
+		return bad("scheme is not https")
+	case u.Opaque != "" || u.Host == "" || u.Hostname() == "":
+		return bad("no host")
+	case u.User != nil:
+		return bad("credentials are not allowed")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#"):
+		return bad("query and fragment are not allowed")
+	case u.Path != "" && u.Path != "/":
+		return bad("a path is not supported")
+	case strings.ContainsAny(raw, " \t\r\n\\"):
+		return bad("invalid characters")
+	case strings.HasSuffix(u.Host, ":"):
+		return bad("empty port")
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 || p[0] == '0' {
+			return bad("port must be 1 to 65535")
+		}
+	}
+	if !validHostname(u.Hostname()) {
+		return bad("host must be an ASCII (IDNA) name or an IP address without zone")
+	}
+	return "https://" + strings.ToLower(u.Host), nil
+}
+
+// validHostname accepts an IP address without zone, or a DNS name of ASCII
+// letters, digits and hyphens (internationalized names in their xn-- IDNA
+// form), labels of 1 to 63 characters, 253 at most in all.
+func validHostname(h string) bool {
+	if a, err := netip.ParseAddr(h); err == nil {
+		return a.Zone() == ""
+	}
+	if h == "" || len(h) > 253 || strings.HasSuffix(h, ".") {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // verifyRestore checks a restored database (LEARNOO_DATABASE_URL) and media

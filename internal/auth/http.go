@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"math"
 	"mime"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/clientip"
 	"github.com/hadden-me/learnoo/internal/strictjson"
 )
 
@@ -220,7 +220,8 @@ func SessionToken(ctx context.Context) (string, bool) {
 	return s.token, ok
 }
 
-// ClientAddr is the TCP peer address used for throttling (see clientAddr).
+// ClientAddr is the client address used by every per-address throttle (see
+// clientAddr).
 func ClientAddr(r *http.Request) string { return clientAddr(r) }
 
 func clearCookie(w http.ResponseWriter) {
@@ -230,14 +231,15 @@ func clearCookie(w http.ResponseWriter) {
 	})
 }
 
-// clientAddr is the TCP peer address. Proxy headers are deliberately not
-// trusted until deployment defines the trusted proxy chain.
+// clientAddr is the address resolved by clientip.Middleware (forwarding
+// headers are read only from configured trusted proxies), or the TCP peer
+// address when the middleware is not installed. Handlers never read
+// forwarding headers themselves.
 func clientAddr(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if a, ok := clientip.FromContext(r.Context()); ok {
+		return a
 	}
-	return host
+	return clientip.Peer(r.RemoteAddr)
 }
 
 type errorBody struct {
