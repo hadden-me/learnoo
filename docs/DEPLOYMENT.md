@@ -28,7 +28,7 @@ These block exposing the application to real users.
 docker build -t learnoo:<version> .      # or: docker compose -f deploy/compose.production.yaml build
 ```
 
-Stages: Node (pinned) runs `npm ci --ignore-scripts`, `npm run assets` (design CSS and the pinned KaTeX copy) and the Studio build; Go (pinned) builds `./cmd/server` with `CGO_ENABLED=0`; the runtime stage is `gcr.io/distroless/static-debian12:nonroot`. Base images are pinned by version and digest in the `Dockerfile`; update both together. The Studio bundle is copied to `/opt/learnoo/studio` but **not served** yet (the Studio is not connected to the API). Tag images by version and keep the previous tag: rollback needs it.
+Stages: Node (pinned) runs `npm ci --ignore-scripts`, `npm run assets` (design CSS and the pinned KaTeX copy) and the Studio build; Go (pinned) builds `./cmd/server` with `CGO_ENABLED=0`; the runtime stage is `gcr.io/distroless/static-debian12:nonroot`. Base images are pinned by version and digest in the `Dockerfile`; update both together. The Studio bundle (built with base `/studio/`) is copied to `/opt/learnoo/studio`, and the image sets `LEARNOO_STUDIO_DIR=/opt/learnoo/studio`, so the server serves it at `/studio` to signed-in staff ([API.md](API.md#studio-pages-get-studio-and-get-studiopath)). The server opens that directory as an `os.Root` at start-up and refuses to start if it has no `index.html`; files are read per request (read-only, owned by root in the image). The renderer experiment is neither built nor shipped. Tag images by version and keep the previous tag: rollback needs it.
 
 ## Secrets
 
@@ -190,9 +190,10 @@ What the application sends today:
 | --- | --- | --- |
 | Everything by default (API, media, login JSON, probes, errors) | `no-store` | `Vary: Cookie` |
 | Reader pages and their `/static/` assets (CSS, KaTeX) | `private, no-store` | sent even to anonymous requests |
+| `/studio` and `/studio/…` (the Studio shell and its fingerprinted bundle), `/api/catalogue/…`, `/api/lessons/mine`, `/api/preview` | `private, no-store` | the Studio bundle needs a session, assets included |
 
 Rules for the proxy and CDN (to be configured by the infrastructure maintainer; header tests in this repository do not prove the live configuration):
 
 - Cloudflare and any shared cache must **never cache authenticated pages or API responses**: bypass cache for the whole Learnoo host until the fingerprinted-asset rule below exists, and never cache a response that carries `Set-Cookie` or a request that carries the session cookie. Do not enable "Cache Everything" or edge HTML caching for this host.
 - Forward the `Cookie`, `Origin` and `Sec-Fetch-Site` headers unchanged (cross-origin protection depends on them) and preserve `Host`.
-- **Future, not implemented:** static assets served from content-hashed paths (for example `/assets/<hash>/katex.min.css`) may then be sent as `public, max-age=31536000, immutable` and cached at the edge; only those paths, never lesson pages, `/learn`, `/api/` or media.
+- **Future, not implemented:** static assets served from content-hashed paths (for example `/assets/<hash>/katex.min.css`) may then be sent as `public, max-age=31536000, immutable` and cached at the edge; only those paths, never lesson pages, `/learn`, `/studio`, `/api/` or media. The Studio's own fingerprinted files (`/studio/assets/index-<hash>.js`) are session-gated and could at most become `private, max-age=…, immutable` (browser cache only), never cached at the edge; today they are `no-store`.
