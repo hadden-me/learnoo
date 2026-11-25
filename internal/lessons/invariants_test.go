@@ -157,7 +157,7 @@ func TestDiscardDraft(t *testing.T) {
 	}
 	wantErr(t, f.store.DiscardDraft(f.ctx, f.author, next.ID, next.Version), lessons.ErrNotDraft)
 	// A revoked author cannot discard either.
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, next.ID)
+	f.mustRequestChanges(next.ID)
 	third, err := f.store.CreateDraft(f.ctx, f.author, rev.LessonID, lessons.Fields{Content: doc("Third", "fr")})
 	if err != nil {
 		t.Fatal(err)
@@ -190,22 +190,36 @@ func TestTranslations(t *testing.T) {
 	}
 }
 
+// approvedOnly is the message of the 0004 pointer guard
+// (zz_guard_lessons_published_approved). It fires before the 0006 audit
+// guard on the pointer (trigger name order), so a raw pointer update without
+// an audit row exercises it alone.
+const approvedOnly = "only an approved revision of this lesson can be published"
+
 func TestPublishedPointerRequiresApprovedRevision(t *testing.T) {
 	f := newFixture(t)
-	publish := func(lesson, rev int64) error {
+	publish := f.publish
+	raw := func(lesson, rev int64) error {
 		return f.exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev, lesson)
 	}
 	rev := f.lesson("Pointer")
 	wantSQLState(t, "draft", publish(rev.LessonID, rev.ID), "LRN01")
+	wantGuard(t, "draft, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
 	wantSQLState(t, "in review", publish(rev.LessonID, rev.ID), "LRN01")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+	wantGuard(t, "in review, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
+	f.mustRequestChanges(rev.ID)
 	wantSQLState(t, "changes requested", publish(rev.LessonID, rev.ID), "LRN01")
+	wantGuard(t, "changes requested, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 
 	other := f.submitted("Other")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, other.ID)
+	f.mustApprove(other.ID)
 	wantSQLState(t, "approved revision of another lesson", publish(rev.LessonID, other.ID), "LRN01")
+	wantGuard(t, "approved revision of another lesson, raw pointer", raw(rev.LessonID, other.ID), approvedOnly)
 	wantSQLState(t, "unknown revision", publish(rev.LessonID, 999999), "LRN01")
+	wantGuard(t, "unknown revision, raw pointer", raw(rev.LessonID, 999999), approvedOnly)
+	// Without an audit row even an approved revision is refused, by the 0006 guard.
+	wantGuard(t, "approved, raw pointer", raw(other.LessonID, other.ID), "requires a publication audit row")
 	if err := publish(other.LessonID, other.ID); err != nil {
 		t.Fatalf("approved revision rejected: %v", err)
 	}
@@ -223,7 +237,9 @@ func TestStatusAndTimestampRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSQLState(t, "updated_at only", f.exec(`UPDATE lesson_revisions SET updated_at = updated_at + interval '1 second' WHERE id = $1`, sub.ID), "LRN01")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved', updated_at = updated_at + interval '1 second' WHERE id = $1`, sub.ID)
+	if err := f.decide(sub.ID, "approve", `status = 'approved', updated_at = updated_at + interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestReferencedRowsCannotBeDeletedOrTruncated(t *testing.T) {
@@ -327,7 +343,7 @@ func TestSubmissionAndMediaChangeAreSerialized(t *testing.T) {
 func TestRevokedAuthorCannotCreate(t *testing.T) {
 	f := newFixture(t)
 	rev := f.submitted("Before revocation")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+	f.mustRequestChanges(rev.ID)
 	if _, err := f.perms.Revoke(f.ctx, operator, f.author, permissions.Author); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +448,7 @@ func TestInvalidUTF8Rejected(t *testing.T) {
 func TestRevisionNumbersAreNeverReused(t *testing.T) {
 	f := newFixture(t)
 	first := f.submitted("Numbered")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, first.ID)
+	f.mustRequestChanges(first.ID)
 	second, err := f.store.CreateDraft(f.ctx, f.author, first.LessonID, lessons.Fields{Content: doc("Second", "fr")})
 	if err != nil {
 		t.Fatal(err)

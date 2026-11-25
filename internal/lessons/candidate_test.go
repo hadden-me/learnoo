@@ -17,18 +17,16 @@ import (
 
 // An approved revision that has never been published is the lesson's active
 // candidate (maintainer decision, docs/DECISIONS.md "Lesson persistence").
-// Review decisions and publication are LRN-007/LRN-009; these tests simulate
-// them with direct SQL.
+// These tests simulate review decisions and publication with direct SQL
+// (decision or audit row plus the status or pointer change, as the database
+// requires since LRN-007); unpublication and restoration (LRN-009) are
+// simulated with direct pointer changes.
 
 func (f fixture) approved(title string) lessons.Revision {
 	f.t.Helper()
 	rev := f.submitted(title)
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, rev.ID)
+	f.mustApprove(rev.ID)
 	return rev
-}
-
-func (f fixture) publish(lesson, rev int64) error {
-	return f.exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev, lesson)
 }
 
 // closedAt returns the revision's candidate_closed_at.
@@ -130,7 +128,7 @@ func TestRestoringEarlierRevisionKeepsDraftsAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, second.ID)
+	f.mustApprove(second.ID)
 	// The newer approval blocks drafts while the first edition stays published.
 	_, err = f.store.CreateDraft(f.ctx, f.author, first.LessonID, lessons.Fields{Content: doc("Blocked", "fr")})
 	wantErr(t, err, lessons.ErrActiveCandidateExists)
@@ -168,7 +166,7 @@ func TestCandidateClosedAtRules(t *testing.T) {
 	wantSQLState(t, "close a revision in review", f.exec(closeSQL, inReview.ID), "LRN01")
 	wantSQLState(t, "approve and close at once", f.exec(`UPDATE lesson_revisions SET status = 'approved', candidate_closed_at = now() WHERE id = $1`, inReview.ID), "LRN01")
 	requested := f.submitted("Changes requested")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, requested.ID)
+	f.mustRequestChanges(requested.ID)
 	wantSQLState(t, "close a changes-requested revision", f.exec(closeSQL, requested.ID), "LRN01")
 	// A revision cannot be created closed.
 	wantSQLState(t, "insert closed", f.exec(`
@@ -248,7 +246,7 @@ func TestCandidateClosedAtRules(t *testing.T) {
 	if err := tx.QueryRow(f.ctx, `SELECT now()`).Scan(&txTime); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(f.ctx, `UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, approved.ID, approved.LessonID); err != nil {
+	if err := f.publishIn(tx, approved.LessonID, approved.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(f.ctx); err != nil {
@@ -281,8 +279,13 @@ func TestPublishingStillRequiresApproval(t *testing.T) {
 	inReview := f.submitted("In review")
 	wantSQLState(t, "publish in review", f.publish(inReview.LessonID, inReview.ID), "LRN01")
 	requested := f.submitted("Changes requested")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, requested.ID)
+	f.mustRequestChanges(requested.ID)
 	wantSQLState(t, "publish changes requested", f.publish(requested.LessonID, requested.ID), "LRN01")
+	// Raw pointer updates without an audit row reach the 0004 approved-only
+	// guard first.
+	for name, r := range map[string]lessons.Revision{"draft": draft, "in review": inReview, "changes requested": requested} {
+		wantGuard(t, "raw pointer to "+name, f.exec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, r.ID, r.LessonID), approvedOnly)
+	}
 	for _, id := range []int64{draft.ID, inReview.ID, requested.ID} {
 		if f.closedAt(id) != nil {
 			t.Fatalf("rejected publication closed revision %d", id)
@@ -306,7 +309,7 @@ func TestPublishAndCreateDraftAreSerialized(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(f.ctx) }()
-	if _, err := tx.Exec(f.ctx, `UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev.ID, rev.LessonID); err != nil {
+	if err := f.publishIn(tx, rev.LessonID, rev.ID); err != nil {
 		t.Fatal(err)
 	}
 	type result struct {
@@ -337,7 +340,7 @@ func TestPublishAndCreateDraftAreSerialized(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx2.Rollback(f.ctx) }()
-	if _, err := tx2.Exec(f.ctx, `UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev.ID, rev.LessonID); err != nil {
+	if err := f.publishIn(tx2, rev.LessonID, rev.ID); err != nil {
 		t.Fatal(err)
 	}
 	go func() {
@@ -481,7 +484,9 @@ func TestCandidateCloseRequiresTableOwner(t *testing.T) {
 	wantErr(t, err, lessons.ErrActiveCandidateExists)
 
 	// Publication by the same role closes it.
-	if err := asRole(fmt.Sprintf(`UPDATE %s.lessons SET published_revision_id = %d WHERE id = %d`, qs, rev.ID, rev.LessonID)); err != nil {
+	if err := asRole(
+		fmt.Sprintf(`INSERT INTO %s.publication_audit (lesson_id, revision_id, actor_id, action) VALUES (%d, %d, %d, 'publish')`, qs, rev.LessonID, rev.ID, f.publisher),
+		fmt.Sprintf(`UPDATE %s.lessons SET published_revision_id = %d WHERE id = %d`, qs, rev.ID, rev.LessonID)); err != nil {
 		t.Fatalf("publication as the role: %v", err)
 	}
 	if f.closedAt(rev.ID) == nil {

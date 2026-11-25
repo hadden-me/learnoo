@@ -92,3 +92,7 @@ Reviewed the guidance, PR template, licensing status, decision record and review
 | #40 | Request changes: duplicate chapters creation conflicts with current schema. Rebuild the migration and test fresh/upgrade paths before reconsideration. |
 
 No PR was merged and no approving review was submitted by this pass. Recommendations are not the owner's explicit approval.
+
+### Concurrent state change
+
+GitHub reports #73 merged at 2026-11-25 21:06:04 UTC (22:06:04 Europe/Berlin), outside this review's actions. Develop is now `713e3cb`. The review above covers #73's exact head; no claim is made that this pass authorized its merge. PR #72 was refreshed again to preserve the newly merged decision notes. Six PRs remain open at this snapshot; the five external heads remain unchanged. Their targeted combined integration tests recorded above were on `14b2ae1`, so final CI must use the newer base before merging them.

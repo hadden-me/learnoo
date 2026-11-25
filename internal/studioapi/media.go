@@ -201,8 +201,8 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 
 // readableBy is the media read rule for the user in parameter $2 on asset
 // row a: the user uploaded the asset (media_uploads, also for a deduplicated
-// upload) or authored a revision that references it. Reviewer and reader
-// access come with LRN-007 and LRN-008.
+// upload) or authored a revision that references it. Reviewers use
+// reviewableBy (review.go); reader access comes with LRN-008.
 const readableBy = `(EXISTS (SELECT 1 FROM media_uploads u WHERE u.media_asset_id = a.id AND u.user_id = $2)
 	OR EXISTS (SELECT 1 FROM revision_media rm JOIN lesson_revisions r ON r.id = rm.revision_id
 	            WHERE rm.media_asset_id = a.id AND r.author_id = $2))`
@@ -239,6 +239,12 @@ func (h *Handlers) checkMedia(w http.ResponseWriter, r *http.Request, ids []int6
 // serveMedia returns a stored image to a signed-in author. The content type
 // comes from the validated storage key, never from the request.
 func (h *Handlers) serveMedia(w http.ResponseWriter, r *http.Request) {
+	h.serveMediaWhere(w, r, readableBy)
+}
+
+// serveMediaWhere serves the asset if access (an SQL predicate on asset row
+// a and the caller in $2) holds; otherwise 404, as for a missing ID.
+func (h *Handlers) serveMediaWhere(w http.ResponseWriter, r *http.Request, access string) {
 	id, ok := parseID(r.PathValue("mediaId"))
 	if !ok {
 		notFound(w)
@@ -247,7 +253,7 @@ func (h *Handlers) serveMedia(w http.ResponseWriter, r *http.Request) {
 	var key string
 	err := h.DB.QueryRow(r.Context(), `
 		SELECT storage_key FROM media_assets a
-		 WHERE id = $1 AND `+readableBy+``, id, actor(r)).Scan(&key)
+		 WHERE id = $1 AND `+access+``, id, actor(r)).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		notFound(w)
 		return

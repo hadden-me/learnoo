@@ -58,6 +58,29 @@ func (m *Middleware) RequireReviewer(subject func(*http.Request) (int64, error),
 	})
 }
 
+// RequireAnyReviewer allows only users assigned to review at least one
+// subject. Routes whose subject is known only after a lookup use it as the
+// early check and then check the subject with RequireReviewerTx.
+func (m *Middleware) RequireAnyReviewer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := auth.SessionFrom(r.Context())
+		if !ok {
+			auth.WriteError(w, http.StatusUnauthorized, "unauthenticated", "Sign in to continue.")
+			return
+		}
+		set, err := m.store.Load(r.Context(), sess.User.ID)
+		if err != nil {
+			m.deny(w, err)
+			return
+		}
+		if len(set.ReviewerSubjects()) == 0 {
+			m.deny(w, ErrDenied)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (m *Middleware) deny(w http.ResponseWriter, err error) {
 	if err != ErrDenied {
 		// A failed lookup still denies; log the cause without request data.

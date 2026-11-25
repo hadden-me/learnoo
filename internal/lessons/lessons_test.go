@@ -17,6 +17,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/rendering"
 	"github.com/hadden-me/learnoo/internal/users"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -185,13 +186,88 @@ func wantSQLState(t *testing.T, what string, err error, code string) {
 
 type fixture struct {
 	*env
-	author  int64
-	subject int64
+	author    int64
+	subject   int64
+	reviewer  int64 // assigned to subject
+	publisher int64
 }
 
 func newFixture(t *testing.T) fixture {
 	e := newEnv(t)
-	return fixture{env: e, author: e.newAuthor("author"), subject: e.newSubject("simulated-math")}
+	subject := e.newSubject("simulated-math")
+	reviewer := e.user("fixture-reviewer")
+	if _, err := e.perms.GrantReviewer(e.ctx, operator, reviewer, subject); err != nil {
+		t.Fatal(err)
+	}
+	publisher := e.user("fixture-publisher")
+	if _, err := e.perms.Grant(e.ctx, operator, publisher, permissions.Publisher); err != nil {
+		t.Fatal(err)
+	}
+	return fixture{env: e, author: e.newAuthor("author"), subject: subject, reviewer: reviewer, publisher: publisher}
+}
+
+// decide simulates a review decision with direct SQL, as the database
+// requires since LRN-007 (migrations/0006_review_publication.sql): the
+// fixture's reviewer records the decision and set applies the status change
+// in the same transaction. The review workflow itself is internal/review.
+func (f fixture) decide(rev int64, action, set string) error {
+	tx, err := f.db.Begin(f.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(f.ctx) }()
+	var comment *string
+	if action == "request_changes" {
+		c := "Simulated reviewer comment."
+		comment = &c
+	}
+	if _, err := tx.Exec(f.ctx, `INSERT INTO review_decisions (revision_id, reviewer_id, action, comment) VALUES ($1, $2, $3, $4)`,
+		rev, f.reviewer, action, comment); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(f.ctx, `UPDATE lesson_revisions SET `+set+` WHERE id = $1`, rev); err != nil {
+		return err
+	}
+	return tx.Commit(f.ctx)
+}
+
+func (f fixture) mustApprove(rev int64) {
+	f.t.Helper()
+	if err := f.decide(rev, "approve", `status = 'approved'`); err != nil {
+		f.t.Fatalf("approve %d: %v", rev, err)
+	}
+}
+
+func (f fixture) mustRequestChanges(rev int64) {
+	f.t.Helper()
+	if err := f.decide(rev, "request_changes", `status = 'changes_requested'`); err != nil {
+		f.t.Fatalf("request changes on %d: %v", rev, err)
+	}
+}
+
+// publishIn simulates publication inside tx with direct SQL: an audit row by
+// the fixture's publisher naming the current pointer, then the pointer.
+func (f fixture) publishIn(tx pgx.Tx, lesson, rev int64) error {
+	if _, err := tx.Exec(f.ctx, `
+		INSERT INTO publication_audit (lesson_id, revision_id, previous_revision_id, actor_id, action)
+		SELECT $1, $2, published_revision_id, $3, 'publish' FROM lessons WHERE id = $1`, lesson, rev, f.publisher); err != nil {
+		return err
+	}
+	_, err := tx.Exec(f.ctx, `UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev, lesson)
+	return err
+}
+
+// publish runs publishIn in its own transaction.
+func (f fixture) publish(lesson, rev int64) error {
+	tx, err := f.db.Begin(f.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(f.ctx) }()
+	if err := f.publishIn(tx, lesson, rev); err != nil {
+		return err
+	}
+	return tx.Commit(f.ctx)
 }
 
 func (f fixture) lesson(title string) lessons.Revision {
@@ -421,7 +497,7 @@ func TestForeignKeysAndUniqueness(t *testing.T) {
 	}
 	other := f.lesson("Other lesson")
 	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+	f.mustRequestChanges(rev.ID)
 	wantSQLState(t, "duplicate revision number", insert(rev.LessonID, 1, "fr", f.subject, nil, nil, "draft"), "23505")
 	wantSQLState(t, "chapter of another subject", insert(rev.LessonID, 2, "fr", f.subject, &foreignChapter, nil, "draft"), "23503")
 	wantSQLState(t, "subject differs from lesson", insert(rev.LessonID, 2, "fr", physics, nil, nil, "draft"), "23503")
@@ -474,7 +550,7 @@ func TestConcurrentDraftCreationExactlyOne(t *testing.T) {
 	const workers = 8
 	for i := 0; i < 15; i++ {
 		rev := f.submitted(fmt.Sprintf("Lesson %d", i))
-		f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+		f.mustRequestChanges(rev.ID)
 		var start sync.WaitGroup
 		start.Add(1)
 		errs := make(chan error, workers)
@@ -511,7 +587,7 @@ func TestActiveCandidateConstraintUnderDirectInserts(t *testing.T) {
 	const workers = 8
 	for i := 0; i < 15; i++ {
 		rev := f.submitted(fmt.Sprintf("Lesson %d", i))
-		f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+		f.mustRequestChanges(rev.ID)
 		var start sync.WaitGroup
 		start.Add(1)
 		errs := make(chan error, workers)
@@ -674,7 +750,7 @@ func TestSubmittedSnapshotIsImmutable(t *testing.T) {
 
 	// Status itself may still move forward (review decisions are LRN-007),
 	// and the frozen snapshot stays byte-identical apart from status.
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, rev.ID)
+	f.mustApprove(rev.ID)
 	if got := strings.Replace(f.snapshot(rev.ID), `"status": "approved"`, `"status": "in_review"`, 1); got != before {
 		t.Fatalf("status change altered the snapshot:\n%s\n%s", before, got)
 	}
@@ -700,7 +776,7 @@ func TestChangesRequestedDoesNotBlockSuccessor(t *testing.T) {
 	if _, err := f.store.CreateDraft(f.ctx, f.author, rev.LessonID, lessons.Fields{Content: doc("Too early", "fr")}); !errors.Is(err, lessons.ErrActiveCandidateExists) {
 		t.Fatalf("draft while in review: %v", err)
 	}
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, rev.ID)
+	f.mustRequestChanges(rev.ID)
 	before := f.snapshot(rev.ID)
 
 	next, err := f.store.CreateDraft(f.ctx, f.author, rev.LessonID, lessons.Fields{Content: doc("Corrected", "fr")})
@@ -727,9 +803,11 @@ func TestChangesRequestedDoesNotBlockSuccessor(t *testing.T) {
 func TestPublishedPointerUnaffectedByDrafting(t *testing.T) {
 	f := newFixture(t)
 	rev := f.submitted("Published")
-	// Approval and publication are LRN-007; simulate them directly.
-	f.mustExec(`UPDATE lesson_revisions SET status = 'approved' WHERE id = $1`, rev.ID)
-	f.mustExec(`UPDATE lessons SET published_revision_id = $1 WHERE id = $2`, rev.ID, rev.LessonID)
+	// Simulate approval and publication with direct SQL.
+	f.mustApprove(rev.ID)
+	if err := f.publish(rev.LessonID, rev.ID); err != nil {
+		t.Fatal(err)
+	}
 	published := f.snapshot(rev.ID)
 
 	// An approved, published revision is not an active candidate.
@@ -758,7 +836,7 @@ func TestPublishedPointerUnaffectedByDrafting(t *testing.T) {
 		t.Fatal("published snapshot changed")
 	}
 	// Archived lessons accept no new drafts.
-	f.mustExec(`UPDATE lesson_revisions SET status = 'changes_requested' WHERE id = $1`, draft.ID)
+	f.mustRequestChanges(draft.ID)
 	f.mustExec(`UPDATE lessons SET archived_at = now() WHERE id = $1`, rev.LessonID)
 	if _, err := f.store.CreateDraft(f.ctx, f.author, rev.LessonID, lessons.Fields{Content: doc("Archived", "fr")}); !errors.Is(err, lessons.ErrArchived) {
 		t.Fatalf("draft of archived lesson: %v", err)
