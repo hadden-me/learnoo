@@ -67,7 +67,7 @@ func TestMigrateAndCreateUserCommands(t *testing.T) {
 	if err := run([]string{"migrate"}, nil, &out, log); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "applied 0001_identity.sql") {
+	if !strings.Contains(out.String(), "applied 0001_identity.sql") || !strings.Contains(out.String(), "applied 0003_account_status.sql") {
 		t.Fatalf("output: %s", out.String())
 	}
 	out.Reset()

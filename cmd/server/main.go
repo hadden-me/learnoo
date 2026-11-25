@@ -7,6 +7,8 @@
 //	server bootstrap-admin -email E -name N        create the first administrator; password on stdin
 //	server grant -email E -permission P [-subject CODE]
 //	server revoke -email E -permission P [-subject CODE]
+//	server disable-user -email E                   disable an account and revoke its sessions
+//	server enable-user -email E                    re-enable a disabled account
 //	server show-user -email E                      status, permissions, reviewer subjects and audit
 //
 // Operator commands act as permissions.OperatorAs(permissions.LocalOperatorLabel()):
@@ -32,6 +34,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/permissions"
@@ -75,10 +78,14 @@ func run(args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) err
 		return changePermission(ctx, "grant", args, stdout)
 	case "revoke":
 		return changePermission(ctx, "revoke", args, stdout)
+	case "disable-user":
+		return changeStatus(ctx, "disable", args, stdout)
+	case "enable-user":
+		return changeStatus(ctx, "enable", args, stdout)
 	case "show-user":
 		return showUser(ctx, args, stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke or show-user)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user or show-user)", cmd)
 	}
 }
 
@@ -361,6 +368,55 @@ func changePermission(ctx context.Context, action string, args []string, stdout 
 	return nil
 }
 
+// changeStatus disables or enables an account.
+func changeStatus(ctx context.Context, action string, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet(action+"-user", flag.ContinueOnError)
+	email := fs.String("email", "", "account email (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || fs.NArg() > 0 {
+		return fmt.Errorf("%s-user needs -email", action)
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	u, err := lookupUser(ctx, pool, *email)
+	if err != nil {
+		return err
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	store := accounts.NewStore(pool)
+	var changed bool
+	if action == "disable" {
+		changed, err = store.Disable(ctx, actor, u.ID)
+	} else {
+		changed, err = store.Enable(ctx, actor, u.ID)
+	}
+	if errors.Is(err, permissions.ErrLastAdministrator) {
+		return fmt.Errorf("%w: grant administrator to another active account first", err)
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case changed && action == "disable":
+		fmt.Fprintf(stdout, "disabled %s and revoked its sessions\n", u.Email)
+	case changed:
+		fmt.Fprintf(stdout, "enabled %s\n", u.Email)
+	case action == "disable":
+		fmt.Fprintf(stdout, "no change: %s is already disabled\n", u.Email)
+	default:
+		fmt.Fprintf(stdout, "no change: %s is already enabled\n", u.Email)
+	}
+	return nil
+}
+
 // showUser prints a user's status, stored permissions and their history.
 func showUser(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("show-user", flag.ContinueOnError)
@@ -389,6 +445,10 @@ func showUser(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	statusAudit, err := accounts.NewStore(pool).Audit(ctx, u.ID)
+	if err != nil {
+		return err
+	}
 	status := "active"
 	if u.Disabled {
 		status = "disabled (holds no effective permissions)"
@@ -410,7 +470,14 @@ func showUser(ctx context.Context, args []string, stdout io.Writer) error {
 		if a.SubjectID != nil {
 			what += " subject=" + a.SubjectCode
 		}
-		fmt.Fprintf(stdout, "  %s %s %s by %s\n", a.OccurredAt.UTC().Format(time.RFC3339), a.Action, what, permissionActorName(a))
+		fmt.Fprintf(stdout, "  %s %s %s by %s\n", a.OccurredAt.UTC().Format(time.RFC3339), a.Action, what, labelledActorName(a.ActorID, a.OperatorLabel))
+	}
+	fmt.Fprintln(stdout, "account status audit:")
+	if len(statusAudit) == 0 {
+		fmt.Fprintln(stdout, "  (none)")
+	}
+	for _, a := range statusAudit {
+		fmt.Fprintf(stdout, "  %s %s by %s\n", a.OccurredAt.UTC().Format(time.RFC3339), a.Action, labelledActorName(a.ActorID, a.OperatorLabel))
 	}
 	return nil
 }
@@ -421,11 +488,13 @@ func operatorActor() (permissions.Actor, error) {
 	return permissions.OperatorAs(permissions.LocalOperatorLabel())
 }
 
-func permissionActorName(a permissions.AuditEntry) string {
-	if a.ActorID == nil && a.OperatorLabel != "" {
-		return "operator " + a.OperatorLabel
+// labelledActorName names an audit actor: "operator <label>" for operator
+// tools, "user <id>" for signed-in users.
+func labelledActorName(id *int64, label string) string {
+	if id == nil && label != "" {
+		return "operator " + label
 	}
-	return actorName(a.ActorID)
+	return actorName(id)
 }
 
 func actorName(id *int64) string {

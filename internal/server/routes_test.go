@@ -354,7 +354,7 @@ var _ http.Handler
 func TestNoPermissionRoutes(t *testing.T) {
 	e := newEnv(t)
 	token, csrf := e.mustLogin()
-	for _, path := range []string{"/api/permissions", "/api/admin/permissions", "/api/users/1/permissions", "/api/admin/users/1"} {
+	for _, path := range []string{"/api/permissions", "/api/admin/permissions", "/api/users/1/permissions", "/api/admin/users/1", "/api/users/1/disable", "/api/users/1/enable", "/api/admin/users/1/status"} {
 		for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			w := e.do(m, path, map[string]string{"permission": "administrator"}, withCookie(token), withCSRF(csrf))
 			if w.Code != http.StatusNotFound {

@@ -70,7 +70,7 @@ func (c *cli) count(sql string) int {
 func (c *cli) snapshot() string {
 	c.t.Helper()
 	var parts []string
-	for _, table := range []string{"users", "user_permissions", "reviewer_assignments", "permission_audit", "subjects", "sessions"} {
+	for _, table := range []string{"users", "user_permissions", "reviewer_assignments", "permission_audit", "subjects", "sessions", "account_status_audit"} {
 		parts = append(parts, fmt.Sprintf("%s=%d", table, c.count("SELECT count(*) FROM "+table)))
 	}
 	var disabled int
@@ -96,7 +96,7 @@ func TestBootstrapAdminCommand(t *testing.T) {
 	c := newCLI(t)
 	out := c.ok(cliPassword, "bootstrap-admin", "-email", "Admin@Example.test", "-name", "Simulated Admin")
 	wantOut(t, out, "created administrator")
-	if got := c.snapshot(); got != "users=1 user_permissions=3 reviewer_assignments=0 permission_audit=3 subjects=0 sessions=0 disabled=0" {
+	if got := c.snapshot(); got != "users=1 user_permissions=3 reviewer_assignments=0 permission_audit=3 subjects=0 sessions=0 account_status_audit=0 disabled=0" {
 		t.Fatalf("after bootstrap: %s", got)
 	}
 	if n := c.count(`SELECT count(*) FROM permission_audit WHERE actor_id IS NULL AND action = 'grant' AND subject_id IS NULL`); n != 3 {
@@ -255,6 +255,13 @@ func TestInvalidOperatorCommandsChangeNothing(t *testing.T) {
 		{[]string{"revoke", "-email", "admin@example.test", "-permission", "administrator"}, "", "last active administrator"},
 		{[]string{"show-user", "-email", "nobody@example.test"}, "", "no account with email"},
 		{[]string{"show-user"}, "", "needs -email"},
+		{[]string{"disable-user"}, "", "disable-user needs -email"},
+		{[]string{"enable-user", "-email", "teacher@example.test", "extra"}, "", "enable-user needs -email"},
+		{[]string{"disable-user", "-bogus"}, "", "flag provided but not defined"},
+		{[]string{"disable-user", "-email", "nobody@example.test"}, "", "no account with email"},
+		{[]string{"enable-user", "-email", "nobody@example.test"}, "", "no account with email"},
+		{[]string{"disable-user", "-email", "not-an-email"}, "", "invalid email"},
+		{[]string{"disable-user", "-email", "admin@example.test"}, "", "last active administrator"},
 		{[]string{"bootstrap-admin", "-email", "x@example.test"}, cliPassword, "needs -email and -name"},
 		{[]string{"bootstrap-admin", "-email", "x@example.test", "-name", "X"}, "short\n", "at least 12"},
 		{[]string{"bootstrap-admin", "-email", "x@example.test", "-name", "X"}, "", "at least 12"},
@@ -330,6 +337,8 @@ func TestOperatorCommandsRefusePendingMigrations(t *testing.T) {
 		{"", []string{"grant", "-email", "a@example.test", "-permission", "author"}},
 		{"", []string{"revoke", "-email", "a@example.test", "-permission", "author"}},
 		{"", []string{"show-user", "-email", "a@example.test"}},
+		{"", []string{"disable-user", "-email", "a@example.test"}},
+		{"", []string{"enable-user", "-email", "a@example.test"}},
 		{cliPassword, []string{"bootstrap-admin", "-email", "a@example.test", "-name", "A"}},
 	} {
 		if _, err := c.run(tc.stdin, tc.args...); err == nil || !strings.Contains(err.Error(), "pending migrations") {
@@ -343,7 +352,8 @@ func TestOperatorCommandsRefusePendingMigrations(t *testing.T) {
 
 // A disabled administrator is not active: it neither blocks bootstrap-admin
 // nor lets the last active administrator lose administrator. (Accounts are
-// disabled directly in the database here; the CLI does not disable them.)
+// disabled directly in the database here: disable-user refuses to disable
+// the last active administrator.)
 func TestDisabledAdministratorIsNotActive(t *testing.T) {
 	c := newCLI(t)
 	c.ok(cliPassword, "bootstrap-admin", "-email", "old@example.test", "-name", "Simulated Old Admin")
@@ -360,4 +370,80 @@ func TestDisabledAdministratorIsNotActive(t *testing.T) {
 		t.Fatal("refused revoke changed the database")
 	}
 	wantOut(t, c.ok("", "revoke", "-email", "old@example.test", "-permission", "administrator"), "revoked administrator from old@example.test")
+}
+
+func TestDisableAndEnableUserCommands(t *testing.T) {
+	c := newCLI(t)
+	c.ok(cliPassword, "bootstrap-admin", "-email", "admin@example.test", "-name", "Simulated Admin")
+	c.ok(cliPassword, "create-user", "-email", "teacher@example.test", "-name", "Simulated Teacher")
+	ctx := context.Background()
+	// Two simulated sessions for the teacher, one for the administrator.
+	_, err := c.pool.Exec(ctx, `INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+		SELECT sha256(convert_to(u.email || n, 'UTF8')), u.id, 'csrf', now(), now(), now() + interval '1 hour', now() + interval '1 day'
+		  FROM users u CROSS JOIN generate_series(1, 2) n
+		 WHERE u.email = 'teacher@example.test' OR (u.email = 'admin@example.test' AND n = 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := permissions.LocalOperatorLabel()
+
+	wantOut(t, c.ok("", "disable-user", "-email", "teacher@example.test"), "disabled teacher@example.test and revoked its sessions")
+	if n := c.count(`SELECT count(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = 'teacher@example.test'`); n != 0 {
+		t.Fatalf("%d teacher sessions left", n)
+	}
+	if n := c.count(`SELECT count(*) FROM sessions`); n != 1 {
+		t.Fatalf("administrator session revoked too: %d left", n)
+	}
+	wantOut(t, c.ok("", "disable-user", "-email", "teacher@example.test"), "no change: teacher@example.test is already disabled")
+	out := c.ok("", "show-user", "-email", "teacher@example.test")
+	wantOut(t, out, "status: disabled")
+	wantOut(t, out, "account status audit:\n")
+	wantOut(t, out, " disable by operator "+label+"\n")
+
+	// Enabling also purges any session the disabled account holds.
+	if _, err := c.pool.Exec(ctx, `INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+		SELECT sha256('leftover'), id, 'csrf', now(), now(), now() + interval '1 hour', now() + interval '1 day'
+		  FROM users WHERE email = 'teacher@example.test'`); err != nil {
+		t.Fatal(err)
+	}
+	wantOut(t, c.ok("", "enable-user", "-email", "teacher@example.test"), "enabled teacher@example.test")
+	if n := c.count(`SELECT count(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = 'teacher@example.test'`); n != 0 {
+		t.Fatalf("enable kept %d teacher sessions", n)
+	}
+	wantOut(t, c.ok("", "enable-user", "-email", "teacher@example.test"), "no change: teacher@example.test is already enabled")
+	if n := c.count(`SELECT count(*) FROM account_status_audit WHERE actor_id IS NULL AND operator_label = '` + label + `'`); n != 2 {
+		t.Fatalf("%d status audit rows with the exact local operator label, want 2", n)
+	}
+	if n := c.count(`SELECT count(*) FROM account_status_audit`); n != 2 {
+		t.Fatalf("%d status audit rows, want 2", n)
+	}
+	out = c.ok("", "show-user", "-email", "teacher@example.test")
+	wantOut(t, out, "status: active")
+	lines := strings.Split(out, "\n")
+	var statusLines []string
+	for i, l := range lines {
+		if l == "account status audit:" {
+			statusLines = lines[i+1:]
+		}
+	}
+	if len(statusLines) < 2 || !strings.HasSuffix(statusLines[0], " disable by operator "+label) ||
+		!strings.HasSuffix(statusLines[1], " enable by operator "+label) {
+		t.Fatalf("status audit lines without the exact operator label:\n%s", out)
+	}
+
+	// With a second administrator the first may be disabled; the second
+	// then may not, by disable or by revoke.
+	c.ok("", "grant", "-email", "teacher@example.test", "-permission", "administrator")
+	wantOut(t, c.ok("", "disable-user", "-email", "admin@example.test"), "disabled admin@example.test")
+	before := c.snapshot()
+	if _, err := c.run("", "disable-user", "-email", "teacher@example.test"); err == nil || !strings.Contains(err.Error(), "last active administrator") {
+		t.Fatalf("last administrator disable: %v", err)
+	}
+	if _, err := c.run("", "revoke", "-email", "teacher@example.test", "-permission", "administrator"); err == nil || !strings.Contains(err.Error(), "last active administrator") {
+		t.Fatalf("last administrator revoke with the other disabled: %v", err)
+	}
+	if c.snapshot() != before {
+		t.Fatal("refused changes changed the database")
+	}
+	wantOut(t, c.ok("", "show-user", "-email", "admin@example.test"), "status: disabled (holds no effective permissions)")
 }
