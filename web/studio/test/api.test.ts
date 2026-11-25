@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Api, ApiError } from '../src/api/client';
-import { describeError } from '../src/api/messages';
+import { describeError, isHeif } from '../src/api/messages';
 import { buildFields, discardOnServer, saveToServer, submitToServer } from '../src/drafts';
 
 type Call = { url: string; method: string; headers: Record<string, string>; body: unknown };
@@ -126,6 +126,18 @@ describe('API client', () => {
     expect(describeError(new ApiError(422, 'trailing_data', 'x'))).toMatch(/données après sa fin.*PNG/);
     expect(describeError(new ApiError(422, 'invalid_content', 'blocks[0]: empty text'))).toContain('blocks[0]: empty text');
     expect(describeError(new Error('boom'))).toBe('Erreur inattendue dans le Studio.');
+  });
+
+  it('explains HEIC photos and recognizes them before uploading', () => {
+    expect(describeError(new ApiError(415, 'unsupported_heic', 'x'))).toMatch(/HEIC.*JPEG/);
+    expect(isHeif({ type: 'image/heic', name: 'IMG_0001.HEIC' })).toBe(true);
+    expect(isHeif({ type: 'image/HEIF', name: 'photo' })).toBe(true);
+    expect(isHeif({ type: '', name: 'IMG_0001.heic' })).toBe(true);
+    expect(isHeif({ type: 'image/jpeg', name: 'IMG_0001.jpg' })).toBe(false);
+    expect(isHeif({ type: 'application/octet-stream', name: 'IMG_0001.HEIF' })).toBe(true);
+    // A typed file is judged by its type, not its name.
+    expect(isHeif({ type: 'image/jpeg', name: 'converted.heic' })).toBe(false);
+    expect(isHeif({ type: 'image/png', name: 'photo.heif' })).toBe(false);
   });
 });
 

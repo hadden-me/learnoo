@@ -8,7 +8,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';
 import { ApiError, type Chapter, type Media, type Revision } from '../api/client';
-import { describeError } from '../api/messages';
+import { describeError, isHeif } from '../api/messages';
 import { isUnloadAllowed, useStudio } from '../context';
 import { buildFields, discardOnServer, saveToServer, submitToServer, type SaveTarget } from '../drafts';
 import { LANGUAGE_LABELS, formatDateTime, formatTime } from '../labels';
@@ -407,6 +407,10 @@ export function DraftEditor(props: DraftEditorProps) {
     setUploadError(null);
     if (expired) {
       setUploadError(describeError(new ApiError(0, accountChanged ? 'account_changed' : 'unauthenticated', '')));
+      return;
+    }
+    if (isHeif(file)) {
+      setUploadError(describeError(new ApiError(415, 'unsupported_heic', '')));
       return;
     }
     if (!IMAGE_TYPES.includes(file.type)) {

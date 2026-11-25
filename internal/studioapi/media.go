@@ -36,6 +36,10 @@ type mediaJSON struct {
 func (h *Handlers) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	declared := r.Header.Get("Content-Type")
 	mt, _, err := mime.ParseMediaType(declared)
+	if err == nil && isHEIFType(mt) {
+		unsupportedHEIC(w)
+		return
+	}
 	if err != nil || (mt != media.ContentTypePNG && mt != media.ContentTypeJPEG && mt != media.ContentTypeWebP) {
 		auth.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
 			"Upload a PNG, JPEG or WebP image as the raw request body with its Content-Type.")
@@ -156,6 +160,20 @@ func tooLarge(w http.ResponseWriter) {
 		fmt.Sprintf("Images may be at most %d MiB.", media.MaxUploadBytes>>20))
 }
 
+// isHEIFType reports the declared types of HEIC/HEIF photos.
+func isHEIFType(mt string) bool {
+	switch mt {
+	case "image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence":
+		return true
+	}
+	return false
+}
+
+func unsupportedHEIC(w http.ResponseWriter) {
+	auth.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_heic",
+		"HEIC/HEIF photos are not accepted yet. Export or share the photo as JPEG (or save it as PNG) and upload that.")
+}
+
 func busy(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "5")
 	auth.WriteError(w, http.StatusServiceUnavailable, "busy", "The server is processing other uploads. Try again shortly.")
@@ -168,6 +186,8 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 		tooLarge(w)
 	case errors.Is(err, media.ErrEmpty):
 		auth.WriteError(w, http.StatusBadRequest, "invalid_request", "The upload is empty.")
+	case errors.Is(err, media.ErrUnsupportedHEIC):
+		unsupportedHEIC(w)
 	case errors.Is(err, media.ErrUnsupportedType):
 		auth.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
 			"Only PNG, JPEG and WebP images are accepted (no SVG, GIF or other formats).")
@@ -179,7 +199,7 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 			fmt.Sprintf("Images may be at most %d pixels per side and %d megapixels.", media.MaxSide, media.MaxPixels/1_000_000))
 	case errors.Is(err, media.ErrTrailingData):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "trailing_data",
-			"The file has extra data after the end of the image, as many phone photos do. "+
+			"The file has data after the end of the image that is not a recognized phone-photo structure. "+
 				"Re-export the image (or take a screenshot of it) and upload that, or upload it as PNG.")
 	case errors.Is(err, media.ErrCorrupt):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "invalid_image", "The image is corrupt or truncated.")

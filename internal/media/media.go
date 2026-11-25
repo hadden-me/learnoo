@@ -1,11 +1,14 @@
 // Package media validates uploaded lesson images and stores them as
 // immutable, content-addressed files.
 //
-// Process accepts PNG, JPEG and WebP only. The type is detected from magic
-// bytes, never from a filename or client Content-Type. Data after the image's
-// own end marker (polyglot payloads) is rejected. Size and dimension limits are
-// checked before the full decode, and the decoded pixels are re-encoded so
-// that stored bytes carry no metadata (EXIF, GPS, XMP, text chunks, ICC
+// Process accepts PNG, JPEG and WebP only (HEIC/HEIF is recognized and
+// rejected with ErrUnsupportedHEIC). The type is detected from magic bytes,
+// never from a filename or client Content-Type. Data after the image's own end
+// marker (polyglot payloads) is rejected, except the structurally validated
+// phone-photo structures after a JPEG's EOI described in jpeg.go, which are
+// dropped. Size and dimension limits are checked before the full decode, JPEG
+// EXIF orientation is applied, and the decoded pixels are re-encoded so that
+// stored bytes carry no metadata (EXIF, GPS, XMP, text chunks, ICC
 // profiles). WebP is decoded with golang.org/x/image/webp and stored as
 // lossless PNG because the standard library has no WebP encoder. See
 // docs/DECISIONS.md ("Media upload limits").
@@ -66,6 +69,9 @@ var (
 	ErrDimensions      = errors.New("media: image dimensions outside limits")
 	ErrCorrupt         = errors.New("media: image is corrupt or truncated")
 	ErrTrailingData    = errors.New("media: data after the end of the image")
+	// ErrUnsupportedHEIC is a HEIC/HEIF photo. It also matches
+	// ErrUnsupportedType; callers that can, explain how to export JPEG.
+	ErrUnsupportedHEIC = fmt.Errorf("%w: HEIC/HEIF is not supported", ErrUnsupportedType)
 )
 
 // decodeSlots is the process-wide semaphore behind MaxConcurrentDecodes.
@@ -114,16 +120,34 @@ func (a *Asset) Key() string {
 
 type format struct {
 	contentType  string
-	checkEnd     func([]byte) error
+	inspect      func([]byte) (inspection, error)
 	decodeConfig func(io.Reader) (image.Config, error)
 	decode       func(io.Reader) (image.Image, error)
 }
 
 var (
-	formatPNG  = format{ContentTypePNG, checkPNGEnd, png.DecodeConfig, png.Decode}
-	formatJPEG = format{ContentTypeJPEG, checkJPEGEnd, jpeg.DecodeConfig, jpeg.Decode}
-	formatWebP = format{ContentTypeWebP, checkWebPStructure, webp.DecodeConfig, webp.Decode}
+	formatPNG  = format{ContentTypePNG, whole(checkPNGEnd), png.DecodeConfig, png.Decode}
+	formatJPEG = format{ContentTypeJPEG, inspectJPEG, jpeg.DecodeConfig, jpeg.Decode}
+	formatWebP = format{ContentTypeWebP, whole(checkWebPStructure), webp.DecodeConfig, webp.Decode}
 )
+
+// inspection is what the structural check found: the image's own bytes are
+// b[:end] (a JPEG may be followed by validated structures that are dropped),
+// and orientation is the EXIF orientation to apply (1 = as stored).
+type inspection struct {
+	end         int
+	orientation int
+}
+
+// whole adapts a check for formats whose image must fill the upload.
+func whole(check func([]byte) error) func([]byte) (inspection, error) {
+	return func(b []byte) (inspection, error) {
+		if err := check(b); err != nil {
+			return inspection{}, err
+		}
+		return inspection{end: len(b), orientation: 1}, nil
+	}
+}
 
 // sniff identifies an accepted format from magic bytes only.
 func sniff(b []byte) (format, bool) {
@@ -160,6 +184,9 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 
 	f, ok := sniff(raw)
 	if !ok {
+		if isHEIF(raw) {
+			return nil, ErrUnsupportedHEIC
+		}
 		return nil, fmt.Errorf("%w: only PNG, JPEG and WebP are accepted", ErrUnsupportedType)
 	}
 	if declaredType != "" {
@@ -168,16 +195,23 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 			return nil, fmt.Errorf("%w: declared %q, detected %s", ErrTypeMismatch, declaredType, f.contentType)
 		}
 	}
-	if err := f.checkEnd(raw); err != nil {
+	ins, err := f.inspect(raw)
+	if err != nil {
 		return nil, err
 	}
+	// Only the image itself is ever decoded, never the structures after it.
+	data := raw[:ins.end]
 
 	// Header-only check before allocating pixels (decompression-bomb defence).
-	cfg, err := f.decodeConfig(bytes.NewReader(raw))
+	cfg, err := f.decodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, decodeError(err)
 	}
 	if err := checkDimensions(cfg.Width, cfg.Height); err != nil {
+		return nil, err
+	}
+	// The limits are symmetric, but check the upright size too.
+	if err := checkDimensions(orientedSize(cfg.Width, cfg.Height, ins.orientation)); err != nil {
 		return nil, err
 	}
 
@@ -186,14 +220,15 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 	}
 	defer func() { <-decodeSlots }()
 
-	img, err := f.decode(bytes.NewReader(raw))
+	img, err := f.decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, decodeError(err)
 	}
-	b := img.Bounds()
-	if b.Dx() != cfg.Width || b.Dy() != cfg.Height {
+	if b := img.Bounds(); b.Dx() != cfg.Width || b.Dy() != cfg.Height {
 		return nil, fmt.Errorf("%w: header and decoded dimensions differ", ErrCorrupt)
 	}
+	img = orient(img, ins.orientation)
+	b := img.Bounds()
 
 	var out bytes.Buffer
 	stored := ContentTypePNG
@@ -283,67 +318,6 @@ func checkPNGEnd(b []byte) error {
 			return nil
 		}
 		off = end
-	}
-}
-
-// checkJPEGEnd walks the marker segments and entropy-coded data and requires
-// the file to end exactly after the EOI marker. Segment payloads (including
-// EXIF thumbnails that contain their own SOI/EOI) are skipped by length.
-func checkJPEGEnd(b []byte) error {
-	n := len(b)
-	pos := 2 // after SOI
-	for {
-		if pos >= n || b[pos] != 0xFF {
-			return fmt.Errorf("%w: jpeg marker expected", ErrCorrupt)
-		}
-		for pos < n && b[pos] == 0xFF { // fill bytes
-			pos++
-		}
-		if pos >= n {
-			return fmt.Errorf("%w: jpeg ends without EOI", ErrCorrupt)
-		}
-		m := b[pos]
-		pos++
-		switch {
-		case m == 0xD9: // EOI
-			if pos != n {
-				return fmt.Errorf("%w: %d bytes after jpeg EOI", ErrTrailingData, n-pos)
-			}
-			return nil
-		case m == 0x01 || (m >= 0xD0 && m <= 0xD7): // no length
-			continue
-		case m == 0x00 || m == 0xD8:
-			return fmt.Errorf("%w: unexpected jpeg marker 0x%02X", ErrCorrupt, m)
-		}
-		if pos+2 > n {
-			return fmt.Errorf("%w: jpeg segment truncated", ErrCorrupt)
-		}
-		length := int(binary.BigEndian.Uint16(b[pos:]))
-		if length < 2 || pos+length > n {
-			return fmt.Errorf("%w: jpeg segment length invalid", ErrCorrupt)
-		}
-		pos += length
-		if m != 0xDA { // not SOS
-			continue
-		}
-		// Entropy-coded data runs until a marker other than a stuffed 0xFF00
-		// or a restart marker.
-		for {
-			if pos+1 >= n {
-				return fmt.Errorf("%w: jpeg ends without EOI", ErrCorrupt)
-			}
-			if b[pos] == 0xFF {
-				next := b[pos+1]
-				if next == 0x00 || (next >= 0xD0 && next <= 0xD7) {
-					pos += 2
-					continue
-				}
-				if next != 0xFF {
-					break
-				}
-			}
-			pos++
-		}
 	}
 }
 

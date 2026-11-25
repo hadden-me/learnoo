@@ -6,7 +6,7 @@
 *.key
 
 # Dependencies and generated outputs
-node_modules/
+node_modules
 dist/
 build/
 coverage/
