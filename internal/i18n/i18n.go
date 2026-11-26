@@ -18,8 +18,8 @@
 //     their links carry it. Each locale is a separate URL with its own ETag,
 //     so no Vary header is needed.
 //
-// The cookie is not HttpOnly because the Studio (a single-page application)
-// reads and writes it; it holds nothing but "fr" or "ar".
+// The cookie is HttpOnly: only the server reads it, and it writes the
+// Studio shell's <html lang dir> from it (internal/studioweb).
 package i18n
 
 import (
@@ -117,7 +117,7 @@ func FromCookie(r *http.Request) Locale {
 func SetCookie(w http.ResponseWriter, l Locale) {
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: string(l), Path: "/", MaxAge: cookieMaxAge,
-		Secure: true, SameSite: http.SameSiteLaxMode,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 }
 
@@ -270,7 +270,9 @@ func T(l Locale, key string, args ...any) string {
 // N returns the plural form of key for n, with {n} replaced by n and
 // {0}, {1}… by args.
 func N(l Locale, key string, n int, args ...any) string {
-	return strings.ReplaceAll(T(l, PluralKey(l, key, n), args...), "{n}", strconv.Itoa(n))
+	// The count first, so that an argument containing "{n}" is never rewritten.
+	text := strings.ReplaceAll(Message(l, PluralKey(l, key, n)), "{n}", strconv.Itoa(n))
+	return Format(text, func(a any) string { return fmt.Sprint(a) }, args...)
 }
 
 // PluralKey is the catalog key of key's form for n.

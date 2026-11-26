@@ -30,12 +30,13 @@ export const TABLES: Record<Locale, Record<string, string | FrPlural | ArPlural>
 /** The interface text of key in the current locale, with {name} placeholders filled. */
 export function t(key: MessageKey, params?: Record<string, string | number>, l: Locale = locale()): string {
   const text = TABLES[l][key] ?? TABLES.fr[key];
-  return format(typeof text === 'string' ? text : key, params);
+  return format(typeof text === 'string' ? text : key, params, l);
 }
 
 /** The plural form of key for n ({n} is replaced by n). */
 export function tn(key: PluralKey, n: number, params?: Record<string, string | number>, l: Locale = locale()): string {
   const forms = (TABLES[l][key] ?? TABLES.fr[key]) as Partial<ArPlural> | undefined;
   const text = forms?.[pluralCategory(n, l)] ?? forms?.other ?? key;
-  return format(text, { n, ...params });
+  // The count first, so that an argument containing "{n}" is never rewritten.
+  return format(text.replaceAll('{n}', String(n)), params, l);
 }

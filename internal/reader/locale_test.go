@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"html/template"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -200,3 +201,18 @@ func TestCatalogueNameMarkup(t *testing.T) {
 }
 
 func namesOf(fr, ar *string) catalogue.Names { return catalogue.Names{Fr: fr, Ar: ar} }
+
+// TestLinkFragment: message links stay plain local paths.
+func TestLinkFragment(t *testing.T) {
+	link := markupFuncs["link"].(func(string, any) template.HTML)
+	for href, want := range map[string]string{
+		"/catalogue?lang=ar": `<a href="/catalogue?lang=ar">x</a>`,
+		"//evil.test":        `<a href="/">x</a>`,
+		`/\evil.test`:        `<a href="/">x</a>`,
+		"https://evil.test":  `<a href="/">x</a>`,
+	} {
+		if got := string(link(href, "x")); got != want {
+			t.Errorf("link(%q) = %s, want %s", href, got, want)
+		}
+	}
+}

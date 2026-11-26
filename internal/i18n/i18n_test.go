@@ -3,6 +3,7 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -91,6 +92,11 @@ func TestPluralCategory(t *testing.T) {
 	if got := N(AR, "count.lessons", 11); got != "11 درسًا" {
 		t.Errorf("N ar many: %q", got)
 	}
+	// The count is replaced before the arguments: an argument holding
+	// "{n}" is kept as written.
+	if got := Format(strings.ReplaceAll("{n} × {0}", "{n}", "3"), func(a any) string { return a.(string) }, "{n}"); got != "3 × {n}" {
+		t.Errorf("count order: %q", got)
+	}
 }
 
 func TestFormat(t *testing.T) {
@@ -130,7 +136,7 @@ func TestMiddleware(t *testing.T) {
 		t.Fatalf("switch: %d %q", w.Code, w.Header().Get("Location"))
 	}
 	c := w.Result().Cookies()
-	if len(c) != 1 || c[0].Name != CookieName || c[0].Value != "ar" || !c[0].Secure || c[0].HttpOnly || c[0].Path != "/" || c[0].SameSite != http.SameSiteLaxMode || c[0].MaxAge <= 0 {
+	if len(c) != 1 || c[0].Name != CookieName || c[0].Value != "ar" || !c[0].Secure || !c[0].HttpOnly || c[0].Path != "/" || c[0].SameSite != http.SameSiteLaxMode || c[0].MaxAge <= 0 {
 		t.Fatalf("cookie: %+v", c)
 	}
 	// Invalid or repeated values are dropped without a cookie.
@@ -138,6 +144,28 @@ func TestMiddleware(t *testing.T) {
 		w := serve(http.MethodGet, target, "")
 		if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/learn" || len(w.Result().Cookies()) != 0 {
 			t.Errorf("%s: %d %q %v", target, w.Code, w.Header().Get("Location"), w.Result().Cookies())
+		}
+	}
+	// Hostile paths: a backslash (raw or %5C) or a leading // falls back to
+	// "/", and an encoded control character stays encoded in Location.
+	for target, want := range map[string]string{
+		`/learn\evil.test?lang=ar`:         "/",
+		"/learn%5Cevil.test?lang=ar":       "/",
+		"//evil.test/x?lang=ar":            "/",
+		"/learn%0D%0ASet-Cookie:x?lang=ar": "/learn%0D%0ASet-Cookie:x",
+		"/learn%00?lang=ar":                "/learn%00",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		u, err := url.ParseRequestURI(target) // as the server parses a request target
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.URL = u
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		loc := w.Header().Get("Location")
+		if w.Code != http.StatusSeeOther || loc != want || strings.ContainsAny(loc, "\r\n\x00\\") {
+			t.Errorf("%q: %d %q, want %q", target, w.Code, loc, want)
 		}
 	}
 	// A path that is not plainly local never becomes an off-site redirect.

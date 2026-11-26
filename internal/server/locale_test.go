@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -79,7 +80,7 @@ func TestPublicPagesPerLocale(t *testing.T) {
 	// Arabic interface, French content: names follow the interface, the
 	// course text keeps its own language and direction.
 	home := p.public(apiUser{}, "/?lang=ar")
-	wantPage(t, "home ar", home, http.StatusOK, "TEST باكالوريا › TEST شعبة الرياضيات", "TEST طبعة (ساري)",
+	wantPage(t, "home ar", home, http.StatusOK, "TEST باكالوريا › TEST شعبة الرياضيات", "TEST طبعة (سارٍ)",
 		`<a href="/catalogue/test-bac/test-maths/test-math?lang=ar">TEST رياضيات</a>: دورة واحدة، درس واحد`,
 		`href="/login?lang=ar&amp;next=%2Fstudio"`)
 	course := p.public(apiUser{}, "/courses/"+c.PublicID+"?lang=ar")
@@ -87,6 +88,21 @@ func TestPublicPagesPerLocale(t *testing.T) {
 		`<h1 id="course-title" lang="fr" dir="ltr">TEST Cours public</h1>`, "<dd>الفرنسية</dd>",
 		`href="/login?lang=ar&amp;next=%2Flearn%2Fcourses%2F`+c.PublicID+`"`,
 		`<a href="/catalogue/test-bac/test-maths/test-math?lang=ar">TEST باكالوريا › TEST شعبة الرياضيات</a>`)
+
+	// A standalone lesson listed on an Arabic page keeps the locale: the
+	// reader stores it, then asks a signed-out visitor to sign in in Arabic.
+	subject := p.public(apiUser{}, "/catalogue/test-bac/test-maths/test-math?lang=ar")
+	lessonLink := `href="/learn/lessons/` + lesson.publicID + `?lang=ar"`
+	wantPage(t, "subject ar", subject, http.StatusOK, lessonLink)
+	sw := p.page(apiUser{}, http.MethodGet, "/learn/lessons/"+lesson.publicID+"?lang=ar", nil)
+	if sw.Code != http.StatusSeeOther || sw.Header().Get("Location") != "/learn/lessons/"+lesson.publicID || len(sw.Result().Cookies()) != 1 {
+		t.Fatalf("lesson link ar: %d %q %v", sw.Code, sw.Header().Get("Location"), sw.Result().Cookies())
+	}
+	gate := p.page(apiUser{}, http.MethodGet, "/learn/lessons/"+lesson.publicID, nil, withLang("ar"))
+	if gate.Code != http.StatusSeeOther || !strings.HasPrefix(gate.Header().Get("Location"), "/login?next=") {
+		t.Fatalf("lesson gate: %d %q", gate.Code, gate.Header().Get("Location"))
+	}
+	wantPage(t, "login ar", p.page(apiUser{}, http.MethodGet, gate.Header().Get("Location"), nil, withLang("ar")), http.StatusOK, `<html lang="ar" dir="rtl">`, "تسجيل الدخول")
 
 	// Malformed locales are malformed links: the no-store 404 notice.
 	for _, path := range []string{"/?lang=en", "/catalogue?lang=", "/catalogue?lang=ar&lang=fr", "/courses/" + c.PublicID + "?lang=AR"} {
@@ -138,6 +154,9 @@ func TestReaderLocaleCookie(t *testing.T) {
 	if cc := login.Header().Get("Cache-Control"); cc != reader.CacheControl {
 		t.Errorf("login: Cache-Control %q", cc)
 	}
+	// A refused sign-in keeps the return path on its language switch.
+	failed := f.page(apiUser{}, http.MethodPost, "/login", url.Values{"email": {"nobody@example.test"}, "password": {"wrong-password-1"}, "next": {"/learn/search"}}, withLang("ar"))
+	wantPage(t, "failed login ar", failed, http.StatusUnauthorized, `href="/login?lang=fr&amp;next=%2Flearn%2Fsearch"`)
 	// Errors are localized as well.
 	wantPage(t, "404 ar", f.page(s, http.MethodGet, "/learn/lessons/00000000-0000-0000-0000-000000000000", nil, withLang("ar")),
 		http.StatusNotFound, "الدرس غير متاح")

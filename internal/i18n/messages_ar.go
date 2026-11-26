@@ -202,7 +202,7 @@ var ar = map[string]string{
 	"prefs.noLongerOffered": "لم يعد هذا الخيار مقترحًا. اختر من القائمة.",
 
 	// Curriculum editions and languages
-	"edition.state.current":    "ساري",
+	"edition.state.current":    "سارٍ",
 	"edition.state.superseded": "مُستبدَل",
 	"edition.state.retired":    "مسحوب",
 	"edition.state.unknown":    "حالة غير معروفة",
@@ -236,7 +236,7 @@ var ar = map[string]string{
 	"pub.home.contributeText":    "يحصل المدرّسون الراغبون في كتابة المحتويات أو مراجعتها على وصول إلى الاستوديو بدعوة من فريق Learnoo خلال المرحلة التجريبية. ويمكن للتلاميذ الإبلاغ عن خطأ من كل درس.",
 	"pub.home.studio":            "دخول المدرّسين (الاستوديو)",
 	"pub.cat.intro":              "اختر مستوى وشعبة لعرض الدورات والدروس المنشورة في الإصدار الساري من البرنامج.",
-	"pub.cat.noCurrent":          "لا يوجد إصدار ساري",
+	"pub.cat.noCurrent":          "لا يوجد إصدار سارٍ",
 	"pub.cat.empty":              "لم يُنشر بعدُ أيّ مستوى أو شعبة.",
 	"pub.cat.unplaced":           "دروس لم تُدرَج بعدُ في إصدار من البرنامج",
 	"pub.cat.unplacedHint":       "هذه الدروس المنشورة غير مرتبطة بأيّ فصل من إصدارات البرنامج. قراءة الدرس تتطلّب حسابًا.",
@@ -244,7 +244,7 @@ var ar = map[string]string{
 	"pub.earlierEdition":         "إصدار سابق: {0} ({1}).",
 	"pub.notCurrent":             "ليس هذا الإصدار الساري من البرنامج.",
 	"pub.seeCurrent":             "عرض الإصدار الساري: {0}",
-	"pub.noCurrentEdition":       "لا يوجد إصدار ساري من البرنامج لهذه الشعبة.",
+	"pub.noCurrentEdition":       "لا يوجد إصدار سارٍ من البرنامج لهذه الشعبة.",
 	"pub.earlierEditions":        "إصدارات سابقة",
 	"pub.earlierHint":            "لا تطّلع على إصدار سابق إلا إذا طلب منك مدرّسك ذلك.",
 	"pub.subjects":               "المواد",

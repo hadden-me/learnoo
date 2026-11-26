@@ -4,7 +4,9 @@ import { admin, apiCourse, apiSession, author, closeFixture, doc, setup, watch }
 // LMS-B09: the critical journeys in the French and Arabic interfaces, with
 // targeted accessibility assertions rather than an automated rule engine
 // (docs/DECISIONS.md "Interface localization"): <html lang dir>, one main
-// landmark and one h1, named controls and links, aria-describedby targets
+// landmark and one h1, a non-empty name for each visible control and link
+// (an approximation of the accessible name: aria-labelledby, aria-label,
+// labels, title, then textContent or alt), aria-describedby targets
 // that exist, a visible keyboard focus, no horizontal overflow at 360 px
 // and at 640 px (a 1280 px window at 200% zoom), and no animation under
 // prefers-reduced-motion. TEST accounts and content only (internal/server
@@ -21,9 +23,12 @@ const T = {
     next: /Suivante/, start: 'Commencer le cours', signInCourse: 'Se connecter pour lire le cours', moduleUp: (i, n) => `Monter le module ${i} : ${n}`, moduleDown: (i, n) => `Descendre le module ${i} : ${n}`,
     moduleTitle: (i) => `Titre du module ${i}`, disable: 'Désactiver le compte', reviewHeading: 'Relecture', studioNav: 'Studio', myCourses: 'Mes cours' },
   ar: { catalogue: 'الفهرس', signIn: 'تسجيل الدخول', email: 'البريد الإلكتروني', password: 'كلمة المرور', outline: 'مخطّط الدورة', stepNav: 'الدرس السابق والدرس التالي',
-    next: /التالي/, start: 'بدء الدورة', signInCourse: 'تسجيل الدخول لقراءة الدورة', moduleUp: (i, n) => `نقل الوحدة ${i} إلى الأعلى: ${n}`, moduleDown: (i, n) => `نقل الوحدة ${i} إلى الأسفل: ${n}`,
+    next: /التالي/, start: 'بدء الدورة', signInCourse: 'تسجيل الدخول لقراءة الدورة', moduleUp: (i, n) => `نقل الوحدة ${i} إلى الأعلى: ${iso(n)}`, moduleDown: (i, n) => `نقل الوحدة ${i} إلى الأسفل: ${iso(n)}`,
     moduleTitle: (i) => `عنوان الوحدة ${i}`, disable: 'تعطيل الحساب', reviewHeading: 'المراجعة', studioNav: 'الاستوديو', myCourses: 'دوراتي' },
 };
+
+// Text interpolated into an Arabic sentence is isolated between U+2068 and U+2069 (web/studio/src/i18n/core.ts).
+const iso = (s) => `\u2068${s}\u2069`;
 
 test.use({ reducedMotion: 'reduce' });
 test.afterAll(closeFixture);
@@ -230,9 +235,13 @@ for (const loc of LOCALES) {
     await page.keyboard.press('Enter');
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    // Focus starts inside, on the least destructive action, and Tab stays in the dialog.
+    // Focus starts inside, on the least destructive action.
     expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
-    for (let i = 0; i < 4; i++) {
+    // Shift+Tab from the cancel button reaches the dialog's other action, not the page behind; Tab
+    // past the last control may go to the browser's own interface (document.body), never to the page.
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
+    for (let i = 0; i < 3; i++) {
       await page.keyboard.press('Tab');
       expect(await page.evaluate(() => !!document.activeElement?.closest('dialog') || document.activeElement === document.body)).toBe(true);
     }
