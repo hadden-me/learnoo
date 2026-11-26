@@ -86,7 +86,9 @@ func New(cfg Config) *Handlers {
 	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "reported", "search", "error"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(files, "templates/"+name+".html"))
 	}
-	return &Handlers{Config: cfg, pages: pages, assets: assets}
+	h := &Handlers{Config: cfg, pages: pages, assets: assets}
+	h.parseCoursePages(base, pages)
+	return h
 }
 
 // Register mounts the reader routes documented in docs/API.md.
@@ -108,6 +110,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	page("POST /learn/lessons/{publicId}/report", h.requireUser(h.requireCSRFBody(maxReportFormBytes, h.report, h.reportTooLarge)))
 	page("GET /learn/lessons/{publicId}/reported", h.requireUser(h.reported))
 	page("GET /learn/lessons/{publicId}/media/{mediaId}", h.lessonMedia)
+	h.registerCourses(page)
 	mux.Handle("GET /static/{path...}", headers(h.Auth.Middleware(http.HandlerFunc(h.static))))
 	mux.Handle("GET "+AssetPrefix+"{version}/{path...}", http.HandlerFunc(h.serveAsset))
 }
@@ -466,6 +469,7 @@ func userID(ctx context.Context) int64 {
 type dashboardData struct {
 	Bookmarks []Bookmark
 	Subjects  []Subject
+	Home      homeData // LMS-B08: preference, courses, recent material
 }
 
 func (h *Handlers) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -474,12 +478,12 @@ func (h *Handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "bookmarks", err)
 		return
 	}
-	subjects, err := h.Store.Subjects(r.Context())
+	home, subjects, err := h.home(r)
 	if err != nil {
-		h.internal(w, r, "subjects", err)
+		h.internal(w, r, "home", err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "dashboard", view{Title: "Mes leçons", Data: dashboardData{Bookmarks: bms, Subjects: subjects}})
+	h.render(w, r, http.StatusOK, "dashboard", view{Title: "Mes leçons", Data: dashboardData{Bookmarks: bms, Subjects: subjects, Home: home}})
 }
 
 type subjectData struct {
@@ -701,6 +705,7 @@ type searchData struct {
 	Searched bool
 	Invalid  bool
 	Results  []LessonSummary
+	Courses  []CourseSummary // LMS-B08: published courses matching the query
 	Max      int
 	Min      int
 }
@@ -723,9 +728,15 @@ func (h *Handlers) search(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data.Results = res
+			if data.Searched {
+				if data.Courses, err = h.Store.SearchCourses(r.Context(), q); err != nil && !errors.Is(err, ErrInvalidQuery) {
+					h.internal(w, r, "search courses", err)
+					return
+				}
+			}
 		}
 	}
-	h.render(w, r, http.StatusOK, "search", view{Title: "Rechercher une leçon", Data: data})
+	h.render(w, r, http.StatusOK, "search", view{Title: "Rechercher une leçon ou un cours", Data: data})
 }
 
 func bookmarkReturn(r *http.Request, publicID string) string {

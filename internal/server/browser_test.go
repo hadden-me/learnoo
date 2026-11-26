@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/coursetest"
+	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/server"
 )
@@ -85,6 +87,33 @@ func TestBrowserReaderServer(t *testing.T) {
 		para(text("نص تجريبي يحتوي على صيغة "), map[string]any{"type": "math", "text": `\sqrt{a^2 + b^2}`}),
 		map[string]any{"type": "displayMath", "text": `\lim_{n \to +\infty} \left(1 + \frac{1}{n}\right)^n = e`},
 	), "ar", &ch))
+	// LMS-B08 course journey (tests/browser-reader/course.spec.mjs): a TEST
+	// course author's three published lessons in a published TEST course of
+	// two modules, and a TEST student account with the test password.
+	courseAuthor := f.newUser("test-course-author", f.subject, permissions.Author)
+	f.setName(courseAuthor.id, "TEST Auteur de cours")
+	var steps []coursetest.Step
+	for _, n := range []string{"un", "deux", "trois"} {
+		rev, err := f.ls.CreateLesson(context.Background(), courseAuthor.id, lessons.NewLesson{SubjectID: f.subject, Language: "fr",
+			Fields: lessons.Fields{Content: readerDoc("TEST Leçon de cours "+n, "fr", para(text("Corps de la leçon de cours "+n+"."))), ChapterID: &ch}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rev, err = f.ls.Submit(context.Background(), courseAuthor.id, rev.ID, rev.Version); err != nil {
+			t.Fatal(err)
+		}
+		if rev, err = f.rs.Approve(context.Background(), f.reviewer.id, rev.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		f.publish(rev)
+		steps = append(steps, coursetest.Step{LessonID: rev.LessonID, RevisionID: rev.ID, Title: "TEST Étape " + n})
+	}
+	spec := f.courseSpec("TEST Cours de nombres complexes",
+		coursetest.Module{Title: "TEST Premier module", Steps: steps[:2]}, coursetest.Module{Title: "TEST Second module", Steps: steps[2:]})
+	spec.Owner = courseAuthor.id
+	coursetest.Publish(t, f.db, spec)
+	f.setName(f.newUser("test-course-student", 0).id, "TEST Élève cours")
+
 	token, _, err := f.inv.Issue(context.Background(), "browser-student@example.test", "test-operator@test-host", time.Hour)
 	if err != nil {
 		t.Fatal(err)

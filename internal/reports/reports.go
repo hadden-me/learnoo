@@ -136,8 +136,15 @@ type Report struct {
 	RevisionID     int64
 	RevisionNumber int
 	RevisionTitle  string
-	// Current is true while the reported revision is still the lesson's
-	// published, readable revision.
+	// CourseRevisionID, CoursePublicID and CourseRevisionNumber are set for
+	// a report filed in course context: the published course revision the
+	// step was displayed in.
+	CourseRevisionID     *int64
+	CoursePublicID       string
+	CourseRevisionNumber int
+	// Current is true while the reported revision is still displayed where
+	// it was reported: the lesson's published, readable revision, or, in
+	// course context, a readable step of the course's published revision.
 	Current    bool
 	Message    string
 	Status     Status
@@ -199,6 +206,95 @@ func (s *Store) Create(ctx context.Context, reporter int64, publicID string, rev
 		err = tx.QueryRow(ctx, `
 			INSERT INTO error_reports (lesson_id, revision_id, reporter_id, message)
 			VALUES ($1, $2, $3, $4) RETURNING id, created_at`, lessonID, revisionID, reporter, message).Scan(&rc.ID, &rc.CreatedAt)
+		return mapErr(err)
+	})
+	if err != nil {
+		return Receipt{}, err
+	}
+	return rc, nil
+}
+
+// CreateInCourse files a report by reporter on the lesson with
+// lessonPublicID as displayed in the course with coursePublicID (LMS-B08):
+// courseRevisionNumber is the course's published revision and
+// revisionNumber the lesson revision its step pins, both as displayed. The
+// course must be readable (reader_published_courses), the lesson a readable
+// step of its published revision (reader_course_steps), and both numbers
+// must still match; otherwise ErrNotFound (course or step not readable) or
+// ErrRevisionChanged (a newer course revision, or another pinned revision)
+// is returned and nothing is stored. Locks follow contract §2: the lesson
+// row, then the course row (FOR SHARE), so neither can change before the
+// report commits; the database guard repeats the check. The report names
+// the pinned revision, which may differ from the lesson's standalone
+// published revision.
+func (s *Store) CreateInCourse(ctx context.Context, reporter int64, coursePublicID string, courseRevisionNumber int,
+	lessonPublicID string, revisionNumber int, message string) (Receipt, error) {
+	message, err := NormalizeText(message, MaxMessage)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if reporter == 0 {
+		return Receipt{}, ErrDenied
+	}
+	if !publicIDPattern.MatchString(coursePublicID) || !publicIDPattern.MatchString(lessonPublicID) {
+		return Receipt{}, ErrNotFound
+	}
+	var rc Receipt
+	err = pgx.BeginTxFunc(ctx, s.db, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		var lessonID int64
+		err := tx.QueryRow(ctx, `SELECT id FROM lessons WHERE public_id = $1::uuid FOR SHARE`, lessonPublicID).Scan(&lessonID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var courseID int64
+		err = tx.QueryRow(ctx, `SELECT id FROM courses WHERE public_id = $1::uuid FOR SHARE`, coursePublicID).Scan(&courseID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var courseRevisionID int64
+		var courseNumber int
+		err = tx.QueryRow(ctx, `SELECT revision_id, revision_number FROM reader_published_courses WHERE course_id = $1`,
+			courseID).Scan(&courseRevisionID, &courseNumber)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if courseNumber != courseRevisionNumber {
+			return ErrRevisionChanged
+		}
+		var revisionID int64
+		var number int
+		var readable bool
+		err = tx.QueryRow(ctx, `
+			SELECT st.readable, st.lesson_revision_id, r.revision_number
+			  FROM reader_course_steps st JOIN lesson_revisions r ON r.id = st.lesson_revision_id
+			 WHERE st.course_revision_id = $1 AND st.lesson_id = $2`, courseRevisionID, lessonID).Scan(&readable, &revisionID, &number)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		// An unreadable step is reported as not found: its content is not
+		// shown anywhere.
+		if !readable {
+			return ErrNotFound
+		}
+		if number != revisionNumber {
+			return ErrRevisionChanged
+		}
+		rc.RevisionID = revisionID
+		err = tx.QueryRow(ctx, `
+			INSERT INTO error_reports (lesson_id, revision_id, reporter_id, message, course_revision_id)
+			VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`, lessonID, revisionID, reporter, message, courseRevisionID).Scan(&rc.ID, &rc.CreatedAt)
 		return mapErr(err)
 	})
 	if err != nil {
@@ -344,13 +440,20 @@ func (s *Store) Resolve(ctx context.Context, actor, reportID int64, action, note
 }
 
 const reportColumns = `e.id, e.lesson_id, l.public_id::text, l.subject_id, e.revision_id, r.revision_number, r.title,
-	       EXISTS (SELECT 1 FROM reader_published_lessons p WHERE p.lesson_id = e.lesson_id AND p.revision_id = e.revision_id),
+	       e.course_revision_id, coalesce(c.public_id::text, ''), coalesce(cr.revision_number, 0),
+	       CASE WHEN e.course_revision_id IS NULL
+	            THEN EXISTS (SELECT 1 FROM reader_published_lessons p WHERE p.lesson_id = e.lesson_id AND p.revision_id = e.revision_id)
+	            ELSE EXISTS (SELECT 1 FROM reader_course_steps st
+	                          WHERE st.course_revision_id = e.course_revision_id AND st.lesson_id = e.lesson_id
+	                            AND st.lesson_revision_id = e.revision_id AND st.readable) END,
 	       e.message, e.status, e.created_at,
 	       x.action, x.actor_id, x.note, x.occurred_at`
 
 const reportJoins = `error_reports e
 	  JOIN lessons l ON l.id = e.lesson_id
 	  JOIN lesson_revisions r ON r.id = e.revision_id
+	  LEFT JOIN course_revisions cr ON cr.id = e.course_revision_id
+	  LEFT JOIN courses c ON c.id = cr.course_id
 	  LEFT JOIN error_report_resolutions x ON x.report_id = e.id`
 
 func scanReport(row pgx.CollectableRow) (Report, error) {
@@ -360,7 +463,7 @@ func scanReport(row pgx.CollectableRow) (Report, error) {
 	var actorID *int64
 	var at *time.Time
 	err := row.Scan(&rep.ID, &rep.LessonID, &rep.LessonPublicID, &rep.SubjectID, &rep.RevisionID, &rep.RevisionNumber,
-		&rep.RevisionTitle, &rep.Current, &rep.Message, &status, &rep.CreatedAt, &action, &actorID, &note, &at)
+		&rep.RevisionTitle, &rep.CourseRevisionID, &rep.CoursePublicID, &rep.CourseRevisionNumber, &rep.Current, &rep.Message, &status, &rep.CreatedAt, &action, &actorID, &note, &at)
 	if err != nil {
 		return Report{}, err
 	}
