@@ -14,6 +14,29 @@ const saveButton = (page) => page.getByRole('button', { name: 'Enregistrer', exa
 const snapshot = async (session) =>
   (await session.call('GET', '/api/courses?mine=1')).courses.map((c) => ({ id: c.id, revision: c.latestRevision?.id ?? null, version: c.latestRevision?.version ?? null }));
 
+/**
+ * Author B's course exists only during the account-switch test: other specs
+ * (courses.spec.mjs) expect test-author-two to own no course. Deleted here,
+ * even when the test fails, without masking its result.
+ */
+let createdForB = null;
+test.afterEach(async ({ browser, baseURL }) => {
+  const id = createdForB;
+  createdForB = null;
+  if (id === null) return;
+  try {
+    const b = await apiSession(browser, baseURL, authorTwo);
+    try {
+      const r = await b.raw('DELETE', `/api/courses/${id}`);
+      if (!r.ok() && r.status() !== 404) throw new Error(`${r.status()} ${await r.text()}`);
+    } finally {
+      await b.ctx.close();
+    }
+  } catch (e) {
+    console.error(`acceptance-regressions: could not delete author B's TEST course ${id}: ${e}`);
+  }
+});
+
 test('a course draft open in one tab never writes or shows anything as another account signed in on the same browser; the author resumes and saves', async ({ page, context, browser, baseURL }) => {
   const problems = watch(page, baseURL);
   const f = await setup(browser, baseURL);
@@ -21,6 +44,7 @@ test('a course draft open in one tab never writes or shows anything as another a
   const b = await apiSession(browser, baseURL, authorTwo);
   const { course, revision } = await apiCourse(a, f.subject.id, { title: 'TEST Cours ouvert au changement de compte', modules: [{ key: null, title: 'TEST Module enregistré', chapterId: null, steps: [] }] });
   const { course: theirs } = await apiCourse(b, f.subject.id, { title: 'TEST Cours de l’autre auteur' });
+  createdForB = theirs.id;
   const theirsBefore = await snapshot(b);
 
   // Author A opens the draft and edits it without saving; the copy is kept under A's key.
