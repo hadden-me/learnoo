@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/permissions"
 )
@@ -478,4 +480,30 @@ func TestAdminCatalogueNamesAndOrder(t *testing.T) {
 	wantStatus(t, "unknown subject", e.api(admin, http.MethodPut, "/api/admin/catalogue/subjects/test-nope/order", map[string]any{"sortOrder": 1}), http.StatusNotFound, "not_found")
 	wantStatus(t, "malformed code", e.api(admin, http.MethodPut, "/api/admin/catalogue/subjects/Test/order", map[string]any{"sortOrder": 1}), http.StatusNotFound, "not_found")
 	wantStatus(t, "unknown chapter", e.api(admin, http.MethodPut, "/api/admin/catalogue/subjects/test-math/chapters/ch-09/order", map[string]any{"sortOrder": 1}), http.StatusNotFound, "not_found")
+}
+
+// Invitation issuing is budgeted per administrator, like the other
+// invitation and report throttles: past the limit the request is 429 with
+// Retry-After and writes nothing; another administrator is unaffected.
+func TestAdminInvitationBudget(t *testing.T) {
+	e := newEnvConfig(t, func(c *auth.Config) { c.AdminInvitationLimit = 2 })
+	first := e.newUser("budget-admin", 0, permissions.Administrator)
+	second := e.newUser("budget-admin-two", 0, permissions.Administrator)
+	invite := func(u apiUser, email string) *httptest.ResponseRecorder {
+		return e.api(u, http.MethodPost, "/api/admin/invitations", map[string]any{"email": email})
+	}
+	wantStatus(t, "first", invite(first, "b1@example.test"), http.StatusCreated, "")
+	// A refused issue (existing account) still counts.
+	wantStatus(t, "existing", invite(first, testEmail), http.StatusConflict, "account_exists")
+	w := invite(first, "b3@example.test")
+	wantStatus(t, "over budget", w, http.StatusTooManyRequests, "rate_limited")
+	if ra := w.Header().Get("Retry-After"); ra == "" || ra == "0" {
+		t.Errorf("Retry-After %q", ra)
+	}
+	if n := e.count(`SELECT count(*) FROM student_invitations WHERE email = 'b3@example.test'`); n != 0 {
+		t.Fatalf("throttled request stored %d invitations", n)
+	}
+	wantStatus(t, "other administrator", invite(second, "b4@example.test"), http.StatusCreated, "")
+	e.clock.Advance(16 * time.Minute)
+	wantStatus(t, "after the window", invite(first, "b3@example.test"), http.StatusCreated, "")
 }

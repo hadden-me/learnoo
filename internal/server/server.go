@@ -61,6 +61,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Permissions: permissions.NewStore(db),
 		Accounts:    accounts.NewStore(db),
 		Invitations: invitations.NewStore(db, nil),
+		Service:     svc,
 		Log:         log,
 	}).Register(mux)
 	readerH := reader.New(reader.Config{

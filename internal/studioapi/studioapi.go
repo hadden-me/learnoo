@@ -77,7 +77,9 @@ type Config struct {
 	Permissions *permissions.Store
 	Accounts    *accounts.Store
 	Invitations *invitations.Store
-	Log         *slog.Logger
+	// Service throttles invitation issuing per administrator (admin.go).
+	Service *auth.Service
+	Log     *slog.Logger
 }
 
 // Handlers serves the Studio API.

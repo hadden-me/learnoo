@@ -2,8 +2,10 @@ package studioapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,10 +24,13 @@ import (
 //
 // This is the only HTTP code allowed to call the permission and account
 // status change methods (permissions.Store Grant, Revoke, GrantReviewer,
-// RevokeReviewer; accounts.Store Disable, Enable), and every such call must
-// pass permissions.UserActor(actor(r)) as its actor, the signed-in
-// administrator: internal/server TestNoHTTPPathChangesPermissions enforces
-// both. The stores keep every rule of the operator path (administrator
+// RevokeReviewer; accounts.Store Disable, Enable) and invitations.Store
+// IssueBy, and every such call must pass the signed-in administrator as its
+// actor, permissions.UserActor(actor(r)) (IssueBy: actor(r)).
+// internal/server TestNoHTTPPathChangesPermissions enforces both, as
+// defence in depth: the boundary is the stores' administrator recheck
+// inside their transaction. invitations.Store.Issue (operator label, no
+// authorization) is the operator CLI's alone. The stores keep every rule of the operator path (administrator
 // recheck inside the transaction, administrators lock, last-active-
 // administrator guard, same-transaction audit); this file adds only the
 // refusal of self-grants and self-disable.
@@ -336,6 +341,19 @@ func (h *Handlers) issueInvitation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ttl = time.Duration(*req.TTLHours) * time.Hour
+	}
+	// Every well-formed request counts against the administrator's budget,
+	// issued or not, before anything is written.
+	err := h.Service.ThrottleAdminInvitation(r.Context(), actor(r))
+	var limited *auth.RateLimitedError
+	switch {
+	case errors.As(err, &limited):
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(limited.RetryAfter.Seconds()))))
+		auth.WriteError(w, http.StatusTooManyRequests, "rate_limited", "Too many invitations issued recently. Try again later.")
+		return
+	case err != nil:
+		h.internal(w, "throttle invitation", err)
+		return
 	}
 	token, inv, err := h.Invitations.IssueBy(r.Context(), actor(r), *req.Email, ttl)
 	switch {
