@@ -91,6 +91,10 @@ func TestReaderShowsCatalogueNamesInOrder(t *testing.T) {
 		`<h2>TEST Suites</h2>`, // order 3
 		`<h2>Sans chapitre</h2>`)
 
+	// A subject named only in Arabic: its page title says so.
+	wantPage(t, "arabic-only subject", f.get(f.student, "/learn/subjects/test-physics"), http.StatusOK,
+		`<title lang="ar">TEST فيزياء · Learnoo</title>`, `<h1><bdi lang="ar" dir="rtl">TEST فيزياء</bdi></h1>`)
+
 	// Lesson pages: the breadcrumb names the subject and chapter in the
 	// lesson's language when set.
 	wantPage(t, "french lesson", f.get(f.student, lessonPath(fr.publicID)), http.StatusOK,
