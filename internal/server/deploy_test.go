@@ -25,6 +25,8 @@ import (
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/backupcheck"
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/courses"
+	"github.com/hadden-me/learnoo/internal/coursetest"
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/invitations"
@@ -236,6 +238,7 @@ type seeded struct {
 	pendingCandidate revisionBody
 	resolvedReport   int64 // error report resolved through the API
 	openReport       int64 // error report left open
+	coursePublicID   string
 }
 
 // runFlow drives the editorial and reader workflow through the HTTP handler
@@ -355,8 +358,36 @@ func runFlow(t *testing.T, e *env) seeded {
 	}
 	wantStatus(t, "preview", f.api(f.author, http.MethodPost, "/api/preview",
 		map[string]json.RawMessage{"content": readerDoc("TEST Déploiement aperçu", "fr")}), http.StatusOK, "")
+
+	// Courses (LMS-B03 to B08): a published course pinning the restored
+	// edition, under a TEST curriculum edition, bookmarked by the student,
+	// with a successor revision submitted for review.
+	spec := coursetest.Spec{Admin: f.admin.id, Owner: f.author.id, Reviewer: f.reviewer.id, Publisher: f.publisher.id,
+		SubjectID: subject, Title: "TEST Déploiement cours",
+		Modules: []coursetest.Module{{Title: "TEST Module", Steps: []coursetest.Step{{LessonID: s.first.LessonID, RevisionID: s.first.ID, Title: "TEST Étape déployée"}}}}}
+	course := coursetest.Publish(t, e.db, spec)
+	s.coursePublicID = course.PublicID
+	wantPage(t, "read course step", rd.get(s.student, coursePath(s.coursePublicID)+"/lessons/"+s.lessonPublicID), http.StatusOK,
+		"TEST Déploiement première édition")
+	wantRedirect(t, "course bookmark", rd.post(s.student, coursePath(s.coursePublicID)+"/bookmark", nil), coursePath(s.coursePublicID))
+	store := courses.NewStore(e.db)
+	successor, err := store.CreateDraft(context.Background(), f.author.id, course.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if successor, err = store.SaveDraft(context.Background(), f.author.id, successor.ID, successor.Version, courses.Draft{
+		Title: "TEST Déploiement cours, version 2", Summary: "Résumé de test.", Objectives: "Objectifs de test.", AssignmentIDs: []int64{course.AssignmentID},
+		Modules: []courses.ModuleInput{{Title: "TEST Module", Steps: []courses.StepInput{{LessonID: s.first.LessonID, RevisionID: s.first.ID, Title: "TEST Étape déployée"}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Submit(context.Background(), f.author.id, successor.ID, successor.Version); err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
+
+func coursePath(publicID string) string { return "/learn/courses/" + publicID }
 
 // wantRefused runs sql as the runtime role and expects an error; code, if
 // set, is the expected SQLSTATE.
@@ -628,7 +659,7 @@ func TestBackupRestoreRehearsal(t *testing.T) {
 		t.Fatal(err)
 	}
 	srcReport := verifyRestore(t, srcRuntime, srcMedia)
-	if srcReport.Failed(false) || srcReport.Assets != 1 || srcReport.Referenced != 1 || srcReport.Published != 1 {
+	if srcReport.Failed(false) || srcReport.Assets != 1 || srcReport.Referenced != 1 || srcReport.Published != 1 || srcReport.Courses != 1 {
 		t.Fatalf("source state: %+v", srcReport)
 	}
 
@@ -678,7 +709,10 @@ func TestBackupRestoreRehearsal(t *testing.T) {
 	re := runtimeEnv(t, dstRuntime, dstMedia)
 	rd := readerFixture{env: re}
 	wantPage(t, "restored lesson", rd.get(s.student, lessonPath(s.lessonPublicID)), http.StatusOK, "TEST Déploiement première édition")
-	wantPage(t, "restored bookmark", rd.get(s.student, "/learn"), http.StatusOK, "Mes signets (1)")
+	wantPage(t, "restored bookmark", rd.get(s.student, "/learn"), http.StatusOK, "Mes signets (1)", "Mes cours enregistrés (1)")
+	wantPage(t, "restored course", rd.get(s.student, coursePath(s.coursePublicID)), http.StatusOK, "TEST Déploiement cours", "TEST Étape déployée")
+	wantPage(t, "restored course step", rd.get(s.student, coursePath(s.coursePublicID)+"/lessons/"+s.lessonPublicID), http.StatusOK,
+		"TEST Déploiement première édition")
 	w := re.api(s.author, http.MethodGet, fmt.Sprintf("/api/media/%d", s.mediaID), nil)
 	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), s.image) {
 		t.Fatalf("restored media: %d (%d bytes)", w.Code, w.Body.Len())
