@@ -1,5 +1,9 @@
 # Product requirements
 
+## Product completion
+
+[LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md), incorporated by the implementation plan, supplies the complete acceptance contract for teacher course CRUD, level/section/subject assignment, public homepage/catalogue, student home/course navigation and supporting administration. [LMS_DELIVERY_BACKLOG.md](LMS_DELIVERY_BACKLOG.md) maps it to delivery slices. Course and module management are distinct from editing individual lessons. Historical deferrals below do not exclude the minimum catalogue/administration UI required by this milestone; advanced analytics and classroom features remain deferred.
+
 ## Mission and initial scope
 
 Provide free, trustworthy Tunisian BAC learning materials maintained by volunteers. Pilot the BAC Mathematics section, mathematics subject, and a coherent chapter (chapter selection pending); target 10–20 human-reviewed lessons for the educational pilot, not for the first editor experiment.

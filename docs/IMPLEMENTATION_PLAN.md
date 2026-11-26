@@ -1,5 +1,11 @@
 # Learnoo — Implementation Plan
 
+## Product-completion amendment — 2026-11-26
+
+The next implementation objective is the complete teacher/course/student experience in [LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md), delivered through [LMS_DELIVERY_BACKLOG.md](LMS_DELIVERY_BACKLOG.md). This amendment incorporates that specification into this plan and supersedes narrower prototype-era omissions below for course management, curriculum selection, homepage/discovery, student navigation and the supporting administrator UI. The original internal workflow remains the foundation, not the definition of the finished LMS. Working defaults in the specification are explicitly identified and must not be represented as separately confirmed decisions. Existing security/editorial invariants still apply. Public launch and real curriculum content retain their external gates. Later advanced features explicitly excluded by the specification remain deferred.
+
+Historical phase lists below describe the prototype baseline. Read them through this amendment; do not use their omissions to drop an LMS acceptance journey.
+
 Status: agreed direction for technical prototyping.
 
 Base document: [Project plan](PROJECT_PLAN.md).

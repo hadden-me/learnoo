@@ -1,5 +1,13 @@
 # Decision log
 
+## LMS scope reconciliation — 2026-11-26
+
+**Requested by maintainer:** complete specifications for teacher course CRUD, subject/level placement and the student first-page experience. The implementation plan now incorporates [LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md); its delivery map is [LMS_DELIVERY_BACKLOG.md](LMS_DELIVERY_BACKLOG.md). This corrects the mismatch between a functioning lesson review system and a complete LMS.
+
+**Working defaults authored with the specification, not separate maintainer confirmations:** distinct course/module entities; one owner/primary subject; pinned lesson revisions within reviewed course snapshots; independent course approval; conservative archive/restore rules; visible reviewer identities. These extend rather than relax educational safeguards. Keep them explicit in implementation PRs, and raise a concrete conflict if found.
+
+**Already required, not a new question:** submission auditing. The prior open-question wording does not override CONTENT_AND_EDITORIAL.md or the cahier. Implement the missing immutable event. Real seed content, legal policies and deployment approvals remain external decisions. No license or policy is selected here.
+
 Baseline: PROJECT_PLAN.md and IMPLEMENTATION_PLAN.md. Updated 2026-11-23. This file distinguishes selected direction from unverified assumptions.
 
 ## Settled direction
@@ -233,7 +241,7 @@ Implementer choices on 2026-11-24 within the execution contract on issue 7 (`int
 - **Attribution.** Every revision response carries `authorId`, the decision (`review`: action, reviewer, comment, time) and `approvedBy`. The author sees the change-request comment as feedback.
 - **HTTP.** Review routes under `/api/review/…`; publication is `POST /api/revisions/{id}/publish`. Strict JSON as for the Studio API. On review routes a denial (including a revocation racing the request) is `404`, indistinguishable from a missing revision; on publication it is `403`, because `publisher` is global and reveals nothing about subjects. New codes: `403 self_review`, `409 not_in_review | not_approved | already_published | stale_base`, `422 comment_required | invalid_comment`.
 - **Open question: reviewer identity on change requests.** Lessons display reviewer credit (CAHIER_DES_CHARGES.md §2.2), so the approving reviewer is exposed. Whether the author should also see who requested changes is not decided; the API currently returns `reviewerId` for both actions.
-- **Open question: submission audit.** The contract lists only decisions and publications; submission stays recorded by `submitted_at` and `author_id`. Whether a separate submission event is required (the CAHIER lists submission among audited actions) is not decided.
+- **Submission audit gap (clarified 2026-11-26).** Submission currently records `submitted_at` and `author_id`, but the editorial rules and cahier require an audit event. Implement an immutable submission event atomically; this is not a pending product decision.
 - **Open question: archived lessons.** Publication of a revision of an archived lesson is refused (`409 archived`); decisions on revisions of archived lessons are allowed. Archival has no code path yet, so neither choice is exercised outside tests.
 - **Open question: publisher visibility.** Publishers have no endpoint to list or read approved revisions awaiting publication; they need the revision ID from elsewhere. A publisher queue or read access was not in the contract. *Addressed by issue #66 (second slice): `GET /api/publish/queue` and `GET /api/publish/revisions/{id}`.*
 - **Unchanged open question.** A stale approved candidate (its base no longer the pointer) cannot be published and keeps blocking new drafts ([Lesson persistence](#lesson-persistence-lrn-006)); LRN-007 implements only the refusal.

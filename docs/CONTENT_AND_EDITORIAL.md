@@ -1,5 +1,9 @@
 # Content and editorial rules
 
+## Course scope
+
+These safeguards extend to courses as specified in [LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md#5-publication-and-withdrawal-safety): immutable submitted course structure/metadata, independent course and lesson approval, atomic publication, versioned curriculum references, audited lifecycle events and immediate withdrawal dependency checks. A course snapshot references exact eligible lesson revisions; replacing a standalone published revision must not silently change a reviewed course. Course entities are planned work, not already implemented. The final "Schema work" paragraph describes the earlier prototype and is extended by this milestone.
+
 ## Content contract
 
 Prototype paragraph, heading, list, image, inline/block mathematics, YouTube embed, and typed callout/worked-example blocks. Embed exercise questions and worked solutions directly in the lesson snapshot for the pilot. Markdown import/export is deferred.

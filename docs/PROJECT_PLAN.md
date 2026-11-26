@@ -1,5 +1,9 @@
 # Learnoo — Project Plan
 
+## Reading this plan after the LMS specification amendment
+
+The [LMS product specification](LMS_PRODUCT_SPEC.md) makes the course model and complete public/student/teacher journeys explicit. It is incorporated by [the implementation plan](IMPLEMENTATION_PLAN.md), which remains authoritative. This plan supplies broader direction; its historical phase descriptions are not evidence that features exist. Teacher-managed courses are distinct from official chapters and individual lessons. See [the delivery map](LMS_DELIVERY_BACKLOG.md) before treating any milestone as complete.
+
 Status: proposed product and technical baseline, pending prototype validation.
 
 This document describes Learnoo's mission, product requirements, and long-term direction. The [implementation plan](IMPLEMENTATION_PLAN.md) narrows the current scope and overrides older recommendations below where necessary. Update these documents in place; Git tracks their history.
