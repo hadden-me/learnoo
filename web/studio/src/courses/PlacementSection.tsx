@@ -67,6 +67,10 @@ export function PlacementSection({
   onAdd,
   onRemove,
   invalid,
+  refused,
+  carried,
+  editionsFailed,
+  onRetryEditions,
 }: {
   courses: CourseApi;
   language: Lang;
@@ -79,6 +83,13 @@ export function PlacementSection({
   onRemove: (assignmentId: number) => void;
   /** The last save was refused for its placement. */
   invalid: boolean;
+  /** Placements the next save will refuse (not carried, no longer selectable). */
+  refused: Set<number>;
+  /** Placements unchanged from the course's published version. */
+  carried: Set<number>;
+  /** Some editions could not be read (names and chapters unknown). */
+  editionsFailed: boolean;
+  onRetryEditions: () => void;
 }) {
   const ids = { level: useId(), section: useId(), heading: useId() };
   const openLevels = levels.filter((l) => !l.retiredAt && l.sections.some((s) => !s.retiredAt));
@@ -133,16 +144,21 @@ export function PlacementSection({
             const info = placements[id];
             const names = placementNames(info ? editions[info.editionId] : undefined, levels, language);
             return (
-              <li key={id} className={info?.retired ? 'placement flagged' : info && info.editionState !== 'current' ? 'placement carried' : 'placement'}>
+              <li key={id} className={refused.has(id) || info?.retired ? 'placement flagged' : info && info.editionState !== 'current' ? 'placement carried' : 'placement'}>
                 <p>
                   <PlacementName names={names} fallback={`Classement n° ${id}`} />
                   {info && <span className="hint"> ({EDITION_STATE_LABELS[info.editionState]})</span>}
                 </p>
-                {info?.retired && (
-                  <p className="field-error">Retiré du programme : ce classement devra être retiré ou remplacé avant la soumission du cours.</p>
+                {refused.has(id) && (
+                  <p className="field-error">
+                    Le prochain enregistrement sera refusé : cette édition ne peut plus être choisie (elle n’est plus en vigueur, ou sa section, son niveau ou la matière a été retiré). Retirez ce classement, puis ajoutez l’édition en vigueur.
+                  </p>
                 )}
-                {info && !info.retired && info.editionState === 'superseded' && (
-                  <p className="hint">Édition remplacée, conservée depuis la version précédente du cours. Si vous la retirez, elle ne pourra plus être choisie de nouveau.</p>
+                {!refused.has(id) && carried.has(id) && info?.retired && (
+                  <p className="field-error">Retiré du programme : ce classement, conservé depuis la version publiée du cours, devra être retiré ou remplacé avant la soumission du cours.</p>
+                )}
+                {!refused.has(id) && carried.has(id) && info && !info.retired && info.editionState === 'superseded' && (
+                  <p className="hint">Édition remplacée, conservée depuis la version publiée du cours. Si vous la retirez, elle ne pourra plus être choisie de nouveau.</p>
                 )}
                 <button type="button" onClick={() => onRemove(id)} aria-label={`Retirer le classement ${names.edition?.text ?? id}`}>
                   Retirer ce classement
@@ -151,6 +167,14 @@ export function PlacementSection({
             );
           })}
         </ul>
+      )}
+      {editionsFailed && (
+        <div className="banner error" role="alert">
+          <p>Les détails d’une édition du programme n’ont pas pu être lus : son nom et ses chapitres officiels ne sont pas affichés. Les chapitres des modules sont conservés.</p>
+          <button type="button" onClick={onRetryEditions}>
+            Réessayer
+          </button>
+        </div>
       )}
       {invalid && <p className="field-error">Le dernier enregistrement a été refusé à cause du classement : vérifiez les classements et les chapitres officiels des modules.</p>}
 

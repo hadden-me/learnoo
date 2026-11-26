@@ -54,6 +54,8 @@ export function LessonPicker({
   const [revisions, setRevisions] = useState<EligibleRevision[] | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(change?.revisionId ?? null);
   const [title, setTitle] = useState(change?.title ?? '');
+  const [revisionsError, setRevisionsError] = useState<string | null>(null);
+  const [revisionsAttempt, setRevisionsAttempt] = useState(0);
 
   const search = useCallback(
     async (q: string, cursor: string | null) => {
@@ -80,18 +82,19 @@ export function LessonPicker({
     if (!lesson) return;
     let cancelled = false;
     setRevisions(null);
+    setRevisionsError(null);
     courses.eligibleRevisions(lesson.lessonId).then(
       (list) => {
         if (cancelled) return;
         setRevisions(list);
         if (!change || !list.some((r) => r.id === change.revisionId)) setRevisionId(defaultRevision(list)?.id ?? null);
       },
-      (e) => !cancelled && setError(describeCourseError(e)),
+      (e) => !cancelled && setRevisionsError(describeCourseError(e)),
     );
     return () => {
       cancelled = true;
     };
-  }, [courses, lesson]);
+  }, [courses, lesson, revisionsAttempt]);
 
   // Once a lesson's revisions are listed, the revision choice is the next step.
   useEffect(() => {
@@ -188,7 +191,14 @@ export function LessonPicker({
             </strong>
           </p>
           <label htmlFor={ids.revision}>Révision à épingler</label>
-          {revisions === null ? (
+          {revisionsError ? (
+            <div className="banner error" role="alert">
+              <p>Les révisions de cette leçon n’ont pas pu être chargées. {revisionsError}</p>
+              <button type="button" onClick={() => setRevisionsAttempt((n) => n + 1)}>
+                Réessayer
+              </button>
+            </div>
+          ) : revisions === null ? (
             <p role="status">Chargement des révisions…</p>
           ) : revisions.length === 0 ? (
             <p>Cette leçon n’a aucune révision qui puisse être rattachée.</p>
