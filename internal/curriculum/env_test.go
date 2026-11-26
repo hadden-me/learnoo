@@ -157,6 +157,13 @@ func wantSQLState(t *testing.T, what string, err error, code string) {
 // transaction as that role on a new connection; "S." in a statement is
 // replaced by the quoted test schema.
 func (e *env) leastPrivilegeRole() (asRole func(stmts ...string) error) {
+	asRoleAt := e.leastPrivilegeRoleAt()
+	return func(stmts ...string) error { return asRoleAt(pgx.ReadCommitted, stmts...) }
+}
+
+// leastPrivilegeRoleAt is leastPrivilegeRole with the transaction's
+// isolation level as a parameter.
+func (e *env) leastPrivilegeRoleAt() (asRole func(iso pgx.TxIsoLevel, stmts ...string) error) {
 	t := e.t
 	t.Helper()
 	var b [6]byte
@@ -187,13 +194,13 @@ func (e *env) leastPrivilegeRole() (asRole func(stmts ...string) error) {
 	must(`GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ` + qs + ` TO ` + role)
 	must(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ` + qs + ` TO ` + role)
 	must(`GRANT TEMP ON DATABASE ` + pgx.Identifier{dbName}.Sanitize() + ` TO ` + role)
-	return func(stmts ...string) error {
+	return func(iso pgx.TxIsoLevel, stmts ...string) error {
 		conn, err := pgx.ConnectConfig(e.ctx, e.db.Config().ConnConfig.Copy())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = conn.Close(context.Background()) }()
-		tx, err := conn.Begin(e.ctx)
+		tx, err := conn.BeginTx(e.ctx, pgx.TxOptions{IsoLevel: iso})
 		if err != nil {
 			return err
 		}
@@ -210,12 +217,29 @@ func (e *env) leastPrivilegeRole() (asRole func(stmts ...string) error) {
 	}
 }
 
-// auditSQL is the audit row a direct SQL change needs.
-func auditSQL(target string, targetID int64, edition *int64, action string) string {
+// auditSQL is the audit row a direct SQL change needs; before and after are
+// SQL expressions (JSON literals such as `'{"retired": false}'`, or NULL).
+func auditSQL(target string, targetID int64, edition *int64, action, before, after string) string {
 	ed := "NULL"
 	if edition != nil {
 		ed = fmt.Sprint(*edition)
 	}
-	return fmt.Sprintf(`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action)
-		VALUES ('test-operator@test-host', '%s', %d, %s, '%s')`, target, targetID, ed, action)
+	return fmt.Sprintf(`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, before, after)
+		VALUES ('test-operator@test-host', '%s', %d, %s, '%s', %s, %s)`, target, targetID, ed, action, before, after)
+}
+
+// JSON literals of the audit value shapes.
+const (
+	notRetired = `'{"retired": false}'`
+	isRetired  = `'{"retired": true}'`
+)
+
+func stateJSON(st string) string { return `'{"state": "` + st + `"}'` }
+
+func chaptersJSON(ids ...int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprint(id)
+	}
+	return `'{"chapterIds": [` + strings.Join(parts, ", ") + `]}'`
 }

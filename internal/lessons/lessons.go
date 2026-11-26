@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -76,6 +77,13 @@ var (
 	ErrUnknownSubject = errors.New("unknown subject")
 	// ErrUnknownChapter means the chapter does not exist in the lesson's subject.
 	ErrUnknownChapter = errors.New("unknown chapter for this subject")
+	// ErrRetiredSubject means the subject is retired (migrations/0013): no
+	// new lesson can be created in it. Drafts of existing lessons keep it.
+	// The database guards decide both retirement rules; mapErr maps them.
+	ErrRetiredSubject = errors.New("subject is retired")
+	// ErrRetiredChapter means a draft sets a retired chapter that is not the
+	// chapter of its base revision.
+	ErrRetiredChapter = errors.New("chapter is retired")
 	// ErrUnknownMedia means a referenced media asset does not exist.
 	ErrUnknownMedia = errors.New("unknown media asset")
 	// ErrUnattachedMedia means the content embeds an uploaded image
@@ -729,6 +737,12 @@ func mapErr(err error) error {
 	case "22021", "22P05": // NUL or invalid bytes in text; \u0000 in jsonb
 		return fmt.Errorf("%w: %s", ErrInvalidContent, pgErr.Message)
 	case "LRN01":
+		switch {
+		case strings.Contains(pgErr.Message, "no lesson can be added to it"):
+			return errors.Join(ErrRetiredSubject, err)
+		case strings.Contains(pgErr.Message, "a draft keeps it only from its base revision"):
+			return errors.Join(ErrRetiredChapter, err)
+		}
 		return fmt.Errorf("%w: %s", ErrImmutable, pgErr.Message)
 	}
 	return err

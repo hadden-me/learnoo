@@ -22,11 +22,11 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -35,7 +35,6 @@ import (
 
 // Limits.
 const (
-	MaxNameRunes    = 200
 	MaxDisplayOrder = 9999
 	// MaxChapters bounds one assignment's chapter list.
 	MaxChapters = 500
@@ -44,6 +43,8 @@ const (
 )
 
 var (
+	// ErrTooMany means a list exceeds MaxListed; nothing is truncated.
+	ErrTooMany = errors.New("too many entries to list")
 	// ErrNotFound means the level, section, edition or assignment does not
 	// exist (or the assignment is not in the named edition).
 	ErrNotFound = errors.New("not found")
@@ -80,16 +81,6 @@ var codePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // table: 1 to 63 lower-case ASCII letters, digits and hyphens, not starting
 // with a hyphen.
 func ValidCode(code string) bool { return codePattern.MatchString(code) }
-
-// ValidName reports whether name passes curriculum_valid_name: 1 to 200
-// characters, no surrounding white space, no control, format or
-// line/paragraph separator characters. Arabic text is allowed.
-func ValidName(name string) bool {
-	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > MaxNameRunes || name != strings.TrimSpace(name) {
-		return false
-	}
-	return strings.IndexFunc(name, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) }) < 0
-}
 
 // EditionState is the lifecycle state of an edition.
 type EditionState string
@@ -192,16 +183,19 @@ type Store struct{ db *pgxpool.Pool }
 // NewStore builds a Store.
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
-func validEntry(code string, d Display) error {
+func validEntry(code string, d *Display) error {
 	if !ValidCode(code) {
 		return fmt.Errorf("%w: code must be 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit", ErrInvalidInput)
 	}
 	return validDisplay(d)
 }
 
-func validDisplay(d Display) error {
-	if !ValidName(d.NameFR) || !ValidName(d.NameAR) {
-		return fmt.Errorf("%w: names must be 1 to 200 characters without surrounding spaces or control characters", ErrInvalidInput)
+// validDisplay trims the names like the catalogue's display names
+// (catalogue.NormalizeName, the catalogue_valid_name rule) and checks them
+// and the order.
+func validDisplay(d *Display) error {
+	if err := normalizePair(&d.NameFR, &d.NameAR, "names"); err != nil {
+		return err
 	}
 	if d.DisplayOrder < 0 || d.DisplayOrder > MaxDisplayOrder {
 		return fmt.Errorf("%w: display order must be 0 to %d", ErrInvalidInput, MaxDisplayOrder)
@@ -209,9 +203,12 @@ func validDisplay(d Display) error {
 	return nil
 }
 
-func validLabels(fr, ar string) error {
-	if !ValidName(fr) || !ValidName(ar) {
-		return fmt.Errorf("%w: labels must be 1 to 200 characters without surrounding spaces or control characters", ErrInvalidInput)
+func normalizePair(fr, ar *string, what string) error {
+	var err1, err2 error
+	*fr, err1 = catalogue.NormalizeName(*fr)
+	*ar, err2 = catalogue.NormalizeName(*ar)
+	if err1 != nil || err2 != nil {
+		return fmt.Errorf("%w: %s must be 1 to 200 characters without control, invisible-format or line/paragraph separator characters", ErrInvalidInput, what)
 	}
 	return nil
 }
@@ -296,13 +293,14 @@ func readOnly(ctx context.Context, db *pgxpool.Pool, fn func(tx pgx.Tx) error) e
 }
 
 // Levels lists every level with its sections, retired ones included, by
-// display order then code (byte order, whatever the database locale). It
-// performs no authorization.
+// display order then code (byte order, whatever the database locale). More
+// than MaxListed levels or sections is ErrTooMany, never a truncated list.
+// It performs no authorization.
 func (s *Store) Levels(ctx context.Context) ([]Level, error) {
 	var levels []Level
 	err := readOnly(ctx, s.db, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+levelColumns+` FROM education_levels
-			ORDER BY display_order, code COLLATE "C", id LIMIT $1`, MaxListed)
+			ORDER BY display_order, code COLLATE "C", id LIMIT $1`, MaxListed+1)
 		if err != nil {
 			return err
 		}
@@ -310,14 +308,20 @@ func (s *Store) Levels(ctx context.Context) ([]Level, error) {
 		if err != nil {
 			return err
 		}
+		if len(levels) > MaxListed {
+			return ErrTooMany
+		}
 		rows, err = tx.Query(ctx, `SELECT `+sectionColumns+` FROM academic_sections
-			ORDER BY level_id, display_order, code COLLATE "C", id LIMIT $1`, MaxListed)
+			ORDER BY level_id, display_order, code COLLATE "C", id LIMIT $1`, MaxListed+1)
 		if err != nil {
 			return err
 		}
 		sections, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Section, error) { return scanSection(r) })
 		if err != nil {
 			return err
+		}
+		if len(sections) > MaxListed {
+			return ErrTooMany
 		}
 		index := make(map[int64]int, len(levels))
 		for i := range levels {
@@ -353,11 +357,14 @@ func (s *Store) Editions(ctx context.Context, sectionID int64) (Section, []Editi
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT `+editionColumns+` FROM curriculum_editions WHERE section_id = $1
-			ORDER BY id DESC LIMIT $2`, sectionID, MaxListed)
+			ORDER BY id DESC LIMIT $2`, sectionID, MaxListed+1)
 		if err != nil {
 			return err
 		}
 		editions, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Edition, error) { return scanEdition(r) })
+		if err == nil && len(editions) > MaxListed {
+			return ErrTooMany
+		}
 		return err
 	})
 	if err != nil {
@@ -446,9 +453,11 @@ var (
 
 // CreateLevel adds a level.
 func (s *Store) CreateLevel(ctx context.Context, actor permissions.Actor, in Entry) (Level, error) {
-	if err := validEntry(in.Code, Display{in.NameFR, in.NameAR, in.DisplayOrder}); err != nil {
+	d := Display{in.NameFR, in.NameAR, in.DisplayOrder}
+	if err := validEntry(in.Code, &d); err != nil {
 		return Level{}, err
 	}
+	in.NameFR, in.NameAR = d.NameFR, d.NameAR
 	var l Level
 	err := s.write(ctx, actor, func(tx pgx.Tx) error {
 		var err error
@@ -469,9 +478,11 @@ func (s *Store) CreateLevel(ctx context.Context, actor permissions.Actor, in Ent
 
 // CreateSection adds a section to a level that is not retired.
 func (s *Store) CreateSection(ctx context.Context, actor permissions.Actor, levelID int64, in Entry) (Section, error) {
-	if err := validEntry(in.Code, Display{in.NameFR, in.NameAR, in.DisplayOrder}); err != nil {
+	d := Display{in.NameFR, in.NameAR, in.DisplayOrder}
+	if err := validEntry(in.Code, &d); err != nil {
 		return Section{}, err
 	}
+	in.NameFR, in.NameAR = d.NameFR, d.NameAR
 	var sec Section
 	err := s.write(ctx, actor, func(tx pgx.Tx) error {
 		// FOR SHARE: a concurrent retirement of the level waits.
@@ -529,7 +540,7 @@ func (s *Store) UpdateSection(ctx context.Context, actor permissions.Actor, id i
 }
 
 func (s *Store) updateDisplay(ctx context.Context, actor permissions.Actor, h hierarchy, id int64, expectedVersion int, d Display, scan func(pgx.Row) error) error {
-	if err := validDisplay(d); err != nil {
+	if err := validDisplay(&d); err != nil {
 		return err
 	}
 	return s.write(ctx, actor, func(tx pgx.Tx) error {
@@ -607,11 +618,11 @@ func (s *Store) retireEntry(ctx context.Context, actor permissions.Actor, h hier
 		if retired != nil {
 			return ErrAlreadyRetired
 		}
-		if err := scan(tx.QueryRow(ctx, `UPDATE `+h.table+` SET retired_at = now(), version = version + 1
-			WHERE id = $1 RETURNING `+h.columns, id)); err != nil {
+		if err := audit(ctx, tx, actor, h.target, id, nil, "retire", retiredJSON(false), retiredJSON(true)); err != nil {
 			return err
 		}
-		return audit(ctx, tx, actor, h.target, id, nil, "retire", nil, map[string]any{"retired": true})
+		return scan(tx.QueryRow(ctx, `UPDATE `+h.table+` SET retired_at = now(), version = version + 1
+			WHERE id = $1 RETURNING `+h.columns, id))
 	})
 }
 
@@ -642,10 +653,11 @@ func (s *Store) retireCatalogue(ctx context.Context, actor permissions.Actor, ta
 		if retired != nil {
 			return ErrAlreadyRetired
 		}
-		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET retired_at = now() WHERE id = $1`, id); err != nil {
+		if err := audit(ctx, tx, actor, target, id, nil, "retire", retiredJSON(false), retiredJSON(true)); err != nil {
 			return err
 		}
-		return audit(ctx, tx, actor, target, id, nil, "retire", nil, map[string]any{"retired": true})
+		_, err = tx.Exec(ctx, `UPDATE `+table+` SET retired_at = now() WHERE id = $1`, id)
+		return err
 	})
 }
 
@@ -657,7 +669,7 @@ func (s *Store) CreateEdition(ctx context.Context, actor permissions.Actor, sect
 	if !ValidCode(in.Code) {
 		return Edition{}, fmt.Errorf("%w: code must be 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit", ErrInvalidInput)
 	}
-	if err := validLabels(in.LabelFR, in.LabelAR); err != nil {
+	if err := normalizePair(&in.LabelFR, &in.LabelAR, "labels"); err != nil {
 		return Edition{}, err
 	}
 	var e Edition
@@ -719,7 +731,7 @@ func lockEdition(ctx context.Context, tx pgx.Tx, id int64, expectedVersion int) 
 
 // RenameEdition changes an edition's labels (display metadata, in any state).
 func (s *Store) RenameEdition(ctx context.Context, actor permissions.Actor, id int64, expectedVersion int, labelFR, labelAR string) (Edition, error) {
-	if err := validLabels(labelFR, labelAR); err != nil {
+	if err := normalizePair(&labelFR, &labelAR, "labels"); err != nil {
 		return Edition{}, err
 	}
 	var out Edition
@@ -729,13 +741,13 @@ func (s *Store) RenameEdition(ctx context.Context, actor permissions.Actor, id i
 			return err
 		}
 		if e.LabelFR != labelFR || e.LabelAR != labelAR {
-			if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET label_fr = $2, label_ar = $3, version = version + 1 WHERE id = $1`,
-				id, labelFR, labelAR); err != nil {
-				return err
-			}
 			if err := audit(ctx, tx, actor, "edition", id, &id, "rename",
 				map[string]any{"labelFr": e.LabelFR, "labelAr": e.LabelAR},
 				map[string]any{"labelFr": labelFR, "labelAr": labelAR}); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET label_fr = $2, label_ar = $3, version = version + 1 WHERE id = $1`,
+				id, labelFR, labelAR); err != nil {
 				return err
 			}
 		}
@@ -913,6 +925,12 @@ func (s *Store) SetChapters(ctx context.Context, actor permissions.Actor, editio
 				}
 			}
 		}
+		if slices.Equal(before, nonNil(chapterIDs)) {
+			// Unchanged: the version still moved (a concurrent edit from the
+			// same view conflicts), but there is no change to audit.
+			out, err = loadEdition(ctx, tx, editionID)
+			return err
+		}
 		if err := audit(ctx, tx, actor, "assignment", assignmentID, &editionID, "set_chapters",
 			map[string]any{"chapterIds": before}, map[string]any{"chapterIds": nonNil(chapterIDs)}); err != nil {
 			return err
@@ -1008,25 +1026,23 @@ func (s *Store) MakeCurrent(ctx context.Context, actor permissions.Actor, id int
 		if err := sectionOpen(ctx, tx, sectionID); err != nil {
 			return err
 		}
+		if err := noRetiredSelections(ctx, tx, id); err != nil {
+			return err
+		}
 		if previous != nil {
+			if err := audit(ctx, tx, actor, "edition", *previous, previous, "supersede", stateJSON(Current), stateJSON(Superseded)); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET state = 'superseded', superseded_at = now(), version = version + 1
 				WHERE id = $1`, *previous); err != nil {
 				return err
 			}
-			if err := audit(ctx, tx, actor, "edition", *previous, previous, "supersede",
-				map[string]any{"state": "current"}, map[string]any{"state": "superseded", "supersededBy": id}); err != nil {
-				return err
-			}
+		}
+		if err := audit(ctx, tx, actor, "edition", id, &id, "make_current", stateJSON(Draft), stateJSON(Current)); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET state = 'current', current_since = now(), version = version + 1
 			WHERE id = $1`, id); err != nil {
-			return err
-		}
-		before := map[string]any{"state": "draft"}
-		if previous != nil {
-			before["previousCurrentId"] = *previous
-		}
-		if err := audit(ctx, tx, actor, "edition", id, &id, "make_current", before, map[string]any{"state": "current"}); err != nil {
 			return err
 		}
 		superseded = previous
@@ -1055,12 +1071,11 @@ func (s *Store) RetireEdition(ctx context.Context, actor permissions.Actor, id i
 		case Draft:
 			return ErrStateConflict
 		}
-		if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET state = 'retired', retired_at = now(), version = version + 1
-			WHERE id = $1`, id); err != nil {
+		if err := audit(ctx, tx, actor, "edition", id, &id, "retire", stateJSON(e.State), stateJSON(Retired)); err != nil {
 			return err
 		}
-		if err := audit(ctx, tx, actor, "edition", id, &id, "retire",
-			map[string]any{"state": string(e.State)}, map[string]any{"state": "retired"}); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE curriculum_editions SET state = 'retired', retired_at = now(), version = version + 1
+			WHERE id = $1`, id); err != nil {
 			return err
 		}
 		out, err = loadEdition(ctx, tx, id)
@@ -1071,4 +1086,61 @@ func (s *Store) RetireEdition(ctx context.Context, actor permissions.Actor, id i
 
 func sameID(a, b *int64) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+// retiredJSON is the audit value shape of a retirement.
+func retiredJSON(retired bool) map[string]any { return map[string]any{"retired": retired} }
+
+// stateJSON is the audit value shape of an edition state change.
+func stateJSON(st EditionState) map[string]any { return map[string]any{"state": string(st)} }
+
+// noRetiredSelections returns ErrPlacementInvalid, naming the entries, when
+// a draft edition's assignments name a retired subject or chapter. The
+// subjects and chapters are share-locked (after the edition, in the global
+// lock order), so a concurrent retirement waits.
+func noRetiredSelections(ctx context.Context, tx pgx.Tx, editionID int64) error {
+	rows, err := tx.Query(ctx, `
+		SELECT 'subject ' || sj.code, sj.retired_at IS NOT NULL
+		  FROM curriculum_assignments a JOIN subjects sj ON sj.id = a.subject_id
+		 WHERE a.edition_id = $1
+		   FOR SHARE OF sj`, editionID)
+	if err != nil {
+		return err
+	}
+	var retired []string
+	var name string
+	var isRetired bool
+	if _, err := pgx.ForEachRow(rows, []any{&name, &isRetired}, func() error {
+		if isRetired {
+			retired = append(retired, name)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	rows, err = tx.Query(ctx, `
+		SELECT 'chapter ' || sj.code || '/' || c.code, c.retired_at IS NOT NULL
+		  FROM curriculum_assignments a
+		  JOIN curriculum_assignment_chapters ac ON ac.assignment_id = a.id
+		  JOIN chapters c ON c.id = ac.chapter_id
+		  JOIN subjects sj ON sj.id = c.subject_id
+		 WHERE a.edition_id = $1
+		   FOR SHARE OF c`, editionID)
+	if err != nil {
+		return err
+	}
+	if _, err := pgx.ForEachRow(rows, []any{&name, &isRetired}, func() error {
+		if isRetired {
+			retired = append(retired, name)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if len(retired) > 0 {
+		slices.Sort(retired)
+		return fmt.Errorf("%w: the edition assigns retired entries (%s); remove them before making it current",
+			ErrPlacementInvalid, strings.Join(retired, ", "))
+	}
+	return nil
 }

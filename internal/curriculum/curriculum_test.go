@@ -128,14 +128,18 @@ func TestValidationAndConflicts(t *testing.T) {
 	for name, in := range map[string]curriculum.Entry{
 		"bad code":       {Code: "Test", NameFR: "a", NameAR: "b"},
 		"empty name":     {Code: "test-a", NameFR: "", NameAR: "b"},
-		"padded name":    {Code: "test-a", NameFR: " a", NameAR: "b"},
 		"bidi control":   {Code: "test-a", NameFR: "a‮b", NameAR: "b"},
 		"order too high": {Code: "test-a", NameFR: "a", NameAR: "b", DisplayOrder: 10000},
 	} {
 		_, err := e.store.CreateLevel(e.ctx, e.admin, in)
 		wantErr(t, name, err, curriculum.ErrInvalidInput)
 	}
-	_, err := e.store.CreateLevel(e.ctx, e.admin, curriculum.Entry{Code: l.Code, NameFR: "a", NameAR: "b"})
+	// Names are trimmed like the catalogue's display names.
+	padded, err := e.store.CreateLevel(e.ctx, e.admin, curriculum.Entry{Code: "test-padded", NameFR: "  TEST a ", NameAR: "\tب\n"})
+	if err != nil || padded.NameFR != "TEST a" || padded.NameAR != "ب" {
+		t.Fatalf("padded names: %+v, %v", padded, err)
+	}
+	_, err = e.store.CreateLevel(e.ctx, e.admin, curriculum.Entry{Code: l.Code, NameFR: "a", NameAR: "b"})
 	wantErr(t, "duplicate level code", err, curriculum.ErrCodeExists)
 	_, err = e.store.CreateSection(e.ctx, e.admin, l.ID, curriculum.Entry{Code: s.Code, NameFR: "a", NameAR: "b"})
 	wantErr(t, "duplicate section code", err, curriculum.ErrCodeExists)
@@ -285,6 +289,16 @@ func TestRetirement(t *testing.T) {
 	wantErr(t, "edition under retired level", err, curriculum.ErrParentRetired)
 
 	draft := e.edition(s.ID, "test-next")
+	bio := mustSubject(e, "test-bio")
+	draft, _, err = e.store.AddAssignment(e.ctx, e.admin, draft.ID, draft.Version, bio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.RetireSubject(e.ctx, e.admin, bio); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = e.store.MakeCurrent(e.ctx, e.admin, draft.ID, draft.Version, &ed.ID)
+	wantErr(t, "make current with a retired subject", err, curriculum.ErrPlacementInvalid)
 	if _, err := e.store.RetireSection(e.ctx, e.admin, s.ID, s.Version); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +317,7 @@ func TestRetirement(t *testing.T) {
 	}
 	wantGuard(t, "backdated retirement", asRole(
 		`UPDATE S.academic_sections SET retired_at = now() - interval '1 day', version = version + 1 WHERE id = `+itoa(s2.ID),
-		auditSQL("section", s2.ID, nil, "retire")), "never undone")
+		auditSQL("section", s2.ID, nil, "retire", notRetired, isRetired)), "never undone")
 	wantGuard(t, "subject added retired", asRole(
 		`WITH s AS (INSERT INTO S.subjects (code, retired_at) VALUES ('test-dead', now()) RETURNING id)
 		 INSERT INTO S.catalogue_audit (operator_label, action, subject_id) SELECT 'test-operator@test-host', 'add_subject', id FROM s`),

@@ -55,16 +55,22 @@ func TestGuardsBindTheRuntimeRole(t *testing.T) {
 
 	// Composite keys keep chapters in the assignment's subject.
 	other := e.chapter(e.physics, "ch-01")
+	other2 := e.chapter(e.math, "ch-09")
 	wantSQLState(t, "chapter of another subject", asRole(
-		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position) VALUES (`+A+`, `+itoa(e.math)+`, `+itoa(other)+`, 2)`,
-		auditSQL("assignment", a.ID, &ed.ID, "set_chapters")), "23503")
+		auditSQL("assignment", a.ID, &ed.ID, "set_chapters", chaptersJSON(c), chaptersJSON(c, other)),
+		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position) VALUES (`+A+`, `+itoa(e.math)+`, `+itoa(other)+`, 2)`),
+		"23503")
 	wantSQLState(t, "assignment chapter with a wrong subject", asRole(
-		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position) VALUES (`+A+`, `+itoa(e.physics)+`, `+itoa(other)+`, 2)`,
-		auditSQL("assignment", a.ID, &ed.ID, "set_chapters")), "23503")
+		auditSQL("assignment", a.ID, &ed.ID, "set_chapters", chaptersJSON(c), chaptersJSON(c, other)),
+		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position) VALUES (`+A+`, `+itoa(e.physics)+`, `+itoa(other)+`, 2)`),
+		"23503")
 	wantSQLState(t, "two current editions", asRole(
+		auditSQL("edition", ed.ID, &ed.ID, "make_current", stateJSON("draft"), stateJSON("current")),
 		`UPDATE S.curriculum_editions SET state = 'current', current_since = now(), version = version + 1 WHERE id = `+E,
-		auditSQL("edition", ed.ID, &ed.ID, "make_current"),
 		`INSERT INTO S.curriculum_editions (section_id, code, label_fr, label_ar) VALUES (`+S+`, 'test-z', 'z', 'z')`,
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, before, after)
+		 SELECT 'test-operator@test-host', 'edition', id, id, 'make_current', `+stateJSON("draft")+`, `+stateJSON("current")+`
+		   FROM S.curriculum_editions WHERE code = 'test-z'`,
 		`UPDATE S.curriculum_editions SET state = 'current', current_since = now(), version = version + 1 WHERE code = 'test-z'`,
 	), "23505")
 
@@ -87,30 +93,99 @@ func TestGuardsBindTheRuntimeRole(t *testing.T) {
 		case "chapter":
 			sql = `UPDATE S.chapters SET retired_at = now() WHERE id = ` + itoa(other)
 		}
-		wantGuard(t, tc.what+" without audit", asRole(sql), "without a curriculum_audit row")
+		wantGuard(t, tc.what+" without audit", asRole(sql), "curriculum_audit row of the same transaction")
 	}
 	// An audit row of the wrong action does not count: a rename audited as a
 	// reorder, a level created without its row.
 	wantGuard(t, "rename audited as reorder", asRole(
-		`UPDATE S.education_levels SET name_fr = 'TEST autre', version = version + 1 WHERE id = `+L,
-		auditSQL("level", l.ID, nil, "reorder")), "(rename)")
+		auditSQL("level", l.ID, nil, "reorder", `'{"displayOrder": 0}'`, `'{"displayOrder": 5}'`),
+		`UPDATE S.education_levels SET name_fr = 'TEST autre', version = version + 1 WHERE id = `+L), "(rename)")
 	wantGuard(t, "level without audit", asRole(
-		`INSERT INTO S.education_levels (code, name_fr, name_ar) VALUES ('test-q', 'q', 'q')`), "without a curriculum_audit row")
+		`INSERT INTO S.education_levels (code, name_fr, name_ar) VALUES ('test-q', 'q', 'q')`), "curriculum_audit row of the same transaction")
 	// A superseded edition needs a successor made current in the same transaction.
 	cur, _, err := e.store.MakeCurrent(e.ctx, e.admin, ed.ID, ed.Version, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantGuard(t, "supersede alone", asRole(
-		`UPDATE S.curriculum_editions SET state = 'superseded', superseded_at = now(), version = version + 1 WHERE id = `+itoa(cur.ID),
-		auditSQL("edition", cur.ID, &cur.ID, "supersede")), "can only be superseded")
+		auditSQL("edition", cur.ID, &cur.ID, "supersede", stateJSON("current"), stateJSON("superseded")),
+		`UPDATE S.curriculum_editions SET state = 'superseded', superseded_at = now(), version = version + 1 WHERE id = `+itoa(cur.ID)),
+		"can only be superseded")
+	// A superseded_at stamped on retirement is not a supersession.
+	wantGuard(t, "superseded_at on retirement", asRole(
+		auditSQL("edition", cur.ID, &cur.ID, "retire", stateJSON("current"), stateJSON("retired")),
+		`UPDATE S.curriculum_editions SET state = 'retired', retired_at = now(), superseded_at = now(), version = version + 1 WHERE id = `+itoa(cur.ID)),
+		"by their own transition")
+	// A successor never retires its predecessor.
+	wantGuard(t, "predecessor retired by its successor", asRole(
+		`INSERT INTO S.curriculum_editions (section_id, code, label_fr, label_ar) VALUES (`+S+`, 'test-next', 'n', 'n')`,
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action)
+		 SELECT 'test-operator@test-host', 'edition', id, id, 'create' FROM S.curriculum_editions WHERE code = 'test-next'`,
+		auditSQL("edition", cur.ID, &cur.ID, "retire", stateJSON("current"), stateJSON("retired")),
+		`UPDATE S.curriculum_editions SET state = 'retired', retired_at = now(), version = version + 1 WHERE id = `+itoa(cur.ID),
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, before, after)
+		 SELECT 'test-operator@test-host', 'edition', id, id, 'make_current', `+stateJSON("draft")+`, `+stateJSON("current")+`
+		   FROM S.curriculum_editions WHERE code = 'test-next'`,
+		`UPDATE S.curriculum_editions SET state = 'current', current_since = now(), version = version + 1 WHERE code = 'test-next'`),
+		"must be superseded, not retired")
 
 	// A direct change with its audit row is accepted.
-	if err := asRole(
-		`UPDATE S.education_levels SET name_fr = 'TEST direct', version = version + 1 WHERE id = `+L,
-		auditSQL("level", l.ID, nil, "rename")); err != nil {
+	renameRow := func(to string) string {
+		return `INSERT INTO S.curriculum_audit (operator_label, target, target_id, action, before, after)
+			SELECT 'test-operator@test-host', 'level', id, 'rename', jsonb_build_object('nameFr', name_fr, 'nameAr', name_ar),
+			       jsonb_build_object('nameFr', '` + to + `', 'nameAr', name_ar)
+			  FROM S.education_levels WHERE id = ` + L
+	}
+	if err := asRole(renameRow("TEST direct"),
+		`UPDATE S.education_levels SET name_fr = 'TEST direct', version = version + 1 WHERE id = `+L); err != nil {
 		t.Fatalf("audited direct rename: %v", err)
 	}
+
+	// Audit exactness (rule 1 to 3).
+	wantGuard(t, "stale before values", asRole(
+		auditSQL("level", l.ID, nil, "rename", `'{"nameFr": "TEST faux", "nameAr": "x"}'`, `'{"nameFr": "TEST y", "nameAr": "x"}'`)),
+		"current values as its before values")
+	wantGuard(t, "forged retirement", asRole(auditSQL("level", l.ID, nil, "retire", notRetired, isRetired)),
+		"records a change that was not applied")
+	wantGuard(t, "forged chapter retirement", asRole(auditSQL("chapter", other, nil, "retire", notRetired, isRetired)),
+		"records a change that was not applied")
+	wantGuard(t, "rename recorded, not applied", asRole(renameRow("TEST jamais")), "records a change that was not applied")
+	wantGuard(t, "two renames, one row", asRole(renameRow("TEST un"),
+		`UPDATE S.education_levels SET name_fr = 'TEST un', version = version + 1 WHERE id = `+L,
+		`UPDATE S.education_levels SET name_fr = 'TEST deux', version = version + 1 WHERE id = `+L),
+		"(rename) without its curriculum_audit row")
+	if err := asRole(renameRow("TEST un"),
+		`UPDATE S.education_levels SET name_fr = 'TEST un', version = version + 1 WHERE id = `+L,
+		renameRow("TEST deux"),
+		`UPDATE S.education_levels SET name_fr = 'TEST deux', version = version + 1 WHERE id = `+L); err != nil {
+		t.Fatalf("two renames, two rows: %v", err)
+	}
+	wantGuard(t, "rename row then a different rename", asRole(renameRow("TEST trois"),
+		`UPDATE S.education_levels SET name_fr = 'TEST quatre', version = version + 1 WHERE id = `+L),
+		"(rename) without its curriculum_audit row")
+	draft := e.edition(s.ID, "test-other-draft")
+	wantGuard(t, "assignment row with a wrong edition", asRole(
+		auditSQL("assignment", a.ID, &draft.ID, "set_chapters", chaptersJSON(c), chaptersJSON())),
+		"with another edition")
+	wantGuard(t, "add_assignment with a wrong subject", asRole(
+		`INSERT INTO S.curriculum_assignments (edition_id, subject_id) VALUES (`+itoa(draft.ID)+`, `+itoa(e.physics)+`)`,
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, after)
+		 SELECT 'test-operator@test-host', 'assignment', id, edition_id, 'add_assignment', jsonb_build_object('subjectId', `+itoa(e.math)+`)
+		   FROM S.curriculum_assignments WHERE edition_id = `+itoa(draft.ID)),
+		"records the assignment's subject")
+	wantGuard(t, "chapter list differing from its audit", asRole(
+		`INSERT INTO S.curriculum_assignments (edition_id, subject_id) VALUES (`+itoa(draft.ID)+`, `+itoa(e.math)+`)`,
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, after)
+		 SELECT 'test-operator@test-host', 'assignment', id, edition_id, 'add_assignment', jsonb_build_object('subjectId', subject_id)
+		   FROM S.curriculum_assignments WHERE edition_id = `+itoa(draft.ID),
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, before, after)
+		 SELECT 'test-operator@test-host', 'assignment', id, edition_id, 'set_chapters', '{"chapterIds": []}', `+chaptersJSON(c)+`
+		   FROM S.curriculum_assignments WHERE edition_id = `+itoa(draft.ID),
+		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position)
+		 SELECT id, subject_id, `+itoa(c)+`, 2 FROM S.curriculum_assignments WHERE edition_id = `+itoa(draft.ID),
+		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position)
+		 SELECT id, subject_id, `+itoa(other2)+`, 1 FROM S.curriculum_assignments WHERE edition_id = `+itoa(draft.ID)),
+		"records a change that was not applied")
 
 	// The audit is append-only and records its own transaction and time.
 	for _, sql := range []string{
@@ -124,13 +199,13 @@ func TestGuardsBindTheRuntimeRole(t *testing.T) {
 		`INSERT INTO S.curriculum_audit (occurred_at, operator_label, target, target_id, action) VALUES (now() - interval '1 day', 'x', 'level', `+L+`, 'rename')`),
 		"its own transaction")
 	wantGuard(t, "audit of nothing", asRole(
-		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, action) VALUES ('x', 'level', 987654, 'rename')`),
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, action) VALUES ('x', 'level', 987654, 'create')`),
 		"no existing level")
 	wantSQLState(t, "audit with two actors", asRole(
-		`INSERT INTO S.curriculum_audit (actor_id, operator_label, target, target_id, action) VALUES (`+itoa(e.adminID)+`, 'x', 'level', `+L+`, 'rename')`),
+		`INSERT INTO S.curriculum_audit (actor_id, operator_label, target, target_id, action) VALUES (`+itoa(e.adminID)+`, 'x', 'level', `+L+`, 'create')`),
 		"23514")
 	wantSQLState(t, "audit action for target", asRole(
-		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, action) VALUES ('x', 'subject', `+itoa(e.math)+`, 'rename')`),
+		`INSERT INTO S.curriculum_audit (operator_label, target, target_id, action) VALUES ('x', 'subject', `+itoa(e.math)+`, 'create')`),
 		"23514")
 }
 
@@ -176,7 +251,7 @@ func TestGuardsIgnoreTemporaryShadowTables(t *testing.T) {
 	wantGuard(t, "retired chapter via shadow chapters", asRole(
 		`CREATE TEMP TABLE chapters (id bigint, retired_at timestamptz)`,
 		`INSERT INTO chapters VALUES (`+itoa(retired)+`, NULL)`,
-		auditSQL("assignment", da.ID, &d.ID, "set_chapters"),
+		auditSQL("assignment", da.ID, &d.ID, "set_chapters", chaptersJSON(), chaptersJSON(retired)),
 		`INSERT INTO S.curriculum_assignment_chapters (assignment_id, subject_id, chapter_id, position) VALUES (`+itoa(da.ID)+`, `+itoa(e.math)+`, `+itoa(retired)+`, 1)`),
 		"retired chapter")
 	if err := e.store.RetireSubject(e.ctx, e.admin, e.physics); err != nil {
@@ -201,7 +276,7 @@ func TestGuardsIgnoreTemporaryShadowTables(t *testing.T) {
 		`CREATE TEMP TABLE curriculum_audit (target text, target_id bigint, action text, xact_id xid8)`,
 		`INSERT INTO curriculum_audit VALUES ('edition', `+itoa(d.ID)+`, 'rename', pg_current_xact_id())`,
 		`UPDATE S.curriculum_editions SET label_fr = 'TEST ombre', version = version + 1 WHERE id = `+itoa(d.ID)),
-		"without a curriculum_audit row")
+		"curriculum_audit row of the same transaction")
 
 	// The selection rule binds its tables at creation.
 	var selectable bool
@@ -242,8 +317,8 @@ func TestAssignmentEditRacingMakeCurrent(t *testing.T) {
 			edit := func() error {
 				return asRole(
 					`INSERT INTO S.curriculum_assignments (edition_id, subject_id) VALUES (`+itoa(ed.ID)+`, `+itoa(e.math)+`)`,
-					`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action)
-					 SELECT 'test-operator@test-host', 'assignment', id, edition_id, 'add_assignment'
+					`INSERT INTO S.curriculum_audit (operator_label, target, target_id, edition_id, action, after)
+					 SELECT 'test-operator@test-host', 'assignment', id, edition_id, 'add_assignment', jsonb_build_object('subjectId', subject_id)
 					   FROM S.curriculum_assignments WHERE edition_id = `+itoa(ed.ID),
 					`SELECT pg_sleep(0.3)`)
 			}
@@ -260,11 +335,11 @@ func TestAssignmentEditRacingMakeCurrent(t *testing.T) {
 						if _, err := tx.Exec(e.ctx, `SELECT 1 FROM curriculum_editions WHERE id = $1 FOR UPDATE`, ed.ID); err != nil {
 							return err
 						}
-						if _, err := tx.Exec(e.ctx, `UPDATE curriculum_editions SET state = 'current', current_since = now(), version = version + 1 WHERE id = $1`, ed.ID); err != nil {
+						if _, err := tx.Exec(e.ctx, `INSERT INTO curriculum_audit (operator_label, target, target_id, edition_id, action, before, after)
+							VALUES ('test-operator@test-host', 'edition', $1, $1, 'make_current', '{"state": "draft"}', '{"state": "current"}')`, ed.ID); err != nil {
 							return err
 						}
-						if _, err := tx.Exec(e.ctx, `INSERT INTO curriculum_audit (operator_label, target, target_id, edition_id, action)
-							VALUES ('test-operator@test-host', 'edition', $1, $1, 'make_current')`, ed.ID); err != nil {
+						if _, err := tx.Exec(e.ctx, `UPDATE curriculum_editions SET state = 'current', current_since = now(), version = version + 1 WHERE id = $1`, ed.ID); err != nil {
 							return err
 						}
 						_, err := tx.Exec(e.ctx, `SELECT pg_sleep(0.3)`)

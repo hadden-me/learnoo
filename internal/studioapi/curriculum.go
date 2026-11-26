@@ -508,6 +508,11 @@ func (h *Handlers) removeAssignment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The request carries no body: the version is the only input.
+	if n, _ := r.Body.Read(make([]byte, 1)); n > 0 || r.ContentLength > 0 {
+		badRequest(w, "This request takes no body; pass the edition's version as ?expectedVersion=N.")
+		return
+	}
 	q := r.URL.Query()
 	raw := q.Get("expectedVersion")
 	version, err := strconv.Atoi(raw)

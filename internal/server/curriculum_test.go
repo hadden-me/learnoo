@@ -96,7 +96,28 @@ func TestCurriculumAdministrationAPI(t *testing.T) {
 	wantStatus(t, "duplicate level", e.api(admin, http.MethodPost, base+"/levels", map[string]any{"code": "test-bac", "nameFr": "x", "nameAr": "y"}), http.StatusConflict, "code_exists")
 	wantStatus(t, "invalid code", e.api(admin, http.MethodPost, base+"/levels", map[string]any{"code": "Bad Code", "nameFr": "x", "nameAr": "y"}), http.StatusUnprocessableEntity, "invalid_input")
 	wantStatus(t, "retire subject", e.api(admin, http.MethodPost, fmt.Sprintf("%s/subjects/%d/retire", base, math), map[string]any{}), http.StatusNoContent, "")
+	w = e.api(author, http.MethodGet, "/api/catalogue/subjects", nil)
+	wantStatus(t, "subjects after retirement", w, http.StatusOK, "")
+	subjects := decodeBody[struct {
+		Subjects []struct {
+			ID        int64   `json:"id"`
+			RetiredAt *string `json:"retiredAt"`
+		} `json:"subjects"`
+	}](t, w)
+	if len(subjects.Subjects) != 1 || subjects.Subjects[0].RetiredAt == nil {
+		t.Fatalf("retiredAt not exposed: %s", w.Body)
+	}
+	wantStatus(t, "delete with a body", e.api(admin, http.MethodDelete, fmt.Sprintf("%s/assignments/%d?expectedVersion=%d", edPath, asg, ed.Version), map[string]any{}),
+		http.StatusBadRequest, "invalid_request")
 	wantStatus(t, "retire subject twice", e.api(admin, http.MethodPost, fmt.Sprintf("%s/subjects/%d/retire", base, math), map[string]any{}), http.StatusConflict, "already_retired")
+
+	// Making an edition current that assigns a retired subject is refused.
+	w = e.api(admin, http.MethodPost, fmt.Sprintf("%s/sections/%d/editions", base, section.ID), map[string]any{"code": "test-2027", "labelFr": "TEST 2027", "labelAr": "طبعة"})
+	wantStatus(t, "second edition", w, http.StatusCreated, "")
+	next := decodeBody[editionResp](t, w)
+	nextPath := fmt.Sprintf("%s/editions/%d", base, next.ID)
+	wantStatus(t, "assign a retired subject", e.api(admin, http.MethodPost, nextPath+"/assignments", map[string]any{"expectedVersion": next.Version, "subjectId": math}),
+		http.StatusUnprocessableEntity, "placement_invalid")
 
 	// Strict JSON.
 	wantStatus(t, "unknown key", e.api(admin, http.MethodPost, base+"/levels", []byte(`{"code":"test-x","nameFr":"x","nameAr":"y","extra":1}`)), http.StatusBadRequest, "invalid_request")

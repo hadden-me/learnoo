@@ -76,9 +76,10 @@ func cLocaleDatabase(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// Upgrading a populated 0010 database keeps every subject and chapter ID,
-// code and audit row, places nothing into any edition and retires nothing.
-func TestUpgradeFrom0010KeepsCatalogue(t *testing.T) {
+// Upgrading a populated 0012 database (catalogue names and order set through
+// audited changes) keeps every subject and chapter ID, code, name, order and
+// audit row, places nothing into any edition and retires nothing.
+func TestUpgradeFrom0012KeepsCatalogue(t *testing.T) {
 	for name, open := range map[string]func(*testing.T) *pgxpool.Pool{
 		"default locale": func(t *testing.T) *pgxpool.Pool { return dbtest.EmptySchema(t) },
 		"C locale":       cLocaleDatabase,
@@ -86,7 +87,7 @@ func TestUpgradeFrom0010KeepsCatalogue(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			pool := open(t)
-			if _, err := database.Migrate(ctx, pool, migrationsUpTo(t, "0010")); err != nil {
+			if _, err := database.Migrate(ctx, pool, migrationsUpTo(t, "0012")); err != nil {
 				t.Fatal(err)
 			}
 			subjects := map[string]int64{}
@@ -97,17 +98,55 @@ func TestUpgradeFrom0010KeepsCatalogue(t *testing.T) {
 					chapters[dbtest.AddChapter(t, pool, subjects[code], ch)] = code + "/" + ch
 				}
 			}
+			// Names and order set as the 0012 operator commands do: the audit
+			// row of the same transaction, then the change. (The catalogue
+			// store already reads 0013's retired_at, so it is not used here.)
+			change := func(audit string, auditArgs []any, update string, updateArgs ...any) {
+				t.Helper()
+				if err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+					if _, err := tx.Exec(ctx, audit, auditArgs...); err != nil {
+						return err
+					}
+					_, err := tx.Exec(ctx, update, updateArgs...)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			zeta, alpha, mid := subjects["test-zeta"], subjects["test-alpha"], subjects["test-mid"]
+			change(`INSERT INTO catalogue_audit (operator_label, action, subject_id, old_name_fr, new_name_fr, old_name_ar, new_name_ar)
+				VALUES ('test-operator@test-host', 'rename_subject', $1, NULL, 'TEST Mathématiques', NULL, 'رياضيات')`, []any{zeta},
+				`UPDATE subjects SET name_fr = 'TEST Mathématiques', name_ar = 'رياضيات' WHERE id = $1`, zeta)
+			change(`INSERT INTO catalogue_audit (operator_label, action, subject_id, old_sort_order, new_sort_order)
+				VALUES ('test-operator@test-host', 'reorder_subject', $1, 0, 7)`, []any{alpha},
+				`UPDATE subjects SET sort_order = 7 WHERE id = $1`, alpha)
+			var ch int64
+			for id, name := range chapters {
+				if name == "test-mid/ch-02" {
+					ch = id
+				}
+			}
+			change(`INSERT INTO catalogue_audit (operator_label, action, subject_id, chapter_id, old_name_fr, new_name_fr, old_name_ar, new_name_ar)
+				VALUES ('test-operator@test-host', 'rename_chapter', $1, $2, NULL, 'TEST Suites', NULL, NULL)`, []any{mid, ch},
+				`UPDATE chapters SET name_fr = 'TEST Suites' WHERE id = $1`, ch)
+			change(`INSERT INTO catalogue_audit (operator_label, action, subject_id, chapter_id, old_sort_order, new_sort_order)
+				VALUES ('test-operator@test-host', 'reorder_chapter', $1, $2, 0, 3)`, []any{mid, ch},
+				`UPDATE chapters SET sort_order = 3 WHERE id = $1`, ch)
 			snapshot := func() string {
 				var s string
 				if err := pool.QueryRow(ctx, `
-					SELECT (SELECT string_agg(id || ':' || code, ',' ORDER BY id) FROM subjects) || '|' ||
-					       (SELECT string_agg(id || ':' || subject_id || ':' || code, ',' ORDER BY id) FROM chapters) || '|' ||
-					       (SELECT string_agg(id || ':' || action || ':' || subject_id || ':' || coalesce(chapter_id::text, '') || ':' || occurred_at, ',' ORDER BY id) FROM catalogue_audit)`).Scan(&s); err != nil {
+					SELECT (SELECT string_agg(concat_ws(':', id, code, name_fr, name_ar, sort_order, created_at), ',' ORDER BY id) FROM subjects) || '|' ||
+					       (SELECT string_agg(concat_ws(':', id, subject_id, code, name_fr, name_ar, sort_order, created_at), ',' ORDER BY id) FROM chapters) || '|' ||
+					       (SELECT string_agg(concat_ws(':', id, action, subject_id, chapter_id, occurred_at, xact_id, operator_label,
+					                         old_name_fr, new_name_fr, old_name_ar, new_name_ar, old_sort_order, new_sort_order), ',' ORDER BY id) FROM catalogue_audit)`).Scan(&s); err != nil {
 					t.Fatal(err)
 				}
 				return s
 			}
 			before := snapshot()
+			if !strings.Contains(before, "رياضيات") || !strings.Contains(before, "TEST Suites") || !strings.Contains(before, ":7:") {
+				t.Fatalf("names and order not set before the upgrade: %s", before)
+			}
 			if _, err := database.Migrate(ctx, pool, migrations.FS); err != nil {
 				t.Fatal(err)
 			}

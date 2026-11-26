@@ -71,6 +71,9 @@ var (
 	ErrDenied = errors.New("permission denied")
 	// ErrUnknownSubject means the subject does not exist.
 	ErrUnknownSubject = errors.New("unknown subject")
+	// ErrRetiredSubject means the subject is retired (migrations/0013): no
+	// reviewer can be newly assigned to it. Existing grants stay revocable.
+	ErrRetiredSubject = errors.New("subject is retired")
 	// ErrUnknownUser means the target user does not exist.
 	ErrUnknownUser = errors.New("unknown user")
 	// ErrLastAdministrator means the change would leave no active
@@ -592,6 +595,18 @@ func (s *Store) apply(ctx context.Context, tx pgx.Tx, actor Actor, target int64,
 	case action == "revoke" && subject == nil:
 		tag, err = tx.Exec(ctx, `DELETE FROM user_permissions WHERE user_id = $1 AND permission = $2`, target, string(p))
 	case action == "grant":
+		// Re-granting an existing assignment stays a no-op, even on a
+		// subject retired since (migrations/0013), whose guard refuses only
+		// new assignments (mapped to ErrRetiredSubject below).
+		var held bool
+		err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM reviewer_assignments WHERE user_id = $1 AND subject_id = $2)`,
+			target, *subject).Scan(&held)
+		if err != nil {
+			return false, err
+		}
+		if held {
+			return false, nil
+		}
 		tag, err = tx.Exec(ctx, `INSERT INTO reviewer_assignments (user_id, subject_id, granted_at, granted_by)
 			VALUES ($1, $2, now(), $3) ON CONFLICT DO NOTHING`, target, *subject, actorID)
 	default:
@@ -636,6 +651,9 @@ func checkExists(ctx context.Context, tx pgx.Tx, user int64, subject *int64) err
 
 func mapFK(err error) error {
 	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "LRN01" && strings.Contains(pgErr.Message, "no reviewer can be newly assigned") {
+		return errors.Join(ErrRetiredSubject, err)
+	}
 	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 		switch pgErr.ConstraintName {
 		case "reviewer_assignments_subject_id_fkey", "permission_audit_subject_id_fkey":

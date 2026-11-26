@@ -486,6 +486,10 @@ func (h *Handlers) writeLessonError(w http.ResponseWriter, op string, err error,
 		unprocessable("unknown_subject", "The subject does not exist.")
 	case errors.Is(err, lessons.ErrUnknownChapter):
 		unprocessable("unknown_chapter", "The chapter does not exist in this lesson's subject.")
+	case errors.Is(err, lessons.ErrRetiredSubject):
+		unprocessable("retired_subject", "The subject is retired; no new lesson can be created in it.")
+	case errors.Is(err, lessons.ErrRetiredChapter):
+		unprocessable("retired_chapter", "The chapter is retired; choose another chapter (a draft keeps a retired chapter only from its published base revision).")
 	case errors.Is(err, lessons.ErrUnknownMedia):
 		unprocessable("unknown_media", "A referenced media asset does not exist.")
 	case errors.Is(err, lessons.ErrTranslationSubject):

@@ -76,7 +76,7 @@ func TestCatalogueAuthorizationAndOrdering(t *testing.T) {
 			b, _ := json.Marshal(s)
 			return string(b)
 		}
-		return `{"id":` + itoa(id) + `,"code":"` + code + `","nameFr":` + q(fr) + `,"nameAr":` + q(ar) + `,"sortOrder":` + itoa(int64(order)) + `}`
+		return `{"id":` + itoa(id) + `,"code":"` + code + `","nameFr":` + q(fr) + `,"nameAr":` + q(ar) + `,"sortOrder":` + itoa(int64(order)) + `,"retiredAt":null}`
 	}
 	// Without names or orders: by code, names null.
 	wantSubjects := `{"subjects":[` + entry(ids[0], "test-algebra", "", "", 0) + `,` + entry(ids[1], "test-math", "", "", 0) + `,` +
