@@ -276,10 +276,10 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 		return nil, fmt.Errorf("media: re-encode: %w", err)
 	}
 
-	sum := sha256.Sum256(out.Bytes())
+	sum := sha256.Sum256(out.buf.Bytes())
 	return &Asset{
 		processed:   true,
-		data:        out.Bytes(),
+		data:        out.buf.Bytes(),
 		sha256:      hex.EncodeToString(sum[:]),
 		contentType: stored,
 		sourceType:  f.contentType,
@@ -305,17 +305,18 @@ var errEncodedTooLarge = errors.New("media: re-encoded image too large")
 // encodedLimit is MaxEncodedBytes; tests lower it.
 var encodedLimit = MaxEncodedBytes
 
-// limitedBuffer is a bytes.Buffer that refuses to grow beyond max bytes.
+// limitedBuffer collects encoder output up to max bytes. It has only Write,
+// so encoders cannot bypass the limit through other bytes.Buffer methods.
 type limitedBuffer struct {
-	bytes.Buffer
+	buf bytes.Buffer
 	max int
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > b.max {
+	if b.buf.Len()+len(p) > b.max {
 		return 0, errEncodedTooLarge
 	}
-	return b.Buffer.Write(p)
+	return b.buf.Write(p)
 }
 
 func acquireSlot(ctx context.Context) error {
