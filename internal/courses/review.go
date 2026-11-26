@@ -397,12 +397,10 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	rows, err := tx.Query(ctx, `
 		SELECT s.module_key::text, s.position, s.title, s.lesson_id, s.lesson_revision_id, lr.revision_number,
 		       ps.lesson_revision_id, pr.revision_number,
-		       -- Content is read only for a side that is readable now: the
-		       -- new pin when eligible, the previous revision when not
-		       -- withdrawn and its lesson is published and not archived.
+		       -- Content is read only for a side that is readable now, by the
+		       -- one definition of contract §5: course_step_revision_eligible.
 		       CASE WHEN course_step_revision_eligible(s.lesson_id, s.lesson_revision_id) THEN lr.content END,
-		       CASE WHEN pr.id IS NOT NULL AND l.published_revision_id IS NOT NULL AND l.archived_at IS NULL
-		                 AND NOT EXISTS (SELECT 1 FROM revision_withdrawals w WHERE w.revision_id = pr.id)
+		       CASE WHEN pr.id IS NOT NULL AND course_step_revision_eligible(ps.lesson_id, ps.lesson_revision_id)
 		            THEN pr.content END,
 		       ps.module_key::text, ps.position, ps.title
 		  FROM course_steps s
