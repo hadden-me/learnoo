@@ -92,28 +92,33 @@ type moduleJSON struct {
 }
 
 type courseRevisionJSON struct {
-	ID                int64           `json:"id"`
-	CourseID          int64           `json:"courseId"`
-	Number            int             `json:"number"`
-	Status            courses.Status  `json:"status"`
-	Kind              string          `json:"kind"`
-	AuthorID          int64           `json:"authorId"`
-	BaseRevisionID    *int64          `json:"baseRevisionId"`
-	CompareRevisionID *int64          `json:"compareRevisionId"`
-	SubjectID         int64           `json:"subjectId"`
-	Language          string          `json:"language"`
-	Title             string          `json:"title"`
-	Summary           string          `json:"summary"`
-	Objectives        string          `json:"objectives"`
-	Prerequisites     string          `json:"prerequisites"`
-	CoverMediaID      *int64          `json:"coverMediaId"`
-	CoverAlt          *string         `json:"coverAlt"`
-	Version           int             `json:"version"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	UpdatedAt         time.Time       `json:"updatedAt"`
-	SubmittedAt       *time.Time      `json:"submittedAt"`
-	Assignments       []placementJSON `json:"assignments"`
-	Modules           []moduleJSON    `json:"modules"`
+	ID                int64          `json:"id"`
+	CourseID          int64          `json:"courseId"`
+	Number            int            `json:"number"`
+	Status            courses.Status `json:"status"`
+	Kind              string         `json:"kind"`
+	AuthorID          int64          `json:"authorId"`
+	BaseRevisionID    *int64         `json:"baseRevisionId"`
+	CompareRevisionID *int64         `json:"compareRevisionId"`
+	SubjectID         int64          `json:"subjectId"`
+	Language          string         `json:"language"`
+	Title             string         `json:"title"`
+	Summary           string         `json:"summary"`
+	Objectives        string         `json:"objectives"`
+	Prerequisites     string         `json:"prerequisites"`
+	CoverMediaID      *int64         `json:"coverMediaId"`
+	CoverAlt          *string        `json:"coverAlt"`
+	Version           int            `json:"version"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+	SubmittedAt       *time.Time     `json:"submittedAt"`
+	WithdrawnAt       *time.Time     `json:"withdrawnAt"`
+	// The review decision (null until decided) and, for a revision in
+	// review that no active reviewer may decide, why (LMS-B04).
+	Review      *decisionJSON   `json:"review"`
+	Blocked     *blockedJSON    `json:"blocked"`
+	Assignments []placementJSON `json:"assignments"`
+	Modules     []moduleJSON    `json:"modules"`
 	// Only on POST /api/courses/{id}/drafts.
 	DroppedSteps *[]droppedStepJSON `json:"droppedSteps,omitempty"`
 }
@@ -136,7 +141,8 @@ func toCourseRevisionJSON(r courses.Revision) courseRevisionJSON {
 		AuthorID: r.AuthorID, BaseRevisionID: r.BaseRevisionID, CompareRevisionID: r.CompareRevisionID,
 		SubjectID: r.SubjectID, Language: r.Language, Title: r.Title, Summary: r.Summary, Objectives: r.Objectives,
 		Prerequisites: r.Prerequisites, CoverMediaID: r.CoverMediaID, CoverAlt: r.CoverAlt, Version: r.Version,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, SubmittedAt: r.SubmittedAt,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, SubmittedAt: r.SubmittedAt, WithdrawnAt: r.WithdrawnAt,
+		Review: toCourseDecisionJSON(r.Decision), Blocked: toBlockedJSON(r.Blocked),
 		Assignments: []placementJSON{}, Modules: []moduleJSON{}}
 	for _, p := range r.Assignments {
 		out.Assignments = append(out.Assignments, placementJSON{AssignmentID: p.AssignmentID, EditionID: p.EditionID,
@@ -523,6 +529,7 @@ func (h *Handlers) writeCourseError(w http.ResponseWriter, op string, err error)
 		auth.WriteError(w, http.StatusForbidden, "forbidden", "You do not have permission to do this.")
 	case errors.Is(err, courses.ErrNotFound):
 		notFound(w)
+	case writeCourseWorkflowError(w, err):
 	case errors.Is(err, courses.ErrInvalidStep):
 		unprocessable("invalid_step", detail(err, courses.ErrInvalidStep, "A step cannot be attached to this course."))
 	case errors.Is(err, courses.ErrPlacementInvalid):
