@@ -32,12 +32,12 @@ test('author creates a course, places it, builds the outline by keyboard, saves,
 
   // Placement: level → section → the current edition, chosen with the keyboard.
   await page.getByLabel('Niveau').selectOption({ label: 'TEST Baccalauréat' });
-  await page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section mathématiques' });
+  await page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section sciences mathématiques' });
   const addEdition = page.getByRole('button', { name: 'Ajouter l’édition en vigueur « TEST édition 2026 »' });
   await addEdition.focus();
   await page.keyboard.press('Enter');
   const placements = page.getByRole('list', { name: 'Classements choisis' });
-  await expect(placements).toContainText('TEST Baccalauréat › TEST Section mathématiques › TEST édition 2026');
+  await expect(placements).toContainText('TEST Baccalauréat › TEST Section sciences mathématiques › TEST édition 2026');
   await expect(placements).toContainText('édition en vigueur');
 
   // Modules: typed and added with Enter.
@@ -138,7 +138,7 @@ test('author creates a course, places it, builds the outline by keyboard, saves,
   await expect(page.getByLabel('Titre du cours')).toHaveValue('TEST Cours des nombres complexes, édition 2027');
   // Add the new current edition first (it provides the module's chapter), then remove the refused one.
   await page.getByLabel('Niveau').selectOption({ label: 'TEST Baccalauréat' });
-  await page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section mathématiques' });
+  await page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section sciences mathématiques' });
   await page.getByRole('button', { name: 'Ajouter l’édition en vigueur « TEST édition 2027 »' }).click();
   await page.getByRole('button', { name: 'Retirer le classement TEST édition 2026' }).click();
   await expect(list).not.toContainText('Le prochain enregistrement sera refusé');
