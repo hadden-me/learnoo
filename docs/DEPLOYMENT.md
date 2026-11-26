@@ -169,6 +169,7 @@ The Compose `restore` service runs as root with a read-only root file system and
 - migrations are current (no pending, edited or unknown migration);
 - every `media_assets` row (including every asset referenced by `revision_media`) has a regular file at its content-addressed path with the recorded size and SHA-256, a key matching its hash and content type;
 - every published pointer names an approved, non-withdrawn revision of its own lesson, and matches the lesson's latest publication audit row;
+- every submitted revision (any status but `draft`) has its submission audit row, recording its author and its `submitted_at`, and no draft has one (`migrations/0011`);
 - row counts per table, to compare with the source (`docker compose … exec -u postgres postgres psql -d learnoo` and `SELECT count(*)` on the source at backup time, or the counts printed by `verify-restore` on the source);
 - unexpected files (no row names them) and `.tmp-*` leftovers are listed, never deleted; `-strict` turns them into failures.
 
