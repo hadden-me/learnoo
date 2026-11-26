@@ -25,8 +25,9 @@
 --     creation time never change; it is created by its owner (owner_id =
 --     created_by), unpublished, unarchived, without revisions or dependency
 --     events. In B03 nothing else about a course changes except
---     last_revision_number, which only grows: revision numbers are never
---     reused, even after a draft is discarded.
+--     last_revision_number, which only grows, to the course's highest
+--     revision number: revision numbers are never reused, even after a draft
+--     is discarded.
 --   * Revisions mirror lesson_revisions (0004): created as a draft at
 --     version 1 whose base_revision_id and compare_revision_id are the
 --     course's published pointer (NULL until B04 publishes; B04 adds the
@@ -50,7 +51,10 @@
 --     is NULL), excluding withdrawn revisions.
 --   * Children. Placements, modules and steps change only while their
 --     revision is a draft; the guard locks the revision FOR SHARE, like the
---     revision_media guard (0004). A placement may name only an assignment
+--     revision_media guard (0004), and FOR UPDATE for steps so that
+--     concurrent step inserts serialize. A step names the course owner's own
+--     lesson at any revision, or another author's lesson only at a revision
+--     course_step_revision_eligible accepts (lesson and course share-locked). A placement may name only an assignment
 --     whose edition left draft (an assignment of a draft edition can still be
 --     removed or edited). Composite foreign keys keep every child in its
 --     revision's subject and language, a module's chapter in that subject, a
@@ -245,6 +249,7 @@ CREATE FUNCTION courses_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
     history boolean;
+    top     integer;
 BEGIN
     IF TG_OP = 'INSERT' THEN
         IF NEW.owner_id IS DISTINCT FROM NEW.created_by OR NEW.published_revision_id IS NOT NULL
@@ -262,6 +267,16 @@ BEGIN
         END IF;
         IF NEW.last_revision_number < OLD.last_revision_number THEN
             RAISE EXCEPTION 'revision numbers are never reused' USING ERRCODE = 'LRN01';
+        END IF;
+        -- It grows only to the highest number used, which is what the
+        -- advance trigger on course_revisions sets after an insert.
+        IF NEW.last_revision_number > OLD.last_revision_number THEN
+            EXECUTE format('SELECT max(revision_number) FROM %I.course_revisions WHERE course_id = $1', TG_TABLE_SCHEMA)
+               INTO top USING OLD.id;
+            IF NEW.last_revision_number IS DISTINCT FROM top THEN
+                RAISE EXCEPTION 'course % last_revision_number can only become its highest revision number', OLD.id
+                    USING ERRCODE = 'LRN01';
+            END IF;
         END IF;
         -- B04 replaces this function to admit its audited workflows.
         IF to_jsonb(NEW) - 'last_revision_number' IS DISTINCT FROM to_jsonb(OLD) - 'last_revision_number' THEN
@@ -519,20 +534,35 @@ CREATE TRIGGER zz_guard_course_revisions_keep_submitted
 CREATE FUNCTION course_children_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-    rev     bigint;
-    st      text;
-    ed_st   text;
-    asg     bigint;
-    n       bigint;
+    rev          bigint;
+    st           text;
+    ed_st        text;
+    asg          bigint;
+    n            bigint;
+    lock_mode    text;
+    o            jsonb;
+    nw           jsonb;
+    lesson_owner bigint;
+    course_owner bigint;
+    eligible     boolean;
 BEGIN
-    FOREACH rev IN ARRAY ARRAY[
-        CASE WHEN TG_OP <> 'INSERT' THEN (to_jsonb(OLD) ->> 'course_revision_id')::bigint END,
-        CASE WHEN TG_OP <> 'DELETE' THEN (to_jsonb(NEW) ->> 'course_revision_id')::bigint END]
+    -- Columns are read through to_jsonb: this function serves three tables.
+    IF TG_OP <> 'INSERT' THEN
+        o := to_jsonb(OLD);
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        nw := to_jsonb(NEW);
+    END IF;
+    -- Steps lock the revision FOR UPDATE so that concurrent step inserts
+    -- into one draft serialize and the count below is exact (at READ
+    -- COMMITTED, where each statement re-reads after the lock).
+    lock_mode := CASE WHEN TG_TABLE_NAME = 'course_steps' THEN 'FOR UPDATE' ELSE 'FOR SHARE' END;
+    FOREACH rev IN ARRAY ARRAY[(o ->> 'course_revision_id')::bigint, (nw ->> 'course_revision_id')::bigint]
     LOOP
         CONTINUE WHEN rev IS NULL;
         -- EXECUTE does not set FOUND; a missing row leaves st NULL.
         st := NULL;
-        EXECUTE format('SELECT status FROM %I.course_revisions WHERE id = $1 FOR SHARE', TG_TABLE_SCHEMA)
+        EXECUTE format('SELECT status FROM %I.course_revisions WHERE id = $1 ' || lock_mode, TG_TABLE_SCHEMA)
            INTO st USING rev;
         IF st IS NOT NULL AND st <> 'draft' THEN
             RAISE EXCEPTION 'course revision % is submitted; its % are immutable', rev, TG_TABLE_NAME USING ERRCODE = 'LRN01';
@@ -541,10 +571,9 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
     END IF;
-    -- Columns are read through to_jsonb: this function serves three tables.
     IF TG_TABLE_NAME = 'course_revision_assignments' THEN
-        asg := (to_jsonb(NEW) ->> 'assignment_id')::bigint;
-        IF TG_OP = 'INSERT' OR asg IS DISTINCT FROM (to_jsonb(OLD) ->> 'assignment_id')::bigint THEN
+        asg := (nw ->> 'assignment_id')::bigint;
+        IF TG_OP = 'INSERT' OR asg IS DISTINCT FROM (o ->> 'assignment_id')::bigint THEN
             EXECUTE format('SELECT e.state FROM %1$I.curriculum_assignments a JOIN %1$I.curriculum_editions e ON e.id = a.edition_id
                              WHERE a.id = $1 FOR SHARE OF e', TG_TABLE_SCHEMA)
                INTO ed_st USING asg;
@@ -553,11 +582,38 @@ BEGIN
             END IF;
         END IF;
     END IF;
-    IF TG_TABLE_NAME = 'course_steps' AND TG_OP = 'INSERT' THEN
-        EXECUTE format('SELECT count(*) FROM %I.course_steps WHERE course_revision_id = $1', TG_TABLE_SCHEMA)
-           INTO n USING (to_jsonb(NEW) ->> 'course_revision_id')::bigint;
-        IF n >= 200 THEN
-            RAISE EXCEPTION 'a course revision has at most 200 steps' USING ERRCODE = 'LRN01';
+    IF TG_TABLE_NAME = 'course_steps' THEN
+        -- At most 200 steps per revision, for a new step or one moved into
+        -- another revision.
+        IF TG_OP = 'INSERT' OR nw -> 'course_revision_id' IS DISTINCT FROM o -> 'course_revision_id' THEN
+            EXECUTE format('SELECT count(*) FROM %I.course_steps WHERE course_revision_id = $1', TG_TABLE_SCHEMA)
+               INTO n USING (nw ->> 'course_revision_id')::bigint;
+            IF n >= 200 THEN
+                RAISE EXCEPTION 'a course revision has at most 200 steps' USING ERRCODE = 'LRN01';
+            END IF;
+        END IF;
+        -- Attachability (contract §4): the course owner's own lesson at any
+        -- revision, or another author's lesson only at an eligible revision
+        -- (course_step_revision_eligible). The lesson is share-locked (the
+        -- application has locked it already), so it cannot be unpublished,
+        -- archived or have the revision withdrawn before this commits; the
+        -- course is share-locked so its owner cannot change.
+        IF TG_OP = 'INSERT'
+           OR (nw -> 'lesson_id', nw -> 'lesson_revision_id', nw -> 'course_revision_id')
+              IS DISTINCT FROM (o -> 'lesson_id', o -> 'lesson_revision_id', o -> 'course_revision_id') THEN
+            EXECUTE format('SELECT created_by FROM %I.lessons WHERE id = $1 FOR SHARE', TG_TABLE_SCHEMA)
+               INTO lesson_owner USING (nw ->> 'lesson_id')::bigint;
+            EXECUTE format('SELECT c.owner_id FROM %1$I.course_revisions r JOIN %1$I.courses c ON c.id = r.course_id
+                             WHERE r.id = $1 FOR SHARE OF c', TG_TABLE_SCHEMA)
+               INTO course_owner USING (nw ->> 'course_revision_id')::bigint;
+            IF lesson_owner IS NULL OR lesson_owner IS DISTINCT FROM course_owner THEN
+                EXECUTE format('SELECT %I.course_step_revision_eligible($1, $2)', TG_TABLE_SCHEMA)
+                   INTO eligible USING (nw ->> 'lesson_id')::bigint, (nw ->> 'lesson_revision_id')::bigint;
+                IF eligible IS NOT TRUE THEN
+                    RAISE EXCEPTION 'lesson % is another author''s and revision % of it is not eligible', nw ->> 'lesson_id', nw ->> 'lesson_revision_id'
+                        USING ERRCODE = 'LRN01';
+                END IF;
+            END IF;
         END IF;
     END IF;
     RETURN NEW;

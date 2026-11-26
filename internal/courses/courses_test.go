@@ -63,10 +63,10 @@ func TestDraftLifecycle(t *testing.T) {
 	wantErr(t, "other deletes", e.store.DeleteCourse(e.ctx, e.other, c.ID), courses.ErrNotFound)
 	_, err = e.store.CreateDraft(e.ctx, e.other, c.ID)
 	wantErr(t, "other drafts", err, courses.ErrNotFound)
-	if list, err := e.store.Owned(e.ctx, e.other); err != nil || len(list) != 0 {
+	if list, _, err := e.store.Owned(e.ctx, e.other, 0); err != nil || len(list) != 0 {
 		t.Fatalf("other's list: %+v %v", list, err)
 	}
-	list, err := e.store.Owned(e.ctx, e.owner)
+	list, _, err := e.store.Owned(e.ctx, e.owner, 0)
 	if err != nil || len(list) != 1 || list[0].Latest == nil || list[0].Latest.Title != "TEST course" {
 		t.Fatalf("owner's list: %+v %v", list, err)
 	}

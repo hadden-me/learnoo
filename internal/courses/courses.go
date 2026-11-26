@@ -50,8 +50,8 @@ const (
 	MaxSteps         = 200
 	// MaxAssignments bounds one revision's placements defensively.
 	MaxAssignments = 50
-	// MaxOwnedListed bounds one Owned listing, most recently updated first.
-	MaxOwnedListed = 500
+	// OwnedPage is the page size of Owned.
+	OwnedPage = 100
 	// AttachablePage is the page size of AttachableLessons.
 	AttachablePage = 50
 	// MaxQueryRunes bounds an attachable-lesson search query.
@@ -140,6 +140,19 @@ type Revision struct {
 	SubmittedAt       *time.Time
 	Assignments       []Placement
 	Modules           []Module
+	// DroppedSteps lists, only on the result of CreateDraft, the steps of
+	// the copied revision that were left out because another author's
+	// lesson is no longer attachable at its pinned revision.
+	DroppedSteps []DroppedStep
+}
+
+// DroppedStep is a step CreateDraft could not copy.
+type DroppedStep struct {
+	ModuleKey  string
+	Position   int
+	Title      string
+	LessonID   int64
+	RevisionID int64
 }
 
 // Placement is one curriculum assignment a revision selects, with the
@@ -414,6 +427,9 @@ func mapErr(err error) error {
 	case "23514", "22021", "22P05":
 		return errors.Join(ErrInvalidInput, err)
 	case "LRN01":
+		if strings.Contains(pgErr.Message, "is not eligible") {
+			return errors.Join(ErrInvalidStep, err)
+		}
 		return errors.Join(ErrImmutable, err)
 	}
 	return err
@@ -464,25 +480,40 @@ func lockCourse(ctx context.Context, tx pgx.Tx, actor, courseID int64, mode stri
 	return c, err
 }
 
-// lockDependencies takes, in contract §2 order, the editions of the given
-// assignments, then the lessons and the pinned lesson revisions, all FOR
-// SHARE and in ascending ID.
-func lockDependencies(ctx context.Context, tx pgx.Tx, assignments, lessonIDs, revisionIDs []int64) error {
-	if len(assignments) > 0 {
-		if _, err := tx.Exec(ctx, `
-			SELECT id FROM curriculum_editions
+// lockDependencies takes, in contract §2 order and all FOR SHARE in
+// ascending ID: the editions of the given assignments, then (for a save,
+// which newly selects them) the sections, levels and subjects of those
+// assignments and the given module chapters, so a concurrent retirement
+// waits for the save or is seen by it, then the lessons and the pinned
+// lesson revisions.
+func lockDependencies(ctx context.Context, tx pgx.Tx, assignments, chapters, lessonIDs, revisionIDs []int64) error {
+	type lock struct {
+		ids []int64
+		sql string
+	}
+	for _, l := range []lock{
+		{assignments, `SELECT id FROM curriculum_editions
 			 WHERE id IN (SELECT edition_id FROM curriculum_assignments WHERE id = ANY ($1))
-			 ORDER BY id FOR SHARE`, assignments); err != nil {
-			return err
+			 ORDER BY id FOR SHARE`},
+		{assignments, `SELECT id FROM academic_sections
+			 WHERE id IN (SELECT e.section_id FROM curriculum_assignments a JOIN curriculum_editions e ON e.id = a.edition_id
+			               WHERE a.id = ANY ($1))
+			 ORDER BY id FOR SHARE`},
+		{assignments, `SELECT id FROM education_levels
+			 WHERE id IN (SELECT s.level_id FROM curriculum_assignments a JOIN curriculum_editions e ON e.id = a.edition_id
+			                JOIN academic_sections s ON s.id = e.section_id WHERE a.id = ANY ($1))
+			 ORDER BY id FOR SHARE`},
+		{assignments, `SELECT id FROM subjects
+			 WHERE id IN (SELECT subject_id FROM curriculum_assignments WHERE id = ANY ($1))
+			 ORDER BY id FOR SHARE`},
+		{chapters, `SELECT id FROM chapters WHERE id = ANY ($1) ORDER BY id FOR SHARE`},
+		{lessonIDs, `SELECT id FROM lessons WHERE id = ANY ($1) ORDER BY id FOR SHARE`},
+		{revisionIDs, `SELECT id FROM lesson_revisions WHERE id = ANY ($1) ORDER BY id FOR SHARE`},
+	} {
+		if len(l.ids) == 0 {
+			continue
 		}
-	}
-	if len(lessonIDs) > 0 {
-		if _, err := tx.Exec(ctx, `SELECT id FROM lessons WHERE id = ANY ($1) ORDER BY id FOR SHARE`, lessonIDs); err != nil {
-			return err
-		}
-	}
-	if len(revisionIDs) > 0 {
-		if _, err := tx.Exec(ctx, `SELECT id FROM lesson_revisions WHERE id = ANY ($1) ORDER BY id FOR SHARE`, revisionIDs); err != nil {
+		if _, err := tx.Exec(ctx, l.sql, l.ids); err != nil {
 			return err
 		}
 	}
@@ -560,9 +591,11 @@ type RevisionSummary struct {
 	UpdatedAt time.Time
 }
 
-// Owned lists the courses actor owns, most recently updated first, at most
-// MaxOwnedListed. Administrators get no exception.
-func (s *Store) Owned(ctx context.Context, actor int64) ([]OwnedCourse, error) {
+// Owned pages through the courses actor owns, newest first (by course
+// ID): before is the last course ID of the previous page (0 for the
+// first). It returns at most OwnedPage courses and the cursor of the next
+// page, or nil. Administrators get no exception.
+func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, *int64, error) {
 	var out []OwnedCourse
 	err := s.read(ctx, actor, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
@@ -571,9 +604,9 @@ func (s *Store) Owned(ctx context.Context, actor int64) ([]OwnedCourse, error) {
 			  FROM courses c
 			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at FROM course_revisions
 			                      WHERE course_id = c.id ORDER BY revision_number DESC LIMIT 1) r ON true
-			 WHERE c.owner_id = $1
-			 ORDER BY coalesce(r.updated_at, c.created_at) DESC, c.id DESC
-			 LIMIT $2`, actor, MaxOwnedListed)
+			 WHERE c.owner_id = $1 AND ($2 = 0 OR c.id < $2)
+			 ORDER BY c.id DESC
+			 LIMIT $3`, actor, before, OwnedPage+1)
 		if err != nil {
 			return err
 		}
@@ -592,7 +625,16 @@ func (s *Store) Owned(ctx context.Context, actor int64) ([]OwnedCourse, error) {
 		})
 		return err
 	})
-	return out, err
+	if err != nil {
+		return nil, nil, err
+	}
+	var next *int64
+	if len(out) > OwnedPage {
+		out = out[:OwnedPage]
+		id := out[len(out)-1].ID
+		next = &id
+	}
+	return out, next, nil
 }
 
 // DeleteCourse permanently deletes actor's course with its draft revisions,
@@ -622,7 +664,8 @@ func (s *Store) DeleteCourse(ctx context.Context, actor, courseID int64) error {
 
 // CreateDraft starts a new draft of actor's course. It copies the course's
 // latest revision (overview, cover if actor uploaded it, placements, modules
-// and steps) or, without one, starts empty. Its base and comparison are the
+// and the steps still attachable, the others listed in DroppedSteps) or,
+// without one, starts empty. Its base and comparison are the
 // published pointer. While the course has an active candidate it returns
 // ErrActiveCandidateExists. The copy is not validated: a step or placement
 // that is no longer allowed is reported by the next save.
@@ -646,7 +689,7 @@ func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revisio
 				return err
 			}
 		}
-		if err := lockDependencies(ctx, tx, assignments, lessonIDs, revisionIDs); err != nil {
+		if err := lockDependencies(ctx, tx, assignments, nil, lessonIDs, revisionIDs); err != nil {
 			return err
 		}
 		// FOR UPDATE serializes draft creation per course, as CreateDraft
@@ -700,17 +743,45 @@ func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revisio
 				 SELECT $1, subject_id, assignment_id FROM course_revision_assignments WHERE course_revision_id = $2`,
 				`INSERT INTO course_modules (course_revision_id, subject_id, language, module_key, position, title, chapter_id)
 				 SELECT $1, subject_id, language, module_key, position, title, chapter_id FROM course_modules WHERE course_revision_id = $2`,
+				// Only attachable steps are copied (the step guard refuses
+				// the others): the owner's own lessons, and another
+				// author's lesson only at a revision still eligible.
 				`INSERT INTO course_steps (course_revision_id, module_key, position, title, lesson_id, subject_id, language, lesson_revision_id)
-				 SELECT $1, module_key, position, title, lesson_id, subject_id, language, lesson_revision_id
-				   FROM course_steps WHERE course_revision_id = $2`,
+				 SELECT $1, s.module_key, s.position, s.title, s.lesson_id, s.subject_id, s.language, s.lesson_revision_id
+				   FROM course_steps s JOIN lessons l ON l.id = s.lesson_id
+				  WHERE s.course_revision_id = $2
+				    AND (l.created_by = $3 OR course_step_revision_eligible(s.lesson_id, s.lesson_revision_id))`,
 			} {
-				if _, err := tx.Exec(ctx, q, id, *source); err != nil {
+				args := []any{id, *source}
+				if strings.Contains(q, "course_steps") {
+					args = append(args, actor)
+				}
+				if _, err := tx.Exec(ctx, q, args...); err != nil {
 					return err
 				}
 			}
 		}
-		rev, err = loadRevision(ctx, tx, id)
-		return err
+		if rev, err = loadRevision(ctx, tx, id); err != nil {
+			return err
+		}
+		if source != nil {
+			rows, err := tx.Query(ctx, `
+				SELECT s.module_key::text, s.position, s.title, s.lesson_id, s.lesson_revision_id
+				  FROM course_steps s
+				 WHERE s.course_revision_id = $1
+				   AND NOT EXISTS (SELECT 1 FROM course_steps n WHERE n.course_revision_id = $2 AND n.lesson_id = s.lesson_id)
+				 ORDER BY s.module_key, s.position`, *source, id)
+			if err != nil {
+				return err
+			}
+			rev.DroppedSteps, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (DroppedStep, error) {
+				var d DroppedStep
+				err := row.Scan(&d.ModuleKey, &d.Position, &d.Title, &d.LessonID, &d.RevisionID)
+				return d, err
+			})
+			return err
+		}
+		return nil
 	})
 	return rev, err
 }
@@ -802,7 +873,7 @@ func (s *Store) SaveDraft(ctx context.Context, actor, revisionID int64, expected
 		if err != nil {
 			return err
 		}
-		if err := lockDependencies(ctx, tx, d.AssignmentIDs, lessonIDs, revisionIDs); err != nil {
+		if err := lockDependencies(ctx, tx, d.AssignmentIDs, chapterIDs, lessonIDs, revisionIDs); err != nil {
 			return err
 		}
 		c, err := lockDraft(ctx, tx, actor, courseID, revisionID, expectedVersion)

@@ -109,6 +109,24 @@ func TestGuardsBindTheRuntimeRole(t *testing.T) {
 	wantGuard(t, "reused number", asRole(`INSERT INTO S.course_revisions (course_id, subject_id, language, revision_number, author_id)
 		VALUES (`+itoa(otherCourse.ID)+`, `+itoa(e.math)+`, 'fr', 1, `+itoa(e.other)+`)`), "already used")
 
+	// Attachability: another author's draft (or any non-eligible revision)
+	// cannot be pinned by direct SQL, so it can never block that author's
+	// discard; the owner's own draft can.
+	foreignDraft := e.lessonDraft(e.other, e.math, "fr", "Foreign draft")
+	pin := func(l int64, lr int64, pos int) string {
+		return fmt.Sprintf(`INSERT INTO S.course_steps (course_revision_id, module_key, position, title, lesson_id, subject_id, language, lesson_revision_id)
+			VALUES (%s, '%s', %d, 's', %d, %d, 'fr', %d)`, R, key, pos, l, e.math, lr)
+	}
+	wantGuard(t, "pin another author's draft", asRole(pin(foreignDraft.LessonID, foreignDraft.ID, 5)), "is not eligible")
+	wantGuard(t, "move a step to another author's draft", asRole(fmt.Sprintf(
+		`UPDATE S.course_steps SET lesson_id = %d, lesson_revision_id = %d WHERE course_revision_id = %s`, foreignDraft.LessonID, foreignDraft.ID, R)), "is not eligible")
+	if err := e.lessons.DiscardDraft(e.ctx, e.other, foreignDraft.ID, foreignDraft.Version); err != nil {
+		t.Fatalf("the other author's discard: %v", err)
+	}
+	// last_revision_number only ever becomes the highest number used.
+	wantGuard(t, "jump last_revision_number", asRole(`UPDATE S.courses SET last_revision_number = last_revision_number + 5 WHERE id = `+C),
+		"highest revision number")
+
 	// Constraints.
 	for _, tc := range []struct{ sql, code string }{
 		{insertRevision(``, ``), "23505"}, // second active candidate
@@ -190,6 +208,11 @@ func TestStepLimitGuard(t *testing.T) {
 	wantGuard(t, "201st step", asRole(fmt.Sprintf(`INSERT INTO S.course_steps
 		(course_revision_id, module_key, position, title, lesson_id, subject_id, language, lesson_revision_id)
 		VALUES (%d, '%s', 1, 's', %d, %d, 'fr', %d)`, rev.ID, saved.Modules[1].Key, own.LessonID, e.math, own.ID)), "at most 200 steps")
+	// Moving a step of another draft into the full revision is counted too.
+	_, other := e.course(e.math, "fr")
+	e.mustSave(other, courses.Draft{Modules: []courses.ModuleInput{{Title: "m", Steps: []courses.StepInput{step(own, "s")}}}})
+	wantGuard(t, "move a step into a full revision", asRole(fmt.Sprintf(`UPDATE S.course_steps SET course_revision_id = %d, module_key = '%s'
+		WHERE course_revision_id = %d`, rev.ID, saved.Modules[1].Key, other.ID)), "at most 200 steps")
 }
 
 // Temporary tables of the calling role cannot shadow what the guards and
@@ -228,6 +251,13 @@ func TestGuardsIgnoreTemporaryShadowTables(t *testing.T) {
 		`INSERT INTO pg_temp.courses VALUES (`+itoa(otherCourse.ID)+`, `+itoa(e.other)+`, `+SR+`)`,
 		`INSERT INTO S.course_revisions (course_id, subject_id, language, revision_number, author_id, base_revision_id)
 		 VALUES (`+itoa(otherCourse.ID)+`, `+itoa(e.math)+`, 'fr', 7, `+itoa(e.other)+`, `+SR+`)`), "base_revision_id")
+	foreignDraft := e.lessonDraft(e.other, e.math, "fr", "Foreign draft")
+	keyed := e.mustSave(rev, courses.Draft{Modules: []courses.ModuleInput{{Title: "m"}}})
+	wantGuard(t, "foreign pin via shadow lessons", asRole(
+		`CREATE TEMP TABLE lessons (id bigint, created_by bigint) ON COMMIT DROP`,
+		`INSERT INTO pg_temp.lessons VALUES (`+itoa(foreignDraft.LessonID)+`, `+itoa(e.owner)+`)`,
+		fmt.Sprintf(`INSERT INTO S.course_steps (course_revision_id, module_key, position, title, lesson_id, subject_id, language, lesson_revision_id)
+			VALUES (%s, '%s', 1, 's', %d, %d, 'fr', %d)`, R, keyed.Modules[0].Key, foreignDraft.LessonID, e.math, foreignDraft.ID)), "is not eligible")
 	wantGuard(t, "cover via shadow uploads", asRole(
 		`CREATE TEMP TABLE media_uploads (user_id bigint, media_asset_id bigint) ON COMMIT DROP`,
 		`INSERT INTO pg_temp.media_uploads VALUES (`+itoa(e.owner)+`, `+itoa(theirs)+`)`,
