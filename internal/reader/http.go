@@ -473,13 +473,13 @@ func (h *Handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 type subjectData struct {
-	Code     string
+	Subject  Subject
 	Chapters []Chapter
 }
 
 func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
-	chapters, err := h.Store.SubjectChapters(r.Context(), code)
+	subject, chapters, err := h.Store.SubjectChapters(r.Context(), code)
 	if errors.Is(err, ErrNotFound) {
 		h.notFound(w, r)
 		return
@@ -488,7 +488,7 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "subject", err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "subject", view{Title: code, Data: subjectData{Code: code, Chapters: chapters}})
+	h.render(w, r, http.StatusOK, "subject", view{Title: subject.Label().Text, Data: subjectData{Subject: subject, Chapters: chapters}})
 }
 
 type lessonData struct {

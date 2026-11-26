@@ -1,4 +1,4 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <a href="/learn/subjects/{{.SubjectCode}}">{{.SubjectCode}}</a>{{if .ChapterCode}} › <span>{{.ChapterCode}}</span>{{end}}</nav>
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <a href="/learn/subjects/{{.SubjectCode}}">{{template "catname" .SubjectLabel}}</a>{{if .ChapterCode}} › <span>{{template "catname" .ChapterLabel}}</span>{{end}}</nav>
 {{.Parts.Heading}}
 <p class="credit">Rédigé par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Relu et approuvé par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}</p>
 <form method="post" action="/learn/lessons/{{.PublicID}}/{{if .Bookmarked}}unbookmark{{else}}bookmark{{end}}" class="bookmark"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button type="submit"{{if .Bookmarked}} class="secondary"{{end}}>{{if .Bookmarked}}Retirer des signets{{else}}Enregistrer{{end}}</button></form>
