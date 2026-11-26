@@ -4,44 +4,39 @@
 // describeEditorialError. Each says what happened and that nothing changed
 // when the server guarantees it.
 import { ApiError } from './client';
+import { t } from '../i18n';
 import { describeCourseError } from './courseMessages';
 import { describeEditorialError } from './editorialMessages';
 
 const MESSAGES: Record<string, string> = {
-  incomplete: 'Soumission refusée : le cours est incomplet. Les points à compléter sont signalés dans le formulaire. Rien n’a été soumis.',
-  ineligible:
-    'Refusé : une étape épingle une révision de leçon qui n’est plus publiable (elle doit être approuvée, publiée au moins une fois et non retirée, et la leçon doit être publiée). Rien n’a été modifié.',
-  draft_exists:
-    'Un brouillon de ce cours est déjà ouvert : il ne peut y avoir qu’une version en cours. Supprimez ce brouillon pour créer l’amendement, ou remplacez la révision épinglée directement dans le brouillon.',
-  active_candidate_exists:
-    'Le cours a déjà une version en cours (en relecture, ou approuvée en attente de publication). Attendez sa publication, ou demandez à un administrateur de la retirer.',
-  not_published: 'Ce cours n’a pas de version publiée : il n’y a rien à amender ou à suspendre.',
-  no_newer_revisions: 'Aucune leçon du cours publié n’a de révision plus récente publiable : il n’y a rien à amender.',
-  not_amendable: 'Ces remplacements ne peuvent pas former un amendement. Créez une version ordinaire du cours.',
-  invalid_step:
-    'Remplacement refusé : la révision choisie n’est pas une révision plus récente et publiable de la leçon de cette étape, ou une autre étape épingle une leçon d’un autre auteur qui n’est plus publiable (remplacez-la aussi, ou créez une version ordinaire).',
-  not_eligible_reviewer: 'Vous ne pouvez pas décider de cette version du cours. Le serveur a refusé ; rien n’a été écrit.',
-  not_in_review: 'Cette version du cours n’est plus en relecture : une décision a déjà été enregistrée (peut-être par un autre relecteur), ou elle a été retirée. Rien n’a été écrit.',
-  withdrawn: 'Cette version du cours a été retirée par un administrateur : elle ne peut plus être relue, publiée ni restaurée.',
-  comment_required: 'Expliquez les modifications demandées dans un commentaire : il est obligatoire.',
-  invalid_comment: 'Commentaire refusé : 5 000 caractères au maximum, en texte valide.',
-  reason_required: 'Indiquez un motif : il est obligatoire et sera conservé dans l’historique.',
-  invalid_reason: 'Motif refusé : 2 000 caractères au maximum, en texte valide.',
-  stale_pointer:
-    'La publication de ce cours a changé depuis l’ouverture de la page (action d’une autre personne ou d’un autre onglet). Rien n’a été modifié. Rechargez la page pour voir l’état actuel avant de recommencer.',
-  stale_base:
-    'Publication refusée : la version publiée du cours a changé depuis la rédaction de cette version (autre publication, suspension ou restauration). Rien n’a été publié. Une version à jour doit être rédigée et relue ; un administrateur peut retirer celle-ci pour libérer le cours.',
-  not_approved: 'Seule une version approuvée du cours peut être publiée.',
-  already_published: 'Cette version du cours a déjà été publiée. Pour la remettre en ligne, utilisez la restauration.',
-  never_published: 'Cette version n’a jamais été publiée : elle ne peut pas être restaurée.',
-  already_current: 'Cette version est déjà celle que lisent les élèves.',
-  published: 'Cette version est celle que lisent les élèves : elle ne peut pas être retirée. Suspendez le cours en cas d’urgence.',
-  not_withdrawable: 'Seule une version en relecture ou approuvée peut être retirée.',
-  archived: 'Ce cours est archivé : désarchivez-le d’abord (un administrateur).',
-  not_archived: 'Ce cours n’est pas archivé.',
-  never_submitted: 'Ce cours n’a jamais été soumis : supprimez-le plutôt que de demander son archivage.',
-  unknown_user: 'Le nouveau propriétaire doit être un compte actif ayant la permission auteur.',
-  not_draft: 'Cette version du cours n’est plus un brouillon (soumise ou supprimée ailleurs). Rechargez la page.',
+  incomplete: t('review.courseError.incomplete'),
+  ineligible: t('review.courseError.ineligible'),
+  draft_exists: t('review.courseError.draft_exists'),
+  active_candidate_exists: t('review.courseError.active_candidate_exists'),
+  not_published: t('review.courseError.not_published'),
+  no_newer_revisions: t('review.courseError.no_newer_revisions'),
+  not_amendable: t('review.courseError.not_amendable'),
+  invalid_step: t('review.courseError.invalid_step'),
+  not_eligible_reviewer: t('review.courseError.not_eligible_reviewer'),
+  not_in_review: t('review.courseError.not_in_review'),
+  withdrawn: t('review.courseError.withdrawn'),
+  comment_required: t('review.error.comment_required'),
+  invalid_comment: t('review.courseError.invalid_comment'),
+  reason_required: t('review.error.reason_required'),
+  invalid_reason: t('review.error.invalid_reason'),
+  stale_pointer: t('review.courseError.stale_pointer'),
+  stale_base: t('review.courseError.stale_base'),
+  not_approved: t('review.courseError.not_approved'),
+  already_published: t('review.courseError.already_published'),
+  never_published: t('review.courseError.never_published'),
+  already_current: t('review.courseError.already_current'),
+  published: t('review.courseError.published'),
+  not_withdrawable: t('review.courseError.not_withdrawable'),
+  archived: t('review.courseError.archived'),
+  not_archived: t('review.courseError.not_archived'),
+  never_submitted: t('review.courseError.never_submitted'),
+  unknown_user: t('review.courseError.unknown_user'),
+  not_draft: t('review.courseError.not_draft'),
 };
 
 /** A French sentence for a course workflow failure. */

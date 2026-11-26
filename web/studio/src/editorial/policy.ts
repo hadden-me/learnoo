@@ -5,6 +5,7 @@
 // published revision, under the lesson lock.
 import type { LessonPublication, LessonRevisionState, PointerEvent } from '../api/editorial';
 import type { Spaces } from '../spaces';
+import { t } from '../i18n';
 
 export interface RevisionActions {
   /** The revision is the lesson's published revision. */
@@ -30,24 +31,28 @@ export const canUnpublish = (lesson: LessonPublication, spaces: Spaces) => space
 
 /** The revision's state in words; colour never stands alone (DESIGN.md). */
 export function revisionStateLabel(lesson: LessonPublication, revision: LessonRevisionState): { label: string; tone: 'published' | 'withdrawn' | 'approved' | 'review' | 'changes' } {
-  if (revision.withdrawn) return { label: 'Retirée définitivement', tone: 'withdrawn' };
-  if (lesson.publishedRevisionId === revision.id) return { label: 'Publiée (version lue par les élèves)', tone: 'published' };
-  if (revision.status === 'in_review') return { label: 'En relecture', tone: 'review' };
-  if (revision.status === 'changes_requested') return { label: 'Modifications demandées', tone: 'changes' };
-  if (revision.candidate) return { label: 'Approuvée, en attente de publication', tone: 'approved' };
-  if (revision.everPublished) return { label: 'Approuvée, publiée auparavant', tone: 'approved' };
-  return { label: 'Approuvée', tone: 'approved' };
+  if (revision.withdrawn) return { label: t('review.state.withdrawn'), tone: 'withdrawn' };
+  if (lesson.publishedRevisionId === revision.id) return { label: t('review.state.current'), tone: 'published' };
+  if (revision.status === 'in_review') return { label: t('shell.status.in_review'), tone: 'review' };
+  if (revision.status === 'changes_requested') return { label: t('shell.status.changes_requested'), tone: 'changes' };
+  if (revision.candidate) return { label: t('shell.state.awaitingPublication'), tone: 'approved' };
+  if (revision.everPublished) return { label: t('review.state.publishedBefore'), tone: 'approved' };
+  return { label: t('shell.status.approved'), tone: 'approved' };
 }
 
 /** One pointer audit event in words, revisions named by their lesson-scoped number. */
 export function describeEvent(event: PointerEvent, numberOf: (id: number | null) => string): string {
   switch (event.action) {
     case 'publish':
-      return `Publication de la révision ${numberOf(event.publishedRevisionId)}${event.previousRevisionId !== null ? ` (remplace la révision ${numberOf(event.previousRevisionId)})` : ''}`;
+      return event.previousRevisionId !== null
+        ? t('review.event.publishReplacing', { number: numberOf(event.publishedRevisionId), previous: numberOf(event.previousRevisionId) })
+        : t('review.event.publish', { number: numberOf(event.publishedRevisionId) });
     case 'restore':
-      return `Restauration de la révision ${numberOf(event.publishedRevisionId)}${event.previousRevisionId !== null ? ` (remplace la révision ${numberOf(event.previousRevisionId)})` : ' (la leçon était dépubliée)'}`;
+      return event.previousRevisionId !== null
+        ? t('review.event.restoreReplacing', { number: numberOf(event.publishedRevisionId), previous: numberOf(event.previousRevisionId) })
+        : t('review.event.restoreUnpublished', { number: numberOf(event.publishedRevisionId) });
     case 'unpublish':
-      return `Dépublication (la révision ${numberOf(event.previousRevisionId)} n’est plus lue par les élèves)`;
+      return t('review.event.unpublish', { previous: numberOf(event.previousRevisionId) });
   }
 }
 
@@ -59,8 +64,8 @@ export function describeEvent(event: PointerEvent, numberOf: (id: number | null)
  */
 export function describeSubmission(revision: LessonRevisionState, formatTime: (iso: string) => string): string | null {
   const s = revision.submission;
-  if (!s) return revision.submittedAt ? `Soumise le ${formatTime(revision.submittedAt)}` : null;
-  const by = revision.authorName ? ` par ${revision.authorName}` : '';
-  const note = s.backfilled ? ' (reconstitué : soumise avant l’enregistrement des soumissions)' : '';
-  return `Soumise${by} le ${formatTime(s.submittedAt)}${note}`;
+  if (!s) return revision.submittedAt ? t('review.submission.at', { date: formatTime(revision.submittedAt) }) : null;
+  const date = formatTime(s.submittedAt);
+  if (revision.authorName) return t(s.backfilled ? 'review.submission.byAtBackfilled' : 'review.submission.byAt', { author: revision.authorName, date });
+  return t(s.backfilled ? 'review.submission.atBackfilled' : 'review.submission.at', { date });
 }
