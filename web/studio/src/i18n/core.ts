@@ -1,8 +1,8 @@
 // Interface locale of the Studio (LMS-B09): French (default) or Arabic.
 //
 // The choice is the `__Host-learnoo_lang` cookie shared with the reader
-// (internal/i18n). The server also writes the shell's <html lang dir> from
-// it. The locale is fixed for a page load: the language switch is a link to
+// (internal/i18n). It is HttpOnly: the server writes the shell's
+// <html lang dir> from it, and the Studio reads that. The locale is fixed for a page load: the language switch is a link to
 // the current route with ?lang=, which the server turns into the cookie and
 // a redirect back (a full reload, guarded by the usual "leave without
 // saving?" prompt and the local recovery copy). Message tables built at
@@ -13,7 +13,6 @@
 
 export type Locale = 'fr' | 'ar';
 export const LOCALES: readonly Locale[] = ['fr', 'ar'];
-export const COOKIE_NAME = '__Host-learnoo_lang';
 export const PARAM = 'lang';
 
 /** A French plural message: CLDR categories used by French. */
@@ -39,17 +38,12 @@ export type ArTable<T extends FrTable> = { [K in keyof T]: T[K] extends string ?
 
 export const parseLocale = (s: string | null | undefined): Locale | null => (s === 'fr' || s === 'ar' ? s : null);
 
-/** The cookie's locale, else the document's lang (set by the server), else French. */
-export function detectLocale(doc: Pick<Document, 'cookie' | 'documentElement'> | undefined = typeof document === 'undefined' ? undefined : document): Locale {
-  if (!doc) return 'fr';
-  for (const part of doc.cookie.split(';')) {
-    const [name, value] = part.trim().split('=');
-    if (name === COOKIE_NAME) {
-      const l = parseLocale(value);
-      if (l) return l;
-    }
-  }
-  return parseLocale(doc.documentElement.lang) ?? 'fr';
+/**
+ * The interface locale: the document's lang, which the server sets from the
+ * locale cookie (an HttpOnly cookie, never read here), else French.
+ */
+export function detectLocale(doc: Pick<Document, 'documentElement'> | undefined = typeof document === 'undefined' ? undefined : document): Locale {
+  return parseLocale(doc?.documentElement.lang) ?? 'fr';
 }
 
 let current: Locale | null = null;
@@ -84,10 +78,27 @@ export function switchHref(target: Locale, loc: Pick<Location, 'pathname' | 'sea
   return `${loc.pathname}?${params.toString()}${loc.hash}`;
 }
 
-/** Replaces {name} placeholders; unknown ones are left as they are. */
-export function format(text: string, params?: Record<string, string | number>): string {
+const FSI = '\u2068';
+const PDI = '\u2069';
+const RTL_STRONG = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
+/**
+ * A text value placed inside a sentence of locale l, isolated between FSI
+ * (U+2068) and PDI (U+2069) when its direction could disturb the sentence:
+ * always in the Arabic interface (a French title or a Latin name inside an
+ * Arabic sentence), and in the French interface when it holds right-to-left
+ * letters. Numbers are left as they are.
+ */
+export function isolate(value: string | number, l: Locale = locale()): string {
+  if (typeof value === 'number') return String(value);
+  if (value === '' || (l === 'fr' && !RTL_STRONG.test(value))) return value;
+  return FSI + value + PDI;
+}
+
+/** Replaces {name} placeholders with isolated values (isolate); unknown ones are left as they are. */
+export function format(text: string, params?: Record<string, string | number>, l: Locale = locale()): string {
   if (!params) return text;
-  return text.replace(/\{(\w+)\}/g, (m, name: string) => (name in params ? String(params[name]) : m));
+  return text.replace(/\{(\w+)\}/g, (m, name: string) => (name in params ? isolate(params[name], l) : m));
 }
 
 const pluralRules = new Map<Locale, Intl.PluralRules>();

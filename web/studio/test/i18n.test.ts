@@ -50,13 +50,13 @@ describe('catalog', () => {
   });
 
   it('formats and selects plural forms per locale', () => {
-    expect(format('{a} et {b} {c}', { a: 1, b: 'x' })).toBe('1 et x {c}');
+    expect(format('{a} et {b} {c}', { a: 1, b: 'x' }, 'fr')).toBe('1 et x {c}');
     expect(pluralCategory(0, 'fr')).toBe('one');
     expect(pluralCategory(2, 'fr')).toBe('other');
     expect([0, 1, 2, 3, 11, 100].map((n) => pluralCategory(n, 'ar'))).toEqual(['zero', 'one', 'two', 'few', 'many', 'other']);
     expect(t('shell.myLessons')).toBe('Mes leçons');
     expect(t('shell.myLessons', undefined, 'ar')).toBe('دروسي');
-    expect(t('shell.signOutFailed', { error: 'X' }, 'ar')).toBe('تعذّر تسجيل الخروج: X');
+    expect(t('shell.signOutFailed', { error: 'X' }, 'ar')).toBe('تعذّر تسجيل الخروج: \u2068X\u2069');
     const plural = Object.entries(TABLES.fr).find(([, v]) => typeof v !== 'string');
     if (plural) {
       const key = plural[0] as Parameters<typeof tn>[0];
@@ -67,12 +67,32 @@ describe('catalog', () => {
 });
 
 describe('locale', () => {
-  it('reads the cookie, then the document language, else French', () => {
-    const doc = (cookie: string, lang: string) => ({ cookie, documentElement: { lang } as HTMLElement });
-    expect(detectLocale(doc('a=1; __Host-learnoo_lang=ar', 'fr'))).toBe('ar');
-    expect(detectLocale(doc('__Host-learnoo_lang=en', 'ar'))).toBe('ar');
-    expect(detectLocale(doc('', ''))).toBe('fr');
+  it('reads the document language set by the server, else French', () => {
+    const doc = (lang: string) => ({ documentElement: { lang } as HTMLElement });
+    expect(detectLocale(doc('ar'))).toBe('ar');
+    expect(detectLocale(doc('fr'))).toBe('fr');
+    expect(detectLocale(doc('en'))).toBe('fr');
+    expect(detectLocale(doc(''))).toBe('fr');
     expect(detectLocale(undefined)).toBe('fr');
+  });
+
+  it('isolates interpolated text in Arabic sentences, and right-to-left text in French ones', () => {
+    const fsi = '\u2068';
+    const pdi = '\u2069';
+    // A French course title inside an Arabic sentence keeps its own direction.
+    const ar = t('review.course.approved', { title: 'TEST Cours des nombres complexes' }, 'ar');
+    expect(ar).toContain(`${fsi}TEST Cours des nombres complexes${pdi}`);
+    expect(ar).toMatch(/[\u0600-\u06FF]/);
+    expect(t('review.course.approved', { title: 'TEST Cours' }, 'fr')).not.toContain(fsi);
+    expect(t('review.course.approved', { title: 'TEST دورة' }, 'fr')).toContain(`${fsi}TEST دورة${pdi}`);
+    expect(format('{a} {n}', { a: 3 }, 'ar')).toBe('3 {n}');
+  });
+
+  it('replaces the plural count before the arguments', () => {
+    const plural = Object.entries(TABLES.fr).find(([, v]) => typeof v !== 'string' && /\{(?!n\})\w+\}/.test((v as { other: string }).other));
+    if (!plural) return;
+    const name = (plural[1] as { other: string }).other.match(/\{(?!n\})(\w+)\}/)![1];
+    expect(tn(plural[0] as Parameters<typeof tn>[0], 2, { [name]: 'x {n} y' }, 'fr')).toContain('x {n} y');
   });
 
   it('applies the interface direction to the document (RTL for Arabic)', () => {

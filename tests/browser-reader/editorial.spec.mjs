@@ -101,15 +101,18 @@ async function approveInUI(page, title, comment = '') {
   if (comment) await page.getByLabel('Commentaire pour l’auteur').fill(comment);
   await page.getByRole('button', { name: 'Approuver…' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Approuver', exact: true }).click();
-  await expect(page.getByText(`Révision approuvée : « ${title} »`)).toBeVisible();
+  await expect(page.getByText(`Révision approuvée : « ${bidi(title)} »`)).toBeVisible();
 }
+
+// Right-to-left text interpolated into a French sentence is isolated between U+2068 and U+2069 (web/studio/src/i18n/core.ts).
+const bidi = (s) => (/[\u0590-\u08FF]/.test(s) ? `\u2068${s}\u2069` : s);
 
 async function publishInUI(page, title, { first = null } = {}) {
   await nav(page).getByRole('link', { name: 'Publication' }).click();
   await page.getByRole('link', { name: title }).click();
   await expect(page.getByTestId('publish-preview').getByRole('heading', { level: 1 })).toHaveText(title);
   await page.getByRole('button', { name: 'Publier cette révision…' }).click();
-  const dialog = page.getByRole('dialog', { name: `Publier « ${title} » ?` });
+  const dialog = page.getByRole('dialog', { name: `Publier « ${bidi(title)} » ?` });
   if (first === true) await expect(dialog).toContainText('première publication');
   if (first === false) await expect(dialog).toContainText('remplacera immédiatement');
   await dialog.getByRole('button', { name: 'Publier', exact: true }).click();
@@ -403,7 +406,8 @@ test('an Arabic lesson is reviewed right to left at 360px with the keyboard, and
   await r.page.keyboard.press('Shift+Tab');
   await expect(dialog.getByRole('button', { name: 'Approuver', exact: true })).toBeFocused();
   await r.page.keyboard.press('Enter');
-  await expect(r.page.getByText(`Révision approuvée : « ${title} »`)).toBeVisible();
+  // The Arabic title is isolated (U+2068 … U+2069) inside the French sentence.
+  await expect(r.page.getByText(`Révision approuvée : « ${bidi(title)} »`)).toBeVisible();
 
   const p = await signedIn(browser, baseURL, publisher, { viewport: phone });
   await nav(p.page).getByRole('link', { name: 'Publication' }).click();
