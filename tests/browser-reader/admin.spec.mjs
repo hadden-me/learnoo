@@ -156,14 +156,14 @@ test('an administrator builds a curriculum edition and makes it current, at 360p
 
   await a.page.getByText('Nouveau niveau', { exact: true }).click();
   const level = a.page.getByRole('form', { name: 'Nouveau niveau' });
-  await level.getByLabel('Code').fill('test-bac');
-  await level.getByLabel('Nom français').fill('TEST Baccalauréat');
-  await level.getByLabel('Nom arabe').fill('TEST بكالوريا');
+  await level.getByLabel('Code').fill('test-college');
+  await level.getByLabel('Nom français').fill('TEST Collège');
+  await level.getByLabel('Nom arabe').fill('TEST إعدادي');
   await level.getByRole('button', { name: 'Créer le niveau' }).click();
-  await expect(a.page.getByText('Niveau test-bac créé.')).toBeVisible();
+  await expect(a.page.getByText('Niveau test-college créé.')).toBeVisible();
 
-  await a.page.getByText('Nouvelle section dans test-bac', { exact: true }).click();
-  const section = a.page.getByRole('form', { name: 'Nouvelle section dans test-bac' });
+  await a.page.getByText('Nouvelle section dans test-college', { exact: true }).click();
+  const section = a.page.getByRole('form', { name: 'Nouvelle section dans test-college' });
   await section.getByLabel('Code').fill('test-sciences');
   await section.getByLabel('Nom français').fill('TEST Sciences');
   await section.getByLabel('Nom arabe').fill('TEST علوم');
