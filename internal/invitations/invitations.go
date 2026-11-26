@@ -1,7 +1,8 @@
 // Package invitations issues and accepts single-use, expiring invitations
 // that create Student accounts (LRN-008). A Student holds no permissions.
-// There is no public self-registration: invitations are issued only by a
-// local operator tool (cmd/server invite-student), never over HTTP.
+// There is no public self-registration: invitations are issued by a local
+// operator tool (cmd/server invite-student, Issue) or, since LMS-B10, by an
+// active administrator through the administration API (IssueBy).
 //
 // Only the SHA-256 of a token is stored; the token itself is shown once to
 // the operator. Issuing and accepting are recorded in the append-only
@@ -20,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/users"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -66,9 +68,12 @@ var (
 
 // Invitation is a stored invitation without its token.
 type Invitation struct {
-	ID            int64
-	Email         string
+	ID    int64
+	Email string
+	// Exactly one of OperatorLabel (operator tools) and IssuedBy (an
+	// administrator) names the issuer.
 	OperatorLabel string
+	IssuedBy      *int64
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 }
@@ -137,11 +142,24 @@ func CheckPassword(password string) error {
 // and cannot be recovered; issue a new invitation if it is lost. An email
 // that already has an account is refused.
 func (s *Store) Issue(ctx context.Context, email, operatorLabel string, ttl time.Duration) (string, Invitation, error) {
-	e, err := users.NormalizeEmail(email)
+	label, err := normalizeLabel(operatorLabel)
 	if err != nil {
 		return "", Invitation{}, err
 	}
-	label, err := normalizeLabel(operatorLabel)
+	return s.issue(ctx, email, &label, nil, ttl)
+}
+
+// IssueBy is Issue for an administrator (LMS-B10): adminID must hold
+// administrator on an active account, rechecked first inside the
+// transaction (permissions.RequireTx; permissions.ErrDenied otherwise), and
+// is recorded as the invitation's issuer and in its audit row
+// (migrations/0016) instead of an operator label.
+func (s *Store) IssueBy(ctx context.Context, adminID int64, email string, ttl time.Duration) (string, Invitation, error) {
+	return s.issue(ctx, email, nil, &adminID, ttl)
+}
+
+func (s *Store) issue(ctx context.Context, email string, label *string, adminID *int64, ttl time.Duration) (string, Invitation, error) {
+	e, err := users.NormalizeEmail(email)
 	if err != nil {
 		return "", Invitation{}, err
 	}
@@ -150,8 +168,16 @@ func (s *Store) Issue(ctx context.Context, email, operatorLabel string, ttl time
 	}
 	token := newToken()
 	now := s.now().UTC().Truncate(time.Microsecond)
-	inv := Invitation{Email: e, OperatorLabel: label, CreatedAt: now, ExpiresAt: now.Add(ttl)}
+	inv := Invitation{Email: e, IssuedBy: adminID, CreatedAt: now, ExpiresAt: now.Add(ttl)}
+	if label != nil {
+		inv.OperatorLabel = *label
+	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if adminID != nil {
+			if err := permissions.RequireTx(ctx, tx, *adminID, permissions.Administrator); err != nil {
+				return err
+			}
+		}
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE email = $1)`, e).Scan(&exists); err != nil {
 			return err
@@ -160,12 +186,12 @@ func (s *Store) Issue(ctx context.Context, email, operatorLabel string, ttl time
 			return ErrEmailTaken
 		}
 		return tx.QueryRow(ctx, `
-			INSERT INTO student_invitations (token_hash, email, operator_label, created_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-			hashToken(token), e, label, inv.CreatedAt, inv.ExpiresAt).Scan(&inv.ID)
+			INSERT INTO student_invitations (token_hash, email, operator_label, issued_by, created_at, expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+			hashToken(token), e, label, adminID, inv.CreatedAt, inv.ExpiresAt).Scan(&inv.ID)
 	})
 	if err != nil {
-		if errors.Is(err, ErrEmailTaken) {
+		if errors.Is(err, ErrEmailTaken) || errors.Is(err, permissions.ErrDenied) {
 			return "", Invitation{}, err
 		}
 		return "", Invitation{}, fmt.Errorf("issue invitation: %w", err)
