@@ -42,7 +42,9 @@ input:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-off
 /* Student home and course reading (LMS-B08). The outline follows the lesson
    on narrow screens (reached by the "Plan du cours" link) and becomes a
    sticky side column from 64rem. No motion. */
-.shortcuts { list-style: none; padding: 0; margin: var(--learnoo-space-3) 0; display: flex; flex-wrap: wrap; gap: var(--learnoo-space-2); }
+.shortcuts { list-style: none; padding: 0; margin: var(--learnoo-space-3) 0; display: flex; flex-wrap: wrap; gap: var(--learnoo-space-3) var(--learnoo-space-5); }
+.shortcuts li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--learnoo-space-2); }
+.shortcuts .context { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
 .shortcuts a { display: inline-flex; align-items: center; min-block-size: var(--learnoo-size-touch); padding: 0 var(--learnoo-space-4); border: 1px solid var(--learnoo-color-brand); border-radius: var(--learnoo-radius-control); text-decoration: none; }
 .shortcuts a:hover { background: var(--learnoo-color-brand-soft); }
 .placements { list-style: none; padding: 0; margin: 0; flex-basis: 100%; font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
@@ -60,7 +62,8 @@ select:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-of
 .step-position { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
 .step-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--learnoo-space-3); margin-block: var(--learnoo-space-6); }
 .step-nav a { display: inline-flex; flex-direction: column; flex: 1 1 12rem; min-block-size: var(--learnoo-size-touch); padding: var(--learnoo-space-2) var(--learnoo-space-4); border: 1px solid var(--learnoo-color-border); border-radius: var(--learnoo-radius-card); text-decoration: none; overflow-wrap: anywhere; }
-.step-nav a.next { text-align: end; }
+.step-nav a { align-items: flex-start; }
+.step-nav a.next { align-items: flex-end; text-align: end; }
 .step-nav .dir { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
 .step-state { font-size: var(--learnoo-text-small); color: var(--learnoo-color-warning-text); font-weight: var(--learnoo-weight-emphasis); }
 .course-outline { border-block-start: 1px solid var(--learnoo-color-border); margin-block-start: var(--learnoo-space-6); padding-block-start: var(--learnoo-space-4); }
@@ -68,7 +71,7 @@ select:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-of
 .outline-modules, .outline-steps { margin: 0; padding-inline-start: var(--learnoo-space-5); }
 .outline-modules > li { margin-block-end: var(--learnoo-space-3); }
 .module-title { font-weight: var(--learnoo-weight-emphasis); }
-.outline-steps a { display: inline-block; min-block-size: var(--learnoo-size-touch); padding-block: var(--learnoo-space-2); overflow-wrap: anywhere; }
+.outline-steps a { display: block; min-block-size: var(--learnoo-size-touch); padding-block: var(--learnoo-space-2); overflow-wrap: anywhere; }
 .outline-steps a[aria-current="page"] { font-weight: var(--learnoo-weight-emphasis); color: var(--learnoo-color-ink); }
 @media (min-width: 64rem) {
   .reader main:has(.course-layout) { max-width: 72rem; }

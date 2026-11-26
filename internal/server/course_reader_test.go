@@ -295,7 +295,7 @@ func TestCourseBookmarksAndPreferencesArePrivate(t *testing.T) {
 	w = f.get(a, "/learn")
 	wantPage(t, "home a pref", w, http.StatusOK, "TEST Bac › TEST Mathématiques", "TEST Cours signet")
 	body := w.Body.String()
-	if i, j := strings.Index(body, `id="courses-heading"`), strings.Index(body, `id="course-bookmarks-heading"`); i < 0 || j < i ||
+	if i, j := strings.Index(body, `id="courses-heading"`), strings.Index(body, `id="recent-heading"`); i < 0 || j < i ||
 		!strings.Contains(body[i:j], courseURL(c)) || strings.Contains(body[i:j], courseURL(elsewhere)) {
 		t.Fatal("home lists a course of another section")
 	}
