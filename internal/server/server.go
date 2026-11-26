@@ -11,6 +11,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/courses"
 	"github.com/hadden-me/learnoo/internal/curriculum"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/lessons"
@@ -57,6 +58,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		Reports:    reports.NewStore(db),
 		Catalogue:  catalogue.NewStore(db),
 		Curriculum: curriculum.NewStore(db),
+		Courses:    courses.NewStore(db),
 		Log:        log,
 	}).Register(mux)
 	readerH := reader.New(reader.Config{

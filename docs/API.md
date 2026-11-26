@@ -2,7 +2,7 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports, the Studio integration (issue #65) and the [curriculum](#curriculum-lms-b02) hierarchy and administration (LMS-B02).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports, the Studio integration (issue #65), the [curriculum](#curriculum-lms-b02) hierarchy and administration (LMS-B02) and [course drafts](#course-drafts-lms-b03) (LMS-B03).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
 
 ## Conventions
 
@@ -31,9 +31,9 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 403 | `self_review` | A reviewer tried to approve or request changes on their own revision (administrators included) |
 | 404 | `not_found` | Unknown route; a catalogue subject code, lesson, revision, media or error report ID that does not exist, is malformed, or (revisions) belongs to another author, or (error reports) belongs to a subject the caller does not review |
 | 408 | `upload_timeout` | The upload body did not arrive within the server's read timeout. No `Retry-After`: retry on a better connection or with a smaller image |
-| 409 | `version_conflict` | `expectedVersion` is stale: the draft changed since it was loaded. Nothing was written |
+| 409 | `version_conflict` | `expectedVersion` is stale: the draft (lesson or course) changed since it was loaded. Nothing was written |
 | 409 | `not_draft` | The revision was submitted and can no longer change, be submitted again or be discarded |
-| 409 | `active_candidate_exists` | The lesson already has an active candidate: a draft, a revision in review, or an approved revision not yet published (or withdrawn) |
+| 409 | `active_candidate_exists` | The lesson (or course) already has an active candidate: a draft, a revision in review, or an approved revision not yet published (or withdrawn) |
 | 409 | `archived` | The lesson is archived |
 | 409 | `translation_exists` | The translation group already has a lesson in that language |
 | 409 | `retry` | The database aborted the transaction to resolve a deadlock or serialization conflict with a concurrent request. Nothing was written; retry the same request (reload first if it carries `expectedVersion` and it fails again with `version_conflict`) |
@@ -56,6 +56,8 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 409 | `already_retired` | Retirement of a curriculum entry, subject or chapter that is already retired |
 | 409 | `parent_retired` | A section under a retired level, or an edition created or made current under a retired section or level |
 | 409 | `assignment_exists` | The edition already assigns the subject |
+| 409 | `has_history` | Deletion of a course one of whose revisions was submitted (or that was published): it is kept; discard its open draft instead |
+| 409 | `referenced_by_course` | Discard of a lesson draft that a course draft pins as a step; remove the step from the course draft first |
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
@@ -75,9 +77,10 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
-| 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
-| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
+| 422 | `invalid_input` | A curriculum code, name, label or display order, or a course field, is malformed (`message` says which rule) |
+| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them); for a course draft, an assignment that cannot be newly selected or of another subject, or a module chapter in none of the draft's assignments or retired (`message` says which) |
 | 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft created, saved with a chapter change, or submitted with a retired chapter other than the chapter of its published base revision |
+| 422 | `invalid_step` | A course step that cannot be attached: unknown lesson or revision, another author's lesson that is not published or a revision of it that is not eligible, another subject or language, a revision of another lesson, or a lesson attached twice |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |
@@ -287,7 +290,7 @@ Body `{"expectedVersion": 3}`. Moves the caller's own draft to `in_review` and r
 Discards the caller's own draft and its media references (the assets remain). `expectedVersion` is the only query parameter, a plain decimal integer.
 
 - `204` no body.
-- `400 invalid_request` (missing or malformed `expectedVersion`), `409 version_conflict | not_draft`, `404 not_found`.
+- `400 invalid_request` (missing or malformed `expectedVersion`), `409 version_conflict | not_draft | referenced_by_course`, `404 not_found`. A draft that a course draft pins as a step (LMS-B03) is `409 referenced_by_course`.
 
 ### `POST /api/media`
 
@@ -700,6 +703,40 @@ Level: `{"id", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version
 | `POST /subjects/{subjectId}/retire`, `POST /chapters/{chapterId}/retire` | `{}` | `204`; `409 already_retired`. The entry stays readable and keeps every reference; it can no longer be newly assigned or listed |
 
 Retirement is never undone. Nothing deletes a level, section, edition, subject or chapter. A `409 retry` may answer any write that collided with a concurrent one.
+
+## Course drafts (LMS-B03)
+
+Teacher-owned courses and their draft revisions ([LMS_CONTRACT.md §4, §5 and §8](LMS_CONTRACT.md#4-courses-b03-migration-0014), data model in [DECISIONS.md](DECISIONS.md#courses-lms-b03)), in `internal/courses` and `internal/studioapi/courses.go`. Submission, review, publication and the rest of the course lifecycle are LMS-B04. Every endpoint needs a session (`401 unauthenticated`) and the `author` permission, checked by the middleware before any lookup (`403 forbidden`) and again inside the transaction; unsafe methods need the CSRF token and a same-origin request. Responses are `Cache-Control: private, no-store`. A course belongs to its owner (its creator; administrators get no exception): another user's course or revision, and another author's lesson that is not currently published, answer `404 not_found` exactly like an ID that does not exist. Request bodies follow the [strict JSON rules](#conventions) at every level, including each module and step object. Only the endpoints that list query parameters accept any (`400 invalid_request` otherwise).
+
+| Endpoint | Body | Success and errors |
+| --- | --- | --- |
+| `GET /api/courses?mine=1&cursor=` | none (`mine=1` is required; `cursor` optional; nothing else) | `200 {"courses": [course…], "nextCursor": "…" or null}`, newest first (by course ID), 100 per page; pass `nextCursor` back as `cursor` |
+| `POST /api/courses` | `subjectId`, `language` (`fr` or `ar`) | `201 {"course": course, "revision": revision}` with an empty first draft; `Location` names the revision. `422 unknown_subject`, `422 placement_invalid` (retired subject), `422 invalid_input` (language) |
+| `DELETE /api/courses/{courseId}` | none | `204`: deletes the course with its draft revisions, placements, modules and steps, never lessons or media. `409 has_history` once any revision was submitted |
+| `POST /api/courses/{courseId}/drafts` | `{}` | `201` revision: a new draft copying the course's latest revision (overview, cover if the caller uploaded it, placements, modules and the steps still attachable) or empty without one, with `droppedSteps`: `[{"moduleKey", "position", "title", "lessonId", "revisionId"}…]`, the copied revision's steps left out because another author's lesson is no longer attachable at its pinned revision (empty when none). Base and comparison are the published revision (none until B04). `409 active_candidate_exists`, `409 archived`. Placements are copied unchecked: the next save reports one that is no longer allowed |
+| `GET /api/course-revisions/{revisionId}` | none | `200` revision |
+| `PUT /api/course-revisions/{revisionId}` | the whole draft, below | `200` revision with `version` + 1. `409 version_conflict` (nothing written), `409 not_draft`, `422 invalid_input`, `422 invalid_step`, `422 placement_invalid`, `422 unknown_media` |
+| `DELETE /api/course-revisions/{revisionId}?expectedVersion=N` | none | `204`: discards the draft and its children (its number is never reused). `409 version_conflict`, `409 not_draft` |
+| `GET /api/courses/{courseId}/attachable-lessons?q=&cursor=` | none | `200 {"lessons": [{"lessonId", "publicId", "own", "title", "publishedRevisionId", "latestRevision"}…], "nextCursor": "…" or null}`: lessons of the course's subject and language that are the caller's own (title and `latestRevision` of the latest revision) or another author's currently published, unarchived lessons (title of the published revision, `latestRevision` null). `q` (optional, at most 100 characters) matches titles ignoring case and diacritics; pages of 50 by lesson ID; pass `nextCursor` back as `cursor`. Other parameters `400` |
+| `GET /api/lessons/{lessonId}/eligible-revisions` | none | `200 {"revisions": [{"id", "number", "status", "title", "eligible"}…]}`, newest first: every revision of the caller's own lesson (`eligible` says which may be submitted with the course), or only the eligible revisions of another author's currently published lesson (`404` otherwise) |
+
+Save body (every key required except `coverMediaId` and `coverAlt`, which may be omitted or `null`):
+
+```json
+{"expectedVersion": 3, "title": "TEST course", "summary": "", "objectives": "", "prerequisites": "",
+ "coverMediaId": 12, "coverAlt": "TEST description of the cover",
+ "assignmentIds": [11],
+ "modules": [{"key": null, "title": "TEST module", "chapterId": 4,
+              "steps": [{"lessonId": 7, "revisionId": 21, "title": "TEST step"}]}]}
+```
+
+- The save replaces everything; order in the arrays is the order of modules and steps. A module `key` is a lower-case UUID returned by an earlier read (it keeps the module's identity across revisions) or `null` for a new module.
+- Text fields are plain text, trimmed, without control characters (line feeds only in `summary`, `objectives`, `prerequisites`), bidirectional formatting or line/paragraph separator characters: `title` ≤ 200, `summary` ≤ 1000, `objectives` ≤ 2000, `prerequisites` ≤ 2000, `coverAlt` ≤ 300, module and step titles 1 to 200. Drafts may be incomplete (empty overview fields, no modules). At most 50 modules and 200 steps.
+- `coverMediaId` must be an image the caller uploaded (`422 unknown_media` otherwise) and needs `coverAlt`; `coverAlt` without a cover is `422 invalid_input`.
+- `assignmentIds`: curriculum assignments of the course's subject. Each one not on the draft's comparison revision must be selectable now (current edition, section, level and subject not retired); a module `chapterId` must be in at least one of them and not retired, unless inherited unchanged from the comparison revision (`422 placement_invalid`).
+- Steps: a lesson of the course's subject and language, at most once per revision. The caller's own lesson may pin any of its revisions, drafts included; another author's lesson only an eligible revision (approved, not withdrawn, published at least once, lesson currently published and not archived) (`422 invalid_step`).
+
+Revision: `{"id", "courseId", "number", "status", "kind", "authorId", "baseRevisionId", "compareRevisionId", "subjectId", "language", "title", "summary", "objectives", "prerequisites", "coverMediaId", "coverAlt", "version", "createdAt", "updatedAt", "submittedAt", "assignments": [{"assignmentId", "editionId", "editionState", "selectable", "retired"}…], "modules": [{"key", "position", "title", "chapterId", "steps": [{"position", "title", "lessonId", "revisionId", "revisionNumber", "ownLesson", "eligible"}…]}…]}`. `retired` flags a placement whose edition, section or level is retired (refused at submission, B04). A step shows only its course-authored title, never the lesson revision's. Course: `{"id", "publicId", "ownerId", "subjectId", "language", "publishedRevisionId", "archived", "createdAt", "latestRevision"}` (`latestRevision` only in the list: `{"id", "number", "status", "title", "version", "updatedAt"}`, omitted when the course has no revision). A `409 retry` may answer any write that collided with a concurrent one.
 
 ## Not yet defined
 

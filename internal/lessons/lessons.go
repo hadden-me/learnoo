@@ -98,6 +98,10 @@ var (
 	// ErrTranslationSubject means a translation names a different subject
 	// from its source lesson; every lesson of a group shares one subject.
 	ErrTranslationSubject = errors.New("a translation must have the subject of its source lesson")
+	// ErrReferencedByCourse means a course draft pins the lesson draft as a
+	// step (migrations/0014), so the draft cannot be discarded until the
+	// course draft no longer names it.
+	ErrReferencedByCourse = errors.New("a course draft references this lesson revision")
 	// ErrImmutable reports a change rejected by a database guard. The Store's
 	// own checks normally return a more specific error first.
 	ErrImmutable = errors.New("change rejected: snapshot or asset is immutable")
@@ -623,7 +627,8 @@ func CheckStoredContentTx(ctx context.Context, tx pgx.Tx, revisionID int64) erro
 
 // DiscardDraft deletes the actor's own draft at expectedVersion, with its
 // media references, so the lesson can accept a new draft. Submitted
-// revisions are never deleted.
+// revisions are never deleted, and a draft a course draft pins as a step is
+// not discarded (ErrReferencedByCourse).
 func (s *Store) DiscardDraft(ctx context.Context, actor, revisionID int64, expectedVersion int) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		if err := permissions.RequireTx(ctx, tx, actor, permissions.Author); err != nil {
@@ -631,6 +636,17 @@ func (s *Store) DiscardDraft(ctx context.Context, actor, revisionID int64, expec
 		}
 		if _, err := lockOwnDraft(ctx, tx, actor, revisionID, expectedVersion); err != nil {
 			return err
+		}
+		// A course save pins the revision only after share-locking it, so
+		// with the revision locked FOR UPDATE above no new reference can
+		// appear before the delete; the foreign key (mapped below) still
+		// refuses one.
+		var referenced bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM course_steps WHERE lesson_revision_id = $1)`, revisionID).Scan(&referenced); err != nil {
+			return err
+		}
+		if referenced {
+			return ErrReferencedByCourse
 		}
 		tag, err := tx.Exec(ctx, `
 			DELETE FROM lesson_revisions
@@ -726,6 +742,8 @@ func mapErr(err error) error {
 			return ErrUnknownChapter
 		case "revision_media_media_asset_id_fkey":
 			return ErrUnknownMedia
+		case "course_steps_lesson_revision_fkey":
+			return ErrReferencedByCourse
 		}
 	case "23505": // unique_violation
 		switch pgErr.ConstraintName {
