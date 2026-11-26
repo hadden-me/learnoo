@@ -1,6 +1,6 @@
 # Deployment and recovery runbook
 
-Status (LRN-010, 2026-11-24): these are deployment artifacts and a **local** rehearsal only. Nothing has been deployed, no DNS, TLS, reverse-proxy or Cloudflare configuration exists, and no production credential has been created. A rehearsal on the shared server is still an open, human acceptance item on issue 10. Values marked **EXAMPLE** are placeholders for the infrastructure maintainer to decide ([DECISIONS.md](DECISIONS.md#deployment-and-recovery-lrn-010)).
+Status (LRN-010, 2026-11-24; reference proxy issue 87, 2026-11-26): these are deployment artifacts and a **local** rehearsal only. Nothing has been deployed, no DNS, real certificate or Cloudflare configuration exists, and no production credential has been created. A reference reverse-proxy configuration exists and is tested locally only ([Reference reverse proxy](#reference-reverse-proxy)). A rehearsal on the shared server is still an open, human acceptance item on issue 10. Values marked **EXAMPLE** are placeholders for the infrastructure maintainer to decide ([DECISIONS.md](DECISIONS.md#deployment-and-recovery-lrn-010)).
 
 | File | Purpose |
 | --- | --- |
@@ -10,6 +10,8 @@ Status (LRN-010, 2026-11-24): these are deployment artifacts and a **local** reh
 | [`deploy/db/roles.sql`](../deploy/db/roles.sql), [`grants.sql`](../deploy/db/grants.sql), [`initdb.sh`](../deploy/db/initdb.sh) | Least-privilege owner and runtime roles |
 | [`deploy/backup.sh`](../deploy/backup.sh), [`deploy/restore.sh`](../deploy/restore.sh) | Backup with checksums; restore into empty targets |
 | `server verify-restore` | Checks a restored database and media directory |
+| [`deploy/compose.proxy.yaml`](../deploy/compose.proxy.yaml), [`deploy/proxy/Caddyfile`](../deploy/proxy/Caddyfile) | Reference reverse proxy (Caddy, pinned): Compose override, issue 87 |
+| [`deploy/proxy/test-proxy.sh`](../deploy/proxy/test-proxy.sh), [`deploy/proxy/compose.test.yaml`](../deploy/proxy/compose.test.yaml) | Local test of the proxy in an isolated Compose project |
 
 The renderer experiment (`cmd/renderer`) is not in the image or the Compose file; it stays a loopback-only local tool.
 
@@ -18,7 +20,7 @@ The renderer experiment (`cmd/renderer`) is not in the image or the Compose file
 These block exposing the application to real users.
 
 1. **Client addresses behind the proxy.** Configure `LEARNOO_TRUSTED_PROXIES` (see [Client addresses](#client-addresses-behind-the-proxy)). Left empty, every request comes from the proxy's (or the Docker bridge's) address, so the per-address login, invitation and error-report throttles become one shared bucket: a handful of failed logins from anyone blocks sign-in for everyone for the throttle window.
-2. **TLS at the reverse proxy.** Session cookies are `Secure` and `__Host-` prefixed; browsers drop them over plain HTTP, so sign-in only works through HTTPS.
+2. **TLS at the reverse proxy.** Session cookies are `Secure` and `__Host-` prefixed; browsers drop them over plain HTTP, so sign-in only works through HTTPS. The [reference proxy](#reference-reverse-proxy) does this with a local certificate; a real domain needs the adaptation described there.
 3. **Invitation links.** Set `LEARNOO_PUBLIC_BASE_URL` to the public https site root (for example `https://learnoo.example`); `invite-student` then prints `<base>/invite/<token>`. Without it, it refuses to run in the container (it only prints `http://` loopback links for local development).
 4. The values listed in DECISIONS (limits, backup schedule and retention, off-site location and encryption, RPO/RTO, alert destinations), the privacy policy (backups contain personal data) and the LRN-008 release gates.
 
@@ -87,7 +89,7 @@ The per-address throttles (login, invitations, error reports) key on the client 
   - `X-Forwarded-For` (default, recommended): the chain is read from the right, skipping trusted addresses; the first untrusted address is the client. Entries a client prepends are never used. When no untrusted address is found (empty, malformed, too long or all-trusted chain), the result is the nearest hop: the right-most entry if it is a valid trusted address, otherwise the peer; never an entry further left, which a client could have chosen. At most 32 hops are examined. IPv6, bracketed and `address:port` entries are accepted; IPv4-mapped IPv6 is unmapped.
   - `CF-Connecting-IP`: the single address Cloudflare sets. Safe only if the origin proxy accepts connections from Cloudflare alone (firewall or authenticated origin pulls) and passes the header through; otherwise anyone reaching the origin directly can set it.
 - **Cloudflare warning.** Do **not** list Cloudflare's published IP ranges in `LEARNOO_TRUSTED_PROXIES` in `X-Forwarded-For` mode. Requests made by any Cloudflare customer's Worker leave from addresses inside those ranges (for example `2a06:98c0:3600::103`), so trusting the ranges as intermediate hops trusts every Cloudflare-originated client, and a Worker can put any address it likes to the left of its own: the right-to-left walk would skip the Worker's address and return the forged entry. When Cloudflare is in front, the safer combination is `CF-Connecting-IP` mode with the origin proxy reachable only from Cloudflare, trusting only the proxy (or the Docker gateway, below), not Cloudflare's ranges. Without Cloudflare, `X-Forwarded-For` mode trusting only the proxy is enough. **The final choice is an open infrastructure decision** ([DECISIONS.md](DECISIONS.md#trusted-proxies-and-public-base-url-issue-46)).
-- **What to trust** (infrastructure configuration, not hard-coded): only the address the app container sees for the reverse proxy. With Compose publishing to the host, the app sees the **gateway of the `frontend` network** as the peer (`docker network inspect <project>_frontend --format '{{(index .IPAM.Config 0).Gateway}}'`), whatever process on the host connected. **Warning:** on a shared server, any process or user that can reach the published address (`127.0.0.1:8090` by default) then arrives from that trusted gateway and can choose its own throttle key with a forged header. Prefer one of: run the proxy as a container on the `frontend` network, remove the published port and trust only the proxy container's address (pin it with a fixed subnet and `ipv4_address` in a Compose override); or publish to an address only the proxy can reach. Trust a single address (`/32`), not the whole subnet, where possible. Docker chooses the subnet when the network is created; pin it in an override if the network may be recreated. The proxy must append the client address to `X-Forwarded-For` (nginx: `proxy_add_x_forwarded_for`; Caddy does so by default) or, in `CF-Connecting-IP` mode, pass that header unchanged.
+- **What to trust** (infrastructure configuration, not hard-coded): only the address the app container sees for the reverse proxy. With Compose publishing to the host, the app sees the **gateway of the `frontend` network** as the peer (`docker network inspect <project>_frontend --format '{{(index .IPAM.Config 0).Gateway}}'`), whatever process on the host connected. **Warning:** on a shared server, any process or user that can reach the published address (`127.0.0.1:8090` by default) then arrives from that trusted gateway and can choose its own throttle key with a forged header. Prefer one of: run the proxy as a container on the `frontend` network, remove the published port and trust only the proxy container's address (pin it with a fixed subnet and `ipv4_address` in a Compose override); or publish to an address only the proxy can reach. Trust a single address (`/32`), not the whole subnet, where possible. The [reference proxy](#reference-reverse-proxy) override does exactly this. Docker chooses the subnet when the network is created; pin it in an override if the network may be recreated. The proxy must append the client address to `X-Forwarded-For` (nginx: `proxy_add_x_forwarded_for`; Caddy does so by default) or, in `CF-Connecting-IP` mode, pass that header unchanged.
 - Verified locally (Docker Desktop, 2026-11-24): without trusted proxies, 30 failed logins with 30 different `X-Forwarded-For` values throttled the next request (header ignored); with the frontend subnet trusted, one client was throttled while another client through the same published port was not. This test also shows the warning above: curl on the host, not a proxy, was trusted.
 
 ## Rollback
@@ -186,9 +188,65 @@ The automated rehearsal (`TestBackupRestoreRehearsal`, `go test ./internal/serve
 
 - `GET /healthz`: liveness, 200 whenever the process serves HTTP. The image `HEALTHCHECK` uses it.
 - `GET /readyz`: readiness, 200 only when the database answers a ping and the media directory is writable (an `access(2)` permission check that writes nothing; a full disk is not detected, so monitor disk space); otherwise 503 with no detail. The Compose `app` health check uses it (`server probe -path /readyz`, as the image has no shell or HTTP client).
-- The probes are for container health checks and internal monitoring only. **The reverse proxy must not expose `/healthz` or `/readyz` publicly**: answer them with 404 at the proxy (each `/readyz` request costs a database round trip). Monitoring should call them on the published address from the host, not through the public site.
+- The probes are for container health checks and internal monitoring only. **The reverse proxy must not expose `/healthz` or `/readyz` publicly**: answer them with 404 at the proxy (each `/readyz` request costs a database round trip). Monitoring should call them on the published address from the host, not through the public site; with the [reference proxy](#reference-reverse-proxy) the app has no published address, so use the container health status or `server probe` inside the container.
 - Logs: the server writes `log/slog` text records (`time=… level=… msg=… key=value`) to stderr, collected by the Docker `json-file` driver with rotation. It logs start-up, the non-loopback warning, readiness failures and internal errors (with the error, never request bodies, passwords, tokens or URLs); there is no per-request access log, so use the reverse proxy's access log. PostgreSQL logs go to its container log.
 - To watch (alert destinations to be decided): app or postgres unhealthy or restarting; `readiness:` errors; disk space of the data, media and backup volumes; missing scheduled backups; failed rehearsals; container memory limits being hit.
+
+## Reference reverse proxy
+
+A reference configuration to adapt (issue 87), not a deployed one: Caddy `2.11.3-alpine`, pinned by digest, in the Compose override [`deploy/compose.proxy.yaml`](../deploy/compose.proxy.yaml) with its [`Caddyfile`](../deploy/proxy/Caddyfile). Choices are recorded in [DECISIONS.md](DECISIONS.md#reference-reverse-proxy-issue-87).
+
+```sh
+C="docker compose -f deploy/compose.production.yaml -f deploy/compose.proxy.yaml --env-file deploy/production.env"
+$C up -d --wait            # postgres -> migrate -> grants -> app (healthy) -> proxy
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LEARNOO_PROXY_SITE` | `localhost` | Caddy site address (the public host name) |
+| `LEARNOO_PROXY_TLS` | `internal` | `internal` = Caddy's local CA (testing only); an ACME contact email for a public certificate; or `cert.pem key.pem` paths |
+| `LEARNOO_PROXY_HTTP_PUBLISH`, `LEARNOO_PROXY_HTTPS_PUBLISH` | `127.0.0.1:8080`, `127.0.0.1:8443` | Host addresses published for ports 80 and 443 (loopback for testing) |
+| `LEARNOO_PROXY_HSTS_MAX_AGE` | `31536000` (EXAMPLE) | HSTS `max-age`; no `includeSubDomains`, no `preload` |
+| `LEARNOO_PROXY_MAX_BODY_BYTES` | `6291456` (6 MiB) | Request body limit |
+| `LEARNOO_FRONTEND_SUBNET`, `LEARNOO_FRONTEND_IP_RANGE`, `LEARNOO_PROXY_IPV4` | `172.30.87.0/24`, `172.30.87.128/25`, `172.30.87.10` (EXAMPLE) | Pinned `frontend` network, dynamic range (must exclude the proxy address) and the proxy's fixed address |
+
+What the override and the Caddyfile do:
+
+- **Only the proxy is published.** The app's `ports` are reset (`!reset []`, Compose 2.24+); it is reachable only on the `frontend` network. The app's container health check (`server probe -path /readyz`, inside the app container) is unaffected.
+- **Client addresses.** The proxy has a fixed address in a pinned subnet and the override sets the app's `LEARNOO_TRUSTED_PROXIES` to exactly that `/32` (and `X-Forwarded-For` mode), whatever the env file says. Caddy trusts no incoming forwarding header (no `trusted_proxies`), so it **replaces** any client-supplied `X-Forwarded-For` with the single address of the connecting client; the app reads that one hop. Host processes can no longer arrive from a trusted gateway, which removes the published-port warning in [Client addresses](#client-addresses-behind-the-proxy). If the stack already ran without the override, its `frontend` network has a Docker-chosen subnet: `$C down` (without `-v`) and `up` again to recreate it.
+- **TLS and redirect.** Automatic HTTPS for `LEARNOO_PROXY_SITE`; HTTP answers `308` to `https://`; HSTS on HTTPS responses only. HTTP/3 is off (it would need UDP 443).
+- **Probes.** `/healthz`, `/readyz` and anything under them answer `404` with an empty body, whatever the case, percent-encoding or dot segments of the path. Monitoring reads the container health status or runs `$C exec app /usr/local/bin/learnoo-server probe -path /readyz`, not through the site.
+- **Body limit.** 6 MiB: the 5 MiB media upload (`internal/media`) plus headroom; lesson JSON is at most 256 KiB, login and forms a few KiB, and the app enforces each limit itself. A declared `Content-Length` above the limit is answered `413` before anything reaches the app; a chunked body is cut off at the limit while read.
+- **Timeouts.** Read header 10 s, read body 60 s (a 5 MiB upload on a slow line), write 90 s, idle 2 min; upstream dial 5 s, upstream response header 60 s. These are reference values, adjustable in the Caddyfile.
+- **Headers.** HSTS is added and `Server` removed. The app's own headers (per-page `Content-Security-Policy`, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, `Cache-Control`, `Vary`) are never overridden; the proxy only fills them in, with the app's strict defaults, on responses the app did not produce (redirects, probe 404s, proxy errors). `Host`, `Cookie`, `Origin` and `Sec-Fetch-Site` are passed unchanged.
+- **No caching.** Stock Caddy has no response cache, so nothing is stored at the proxy and the app's `Cache-Control` reaches browsers and any CDN unchanged. The only responses meant for shared caches are those the app marks `public`: the fingerprinted files under `/assets/<version>/<name>` (issue 88, `public, max-age=31536000, immutable`). Everything else, including `/static/` and the Studio's `/studio/assets/` (at most `private` browser caching), must bypass every proxy or edge cache. If a cache layer is ever added to the proxy, it must store only responses whose `Cache-Control` is `public` (in practice only `/assets/`), never `private`, `no-store` or a response to a request carrying the session cookie.
+- **Access log.** JSON on stdout (`http.log.access`, rotated by the Docker `json-file` driver). The URI is logged with `/invite/<token>` replaced by `/invite/REDACTED` and any query string by `?REDACTED`; `Cookie`, `Authorization`, `Proxy-Authorization`, `Referer`, `X-CSRF-Token`, `Set-Cookie` and `Location` are dropped. Caddy's error log uses the same filter. The admin API is off.
+- **Container.** Read-only root, all capabilities dropped except `NET_BIND_SERVICE`, `no-new-privileges`, CPU/memory/PID limits (EXAMPLE), certificates in the `proxy_data` volume (with `tls internal` it also holds the local CA key: keep it, and never reuse it outside testing).
+
+### Local test
+
+`deploy/proxy/test-proxy.sh` builds the image, starts postgres, the app and the proxy in an isolated Compose project (`learnoo-proxytest-<pid>`, its own subnets `172.30.187.0/24` and `172.30.188.0/24`, loopback ports 18080/18443, throwaway secrets in a temporary directory), checks with curl, then runs `down -v` and removes the image it built. It needs Docker with Compose 2.24+, `curl` and `openssl` on the host; `LEARNOO_TEST_IMAGE=<tag>` reuses an existing image, `LEARNOO_TEST_KEEP=1` leaves the stack up. It checks:
+
+- the app is healthy (internal probe), has no published port and trusts only the proxy's `/32`;
+- `http://` → `308` `https://` (query kept), HSTS on HTTPS only, the app's CSP kept, no `Server` header; `/login` 200; anonymous `/studio` and `/learn` → `303` to `/login`;
+- `/healthz`, `/readyz` and variants (`/HEALTHZ`, `/%68ealthz`, `/readyz/`, `//healthz`, `/./readyz`, `HEAD`) → 404 with an empty, `no-store` body;
+- a 7 MiB body → 413 at the proxy; a 5 MiB one reaches the app;
+- two users signed in through the proxy, twice in alternation, each get their own `/learn` page with `Cache-Control: private, no-store` and `Vary: Cookie`, a signed-out request gets a redirect without either name, and no `Age`/cache-status header appears;
+- throttle keyed on the real client: from curl containers with fixed addresses on a test-only `edge` network ([`compose.test.yaml`](../deploy/proxy/compose.test.yaml); on Docker Desktop every host process shares one gateway address), client A's 31 failed sign-ins, each with a different forged `X-Forwarded-For`, end in `429`; client B is not throttled, even when it forges A's address; A stays throttled;
+- the proxy logs (access, and error with the app stopped and a `502`) contain `/invite/REDACTED` but not the invitation token, the query string or the session cookie value.
+
+Verified on Docker Desktop (macOS, Docker 27.3, Compose 2.30) on 2026-11-26: 55 checks passed, teardown left no container, network, volume or built image. The script passes `shellcheck` (`docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 deploy/proxy/test-proxy.sh`). This is a local test of the reference configuration; it does not prove the configuration of a real server or CDN.
+
+### Adapting to a real domain (infrastructure decisions)
+
+1. DNS for the host name; `LEARNOO_PROXY_SITE=learnoo.example`, `LEARNOO_PUBLIC_BASE_URL=https://learnoo.example`.
+2. `LEARNOO_PROXY_TLS=<ACME contact email>` (Let's Encrypt via HTTP-01 or TLS-ALPN-01: ports 80 and 443 must be reachable), or a certificate file pair mounted into the container. Never `internal` on a public site.
+3. Publish `0.0.0.0:80` and `0.0.0.0:443` (and the IPv6 equivalents if used), with the firewall allowing only those.
+4. Start HSTS with a short `max-age` (for example 300) and raise it once HTTPS is confirmed; `includeSubDomains` and `preload` are deliberately absent and are a decision for the domain owner.
+5. Choose a `frontend` subnet that does not collide with other networks on the server.
+6. If the shared server already runs a reverse proxy on 80/443, either run this one behind it on another address or port the rules into it: TLS, redirect and HSTS; the client address forwarded as one hop that client headers cannot influence, and the app trusting only that proxy's address; probes 404; the body limit; the timeouts; no caching except `public` responses; the redacted access log.
+
+**Cloudflare** (whether to use it is open, [issue 46](DECISIONS.md#trusted-proxies-and-public-base-url-issue-46)). Behind Cloudflare, the reference proxy would see Cloudflare's edge as the client, so every visitor behind one edge would share a throttle key. The safe combination recorded in [Client addresses](#client-addresses-behind-the-proxy) is `LEARNOO_CLIENT_ADDRESS_HEADER=CF-Connecting-IP` (the override's `X-Forwarded-For` line changed accordingly; Caddy passes that header through unchanged) with the origin reachable **only** from Cloudflare (firewall allow-list or authenticated origin pulls, which Caddy can require with `client_auth`), still trusting only the proxy's `/32`, never Cloudflare's ranges. Use SSL mode "Full (strict)" with a valid origin certificate (ACME or a Cloudflare origin certificate), and cache rules that bypass the cache for the whole host except `/assets/` (see below). The header choice, origin lockdown and cache rules remain infrastructure decisions; none is configured here.
 
 ## Caching, reverse proxy and Cloudflare
 
