@@ -62,7 +62,7 @@ func seedBrowserCatalogue(f readerFixture, chapter int64, lesson published) {
 	p := publicFrom(f)
 	_, asg := p.edition("test-2026", "TEST Édition 2026", true, nil, chapter)
 	cover := p.uploadAs(p.author, 21)
-	p.publishedCourse(courseSpec{title: "TEST Cours de nombres complexes", summary: "TEST Un parcours court sur les nombres complexes.",
+	p.publishedCourse(courseSpec{title: "TEST Parcours public des nombres complexes", summary: "TEST Un parcours court sur les nombres complexes.",
 		assignment: asg, cover: &cover, steps: []published{lesson}})
 }
 
