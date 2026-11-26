@@ -14,13 +14,20 @@ import (
 	"testing"
 )
 
-const accountsPath = modulePath + "/internal/accounts"
+const (
+	accountsPath    = modulePath + "/internal/accounts"
+	invitationsPath = modulePath + "/internal/invitations"
+	studioapiPath   = modulePath + "/internal/studioapi"
+)
 
 // changeMethods are the methods that change permissions or account status,
-// by the package path of the Store type that declares them.
+// or issue invitations, by the package path of the Store type that declares
+// them. invitations.Store.Issue takes an unauthenticated operator label, so
+// it is the operator CLI's alone; IssueBy rechecks an administrator.
 var changeMethods = map[string]map[string]bool{
 	permissionsPath: {"Grant": true, "Revoke": true, "GrantReviewer": true, "RevokeReviewer": true, "GrantDefaults": true, "Bootstrap": true},
 	accountsPath:    {"Disable": true, "Enable": true},
+	invitationsPath: {"Issue": true, "IssueBy": true},
 }
 
 // changeRule is what one file may do with one package's changeMethods.
@@ -30,9 +37,12 @@ type changeRule struct {
 	// http allows calls inside HTTP handlers (functions taking an
 	// http.ResponseWriter). Such a file may only call the methods directly
 	// (no method values or expressions), and every call's actor argument
-	// must be a direct call of permissions.UserActor, so a change is always
-	// attributed to a signed-in user, whom the stores recheck as an active
-	// administrator inside their transaction.
+	// must be the session's user: permissions.UserActor(actor(r)), or for
+	// invitations.Store.IssueBy actor(r) itself, where actor is studioapi's
+	// session-user helper. A change is thus always attributed to the
+	// signed-in user, whom the stores recheck as an active administrator
+	// inside their transaction (the boundary; this scan is defence in
+	// depth).
 	http bool
 }
 
@@ -57,6 +67,11 @@ var allowedChangeFiles = map[string]map[string]changeRule{
 	accountsPath: {
 		"cmd/server/main.go": {},
 		adminAPIFile:         {methods: map[string]bool{"Disable": true, "Enable": true}, http: true},
+	},
+	invitationsPath: {
+		"cmd/server/main.go":                  {methods: map[string]bool{"Issue": true}},
+		"internal/invitations/invitations.go": {},
+		adminAPIFile:                          {methods: map[string]bool{"IssueBy": true}, http: true},
 	},
 }
 
@@ -213,10 +228,11 @@ func checkFile(fset *token.FileSet, root, pkgRel string, f *ast.File, info *type
 		}
 		return true
 	})
-	isUserActorCall := func(e ast.Expr) bool {
+	// calledFunc is the package-level function a direct call names, or nil.
+	calledFunc := func(e ast.Expr) (*types.Func, *ast.CallExpr) {
 		call, ok := ast.Unparen(e).(*ast.CallExpr)
 		if !ok {
-			return false
+			return nil, nil
 		}
 		var id *ast.Ident
 		switch fun := ast.Unparen(call.Fun).(type) {
@@ -226,7 +242,21 @@ func checkFile(fset *token.FileSet, root, pkgRel string, f *ast.File, info *type
 			id = fun
 		}
 		obj, ok := info.Uses[id].(*types.Func)
-		return ok && obj.Name() == "UserActor" && obj.Pkg() != nil && obj.Pkg().Path() == permissionsPath
+		if !ok || obj.Pkg() == nil || obj.Type().(*types.Signature).Recv() != nil {
+			return nil, nil
+		}
+		return obj, call
+	}
+	// isSessionUser: a call of studioapi's actor, the session's user ID.
+	isSessionUser := func(e ast.Expr) bool {
+		fn, _ := calledFunc(e)
+		return fn != nil && fn.Name() == "actor" && fn.Pkg().Path() == studioapiPath
+	}
+	// isUserActorCall: permissions.UserActor of the session's user.
+	isUserActorCall := func(e ast.Expr) bool {
+		fn, call := calledFunc(e)
+		return fn != nil && fn.Name() == "UserActor" && fn.Pkg().Path() == permissionsPath &&
+			len(call.Args) == 1 && isSessionUser(call.Args[0])
 	}
 
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -260,8 +290,12 @@ func checkFile(fset *token.FileSet, root, pkgRel string, f *ast.File, info *type
 				out = append(out, fmt.Sprintf("%s: %s.%s called from an HTTP handler outside the administration API", pos(x.Pos()), named.Obj().Name(), fn.Name()))
 			case rule.http:
 				call := calls[x]
-				if call == nil || len(call.Args) < 2 || !isUserActorCall(call.Args[1]) {
-					out = append(out, fmt.Sprintf("%s: %s.%s in the administration API must be called directly with permissions.UserActor(…) as its actor", pos(x.Pos()), named.Obj().Name(), fn.Name()))
+				sessionActor := isUserActorCall
+				if named.Obj().Pkg().Path() == invitationsPath {
+					sessionActor = isSessionUser
+				}
+				if call == nil || len(call.Args) < 2 || !sessionActor(call.Args[1]) {
+					out = append(out, fmt.Sprintf("%s: %s.%s in the administration API must be called directly with the session's user (permissions.UserActor(actor(r)), or actor(r)) as its actor", pos(x.Pos()), named.Obj().Name(), fn.Name()))
 				}
 			}
 		case *ast.Ident:
@@ -364,35 +398,61 @@ func TestChangeMethodScanDetectsProbes(t *testing.T) {
 import (
 	"context"
 	"net/http"
+	"time"
 	"` + accountsPath + `"
+	"` + invitationsPath + `"
 	"` + permissionsPath + `"
 )
 var (
-	ctx   = context.Background()
-	store *accounts.Store
-	perms *permissions.Store
-	actor = permissions.UserActor(1)
+	ctx    = context.Background()
+	store  *accounts.Store
+	perms  *permissions.Store
+	inv    *invitations.Store
+	op     = permissions.UserActor(1)
+	target int64 = 2
 )
+// actor stands for studioapi's session-user helper; it counts as such only
+// when the probe is type-checked as internal/studioapi.
+func actor(r *http.Request) int64 { return 1 }
+var _ = time.Hour
 type wrapped struct{ *accounts.Store }
 var _ http.Handler
 `
 	probes := map[string]string{
-		"disable call":       `var _, _ = store.Disable(ctx, actor, 2)`,
-		"enable call":        `var _, _ = store.Enable(ctx, actor, 2)`,
+		"disable call":       `var _, _ = store.Disable(ctx, op, 2)`,
+		"enable call":        `var _, _ = store.Enable(ctx, op, 2)`,
 		"method value":       `var f = store.Disable`,
 		"method expression":  `var f = (*accounts.Store).Enable`,
-		"promoted":           `var _, _ = wrapped{}.Disable(ctx, actor, 2)`,
-		"permissions change": `var _, _ = perms.Grant(ctx, actor, 2, permissions.Author)`,
+		"promoted":           `var _, _ = wrapped{}.Disable(ctx, op, 2)`,
+		"permissions change": `var _, _ = perms.Grant(ctx, op, 2, permissions.Author)`,
 		"in handler": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	_, _ = store.Disable(r.Context(), actor, 2)
+	_, _ = store.Disable(r.Context(), op, 2)
 })`,
+		"operator issue": `var _, _, _ = inv.Issue(ctx, "x@example.test", "user@host", time.Hour)`,
 		// The administration API's shape: direct calls in a handler with
 		// the signed-in user as actor.
 		"handler user disable": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	_, _ = store.Disable(r.Context(), permissions.UserActor(1), 2)
+	_, _ = store.Disable(r.Context(), permissions.UserActor(actor(r)), 2)
 })`,
 		"handler user grant": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	_, _ = perms.GrantReviewer(r.Context(), (permissions.UserActor(1)), 2, 3)
+	_, _ = perms.GrantReviewer(r.Context(), (permissions.UserActor(actor(r))), 2, 3)
+})`,
+		"handler session issue": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _, _ = inv.IssueBy(r.Context(), actor(r), "x@example.test", time.Hour)
+})`,
+		// The actor must be the session's user, not another ID.
+		"handler target actor": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _ = perms.Grant(r.Context(), permissions.UserActor(target), target, permissions.Author)
+})`,
+		"handler literal actor": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _ = store.Disable(r.Context(), permissions.UserActor(2), 2)
+})`,
+		"handler target issue": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _, _ = inv.IssueBy(r.Context(), target, "x@example.test", time.Hour)
+})`,
+		// The unauthenticated operator path from a Studio handler.
+		"handler operator issue": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _, _ = inv.Issue(r.Context(), "x@example.test", "user@host", time.Hour)
 })`,
 		"handler grant defaults": `var h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	_ = perms.GrantDefaults(r.Context(), permissions.UserActor(1), 2, permissions.Admin)
@@ -408,11 +468,12 @@ var _ http.Handler
 	// actor and its use as an actor).
 	allowed := map[string]map[string]bool{
 		"cmd/server/main.go": {"disable call": true, "enable call": true, "method value": true,
-			"method expression": true, "promoted": true, "permissions change": true},
+			"method expression": true, "promoted": true, "permissions change": true, "operator issue": true},
 		"internal/accounts/accounts.go":       {},
 		"internal/permissions/permissions.go": {"permissions change": true},
 		"internal/server/server.go":           {},
-		adminAPIFile:                          {"handler user disable": true, "handler user grant": true},
+		"internal/studioapi/studio.go":        {},
+		adminAPIFile:                          {"handler user disable": true, "handler user grant": true, "handler session issue": true},
 	}
 	for file, ok := range allowed {
 		for name, body := range probes {
@@ -425,7 +486,13 @@ var _ http.Handler
 				t.Fatal(err)
 			}
 			info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
-			if _, err := (&types.Config{Importer: imp}).Check(modulePath+"/probe", fset, []*ast.File{f}, info); err != nil {
+			// Probes posing as the administration API are type-checked as
+			// internal/studioapi, so their actor is studioapi's.
+			path := modulePath + "/probe"
+			if file == adminAPIFile {
+				path = studioapiPath
+			}
+			if _, err := (&types.Config{Importer: imp}).Check(path, fset, []*ast.File{f}, info); err != nil {
 				t.Fatalf("%s as %s: type-check: %v", name, file, err)
 			}
 			pkgRel := filepath.ToSlash(filepath.Dir(file))
