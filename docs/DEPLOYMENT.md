@@ -71,6 +71,13 @@ $C ps                      # app healthy = /readyz answering 200
 - **Upgrade:** take a backup (below) and keep it; set `LEARNOO_IMAGE` to the new tag; `$C up -d --wait`. `migrate` applies new migrations, `grants` re-grants, the app restarts.
 - **Accounts:** `printf '%s\n' "$PASSWORD" | $C run --rm -T app create-user -email … -name …` (password on stdin). Invitations: `$C run --rm app invite-student -email …` with `LEARNOO_PUBLIC_BASE_URL` set (see "Invitation links" above). First administrator and role changes: `printf '%s\n' "$PASSWORD" | $C run --rm -T app bootstrap-admin -email … -name …`, then `$C run --rm app grant|revoke|disable-user|enable-user|show-user …` (LRN-013, [DEVELOPMENT.md](DEVELOPMENT.md#operator-commands-first-administrator-permissions-and-account-status)). Inside the container the audit's operator label is the container user and hostname, not the person who ran the command.
 
+## App memory
+
+`LEARNOO_APP_MEMORY` (EXAMPLE `512m`) is the app container's hard memory limit. Image uploads are what need memory; the budget and its measurements are in [measurements/upload-memory.md](measurements/upload-memory.md):
+
+- `serve` reads the container's cgroup memory limit at start-up and sets the Go memory limit (`GOMEMLIMIT`) to three quarters of it (384 MiB for 512 MiB), so the garbage collector works harder before the process reaches the container limit instead of letting the heap grow to twice its live size. The log shows `Go memory limit set from the container limit`. An explicit `GOMEMLIMIT` in the app's environment takes precedence; without a container limit (local development) none is set.
+- At most one image is decoded at a time, the decode estimate is capped at 192 MiB and the stored image at 16 MiB, and at most 4 uploads hold a body or a finished image at once. The computed worst case is about 320 MiB of Go heap (one decode, its output buffer, the other three uploads' bodies or finished images, the idle server), below the 384 MiB Go limit; the largest live heap left after a collection under load was 157 MiB and the container stayed within 512 MiB in every run (figures in the measurements). 512 MiB is therefore the smallest app limit to use; `serve` logs a warning below it. It was measured with Docker Desktop's Linux VM (one CPU, swap disabled), not on the shared server: the infrastructure maintainer still decides the value, and should watch for the container memory limit being hit (Monitoring below).
+
 ## Client addresses behind the proxy
 
 The per-address throttles (login, invitations, error reports) key on the client address from `auth.ClientAddr`, which `internal/clientip` resolves once per request:

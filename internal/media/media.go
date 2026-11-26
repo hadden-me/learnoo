@@ -2,16 +2,17 @@
 // immutable, content-addressed files.
 //
 // Process accepts PNG, JPEG and WebP only (HEIC/HEIF is recognized and
-// rejected with ErrUnsupportedHEIC). The type is detected from magic bytes,
-// never from a filename or client Content-Type. Data after the image's own end
-// marker (polyglot payloads) is rejected, except the structurally validated
-// phone-photo structures after a JPEG's EOI described in jpeg.go, which are
-// dropped. Size and dimension limits are checked before the full decode, JPEG
-// EXIF orientation is applied, and the decoded pixels are re-encoded so that
-// stored bytes carry no metadata (EXIF, GPS, XMP, text chunks, ICC
-// profiles). WebP is decoded with golang.org/x/image/webp and stored as
-// lossless PNG because the standard library has no WebP encoder. See
-// docs/DECISIONS.md ("Media upload limits").
+// rejected with ErrUnsupportedHEIC, CMYK JPEGs with ErrUnsupportedCMYK). The
+// type is detected from magic bytes, never from a filename or client
+// Content-Type. Data after the image's own end marker (polyglot payloads) is
+// rejected, except the structurally validated phone-photo structures after a
+// JPEG's EOI described in jpeg.go, which are dropped. Size and dimension
+// limits and the decode memory estimate (cost.go) are checked before the full
+// decode, JPEG EXIF orientation is applied, and the decoded pixels are
+// re-encoded so that stored bytes carry no metadata (EXIF, GPS, XMP, text
+// chunks, ICC profiles). WebP is decoded with golang.org/x/image/webp and
+// stored as lossless PNG because the standard library has no WebP encoder.
+// See docs/DECISIONS.md ("Media upload limits").
 package media
 
 import (
@@ -39,14 +40,24 @@ const (
 	MaxUploadBytes = 5 << 20
 	// MaxSide is the largest accepted width or height in pixels.
 	MaxSide = 4096
-	// MaxPixels is the largest accepted width*height (16 megapixels). Within
-	// these limits one Process call can still allocate about 250 MB in total
-	// (measured: ~246 MB for a 132 KB 16-bit 4000x4000 PNG, ~230 MB for a
-	// progressive 4:4:4 JPEG), hence MaxConcurrentDecodes.
+	// MaxPixels is the largest accepted width*height (16 megapixels).
 	MaxPixels = 16_000_000
+	// MaxDecodeBytes bounds the memory one Process call may allocate for
+	// decoding and orienting, as estimated from the headers before the full
+	// decode (cost.go). Ordinary phone photos need under 90 MiB; images above
+	// the bound (for example large progressive JPEGs without chroma
+	// subsampling) are rejected with ErrTooComplex. See
+	// docs/measurements/upload-memory.md.
+	MaxDecodeBytes = 192 << 20
+	// MaxEncodedBytes bounds the re-encoded (stored) image. Larger results,
+	// for example a big detailed photo uploaded as WebP and stored as
+	// lossless PNG, are rejected with ErrTooComplex.
+	MaxEncodedBytes = 16 << 20
 	// MaxConcurrentDecodes caps how many Process calls decode and re-encode at
-	// once in this process, bounding decode memory to about 500 MB.
-	MaxConcurrentDecodes = 2
+	// once in this process. One decode keeps the process within its memory
+	// budget (docs/measurements/upload-memory.md); with the example limit of
+	// one CPU, a second concurrent decode would not be faster anyway.
+	MaxConcurrentDecodes = 1
 	// JPEGQuality is the fixed quality used when re-encoding JPEG uploads.
 	JPEGQuality = 90
 )
@@ -72,6 +83,13 @@ var (
 	// ErrUnsupportedHEIC is a HEIC/HEIF photo. It also matches
 	// ErrUnsupportedType; callers that can, explain how to export JPEG.
 	ErrUnsupportedHEIC = fmt.Errorf("%w: HEIC/HEIF is not supported", ErrUnsupportedType)
+	// ErrUnsupportedCMYK is a four-component (CMYK or YCCK) JPEG, as print
+	// workflows produce. It also matches ErrUnsupportedType.
+	ErrUnsupportedCMYK = fmt.Errorf("%w: CMYK JPEG is not supported", ErrUnsupportedType)
+	// ErrTooComplex is an image within the size limits whose decoding would
+	// need more than MaxDecodeBytes, or whose re-encoded form would exceed
+	// MaxEncodedBytes.
+	ErrTooComplex = errors.New("media: image needs too much memory to process")
 )
 
 // decodeSlots is the process-wide semaphore behind MaxConcurrentDecodes.
@@ -133,10 +151,12 @@ var (
 
 // inspection is what the structural check found: the image's own bytes are
 // b[:end] (a JPEG may be followed by validated structures that are dropped),
-// and orientation is the EXIF orientation to apply (1 = as stored).
+// orientation is the EXIF orientation to apply (1 = as stored), and jpeg the
+// primary JPEG's frame information for the decode cost.
 type inspection struct {
 	end         int
 	orientation int
+	jpeg        *jpegFrame
 }
 
 // whole adapts a check for formats whose image must fill the upload.
@@ -167,9 +187,12 @@ func sniff(b []byte) (format, bool) {
 // or application/octet-stream counts as undeclared; any other value must name
 // the detected type.
 //
-// Decoding waits for one of MaxConcurrentDecodes slots; if ctx ends first,
-// Process returns ctx.Err(). Reading the upload happens before that wait, so
-// callers must still bound request bodies and concurrent uploads.
+// Images whose decoding would need more than MaxDecodeBytes, or whose
+// re-encoded form would exceed MaxEncodedBytes, are rejected with
+// ErrTooComplex. Decoding waits for one of MaxConcurrentDecodes slots; if ctx
+// ends first, Process returns ctx.Err(). Reading the upload happens before
+// that wait, so callers must still bound request bodies and concurrent
+// uploads.
 func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, error) {
 	raw, err := io.ReadAll(io.LimitReader(r, MaxUploadBytes+1))
 	if err != nil {
@@ -214,6 +237,13 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 	if err := checkDimensions(orientedSize(cfg.Width, cfg.Height, ins.orientation)); err != nil {
 		return nil, err
 	}
+	cost, err := decodeCost(f, data, cfg, ins)
+	if err != nil {
+		return nil, err
+	}
+	if cost > MaxDecodeBytes {
+		return nil, fmt.Errorf("%w: decoding needs about %d MiB (at most %d)", ErrTooComplex, cost>>20, MaxDecodeBytes>>20)
+	}
 
 	if err := acquireSlot(ctx); err != nil {
 		return nil, err
@@ -230,7 +260,7 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 	img = orient(img, ins.orientation)
 	b := img.Bounds()
 
-	var out bytes.Buffer
+	out := limitedBuffer{max: encodedLimit}
 	stored := ContentTypePNG
 	switch f.contentType {
 	case ContentTypeJPEG:
@@ -239,20 +269,60 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 	default: // PNG, and WebP stored as lossless PNG.
 		err = (&png.Encoder{CompressionLevel: png.DefaultCompression}).Encode(&out, img)
 	}
+	if errors.Is(err, errEncodedTooLarge) {
+		return nil, fmt.Errorf("%w: re-encoded image exceeds %d MiB", ErrTooComplex, MaxEncodedBytes>>20)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("media: re-encode: %w", err)
 	}
 
-	sum := sha256.Sum256(out.Bytes())
+	// The buffer may have up to twice the capacity it needs; keep only the
+	// bytes, since the asset is held through storage and recording.
+	canonical := out.buf.Bytes()
+	if cap(canonical)-len(canonical) > len(canonical)/8 {
+		canonical = bytes.Clone(canonical)
+	}
+	sum := sha256.Sum256(canonical)
 	return &Asset{
 		processed:   true,
-		data:        out.Bytes(),
+		data:        canonical,
 		sha256:      hex.EncodeToString(sum[:]),
 		contentType: stored,
 		sourceType:  f.contentType,
 		width:       b.Dx(),
 		height:      b.Dy(),
 	}, nil
+}
+
+// decodeCost estimates the decode allocations of the image (cost.go).
+func decodeCost(f format, data []byte, cfg image.Config, ins inspection) (int64, error) {
+	switch f.contentType {
+	case ContentTypeJPEG:
+		return jpegCost(ins.jpeg, cfg.Width, cfg.Height, ins.orientation)
+	case ContentTypePNG:
+		return pngCost(data, cfg.Width, cfg.Height)
+	default:
+		return webpCost(data, cfg.Width, cfg.Height), nil
+	}
+}
+
+var errEncodedTooLarge = errors.New("media: re-encoded image too large")
+
+// encodedLimit is MaxEncodedBytes; tests lower it.
+var encodedLimit = MaxEncodedBytes
+
+// limitedBuffer collects encoder output up to max bytes. It has only Write,
+// so encoders cannot bypass the limit through other bytes.Buffer methods.
+type limitedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.buf.Len()+len(p) > b.max {
+		return 0, errEncodedTooLarge
+	}
+	return b.buf.Write(p)
 }
 
 func acquireSlot(ctx context.Context) error {

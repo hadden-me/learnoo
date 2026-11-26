@@ -63,10 +63,11 @@ type jpegScan struct {
 	end         int  // offset just past EOI
 	frame, scan bool // saw a SOF and an SOS segment
 	// Collected for the primary image only.
-	exif [][]byte // APP1 Exif payloads, after the identifier
-	xmp  [][]byte // APP1 standard XMP packets, after the identifier
-	mpf  []int    // absolute offsets of APP2 MPF segments' TIFF headers
-	app2 [][]byte // the matching MPF payloads, from the TIFF header on
+	exif [][]byte  // APP1 Exif payloads, after the identifier
+	xmp  [][]byte  // APP1 standard XMP packets, after the identifier
+	mpf  []int     // absolute offsets of APP2 MPF segments' TIFF headers
+	app2 [][]byte  // the matching MPF payloads, from the TIFF header on
+	hdr  jpegFrame // frame header, JFIF and Adobe segments (cost.go)
 }
 
 // walkJPEG walks the marker segments and entropy-coded data of the JPEG that
@@ -110,11 +111,18 @@ func walkJPEG(b []byte, collect bool) (jpegScan, error) {
 			return s, fmt.Errorf("%w: jpeg segment length invalid", ErrCorrupt)
 		}
 		payload := b[pos+2 : pos+length]
-		if m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC {
+		isSOF := m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC
+		if isSOF {
 			s.frame = true
 		}
 		if collect {
 			switch {
+			case isSOF:
+				s.hdr.parseSOF(m, payload)
+			case m == 0xE0 && len(payload) >= 5:
+				s.hdr.jfif = string(payload[:5]) == "JFIF\x00"
+			case m == 0xEE && len(payload) >= 12 && string(payload[:5]) == "Adobe":
+				s.hdr.adobe, s.hdr.transform = true, payload[11]
 			case m == 0xE1 && bytes.HasPrefix(payload, exifID):
 				s.exif = append(s.exif, payload[len(exifID):])
 			case m == 0xE1 && bytes.HasPrefix(payload, xmpID):
@@ -160,7 +168,7 @@ func inspectJPEG(b []byte) (inspection, error) {
 	if err := checkJPEGTrailer(b, s); err != nil {
 		return inspection{}, err
 	}
-	return inspection{end: s.end, orientation: exifOrientation(s.exif)}, nil
+	return inspection{end: s.end, orientation: exifOrientation(s.exif), jpeg: &s.hdr}, nil
 }
 
 type partKind int

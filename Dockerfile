@@ -43,6 +43,9 @@ USER 65532:65532
 # opt-in, and publishes the port only to the reverse proxy's address.
 ENV LEARNOO_MEDIA_DIR=/var/lib/learnoo/media
 ENV LEARNOO_STUDIO_DIR=/opt/learnoo/studio
+# No GOMEMLIMIT here: `serve` derives it from the container's memory limit
+# (three quarters of it; docs/DEPLOYMENT.md, "App memory"). Setting
+# GOMEMLIMIT in the environment overrides that.
 EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["/usr/local/bin/learnoo-server", "probe", "-path", "/healthz"]

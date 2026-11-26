@@ -150,6 +150,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    # serve sets GOMEMLIMIT to three quarters of the memory limit; 512m is
+    # the measured minimum for image uploads (docs/DEPLOYMENT.md, "App memory").
     deploy:
       resources:
         limits:

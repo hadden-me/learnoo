@@ -46,7 +46,7 @@ const MaxLessonBody = 256 << 10
 // MaxConcurrentUploads bounds uploads being read or processed at once in this
 // process, so at most this many request bodies (each at most
 // media.MaxUploadBytes) are held in memory. Decoding is further limited to
-// media.MaxConcurrentDecodes.
+// media.MaxConcurrentDecodes (one).
 const MaxConcurrentUploads = 4
 
 // UploadSlotWait is how long an upload waits for a free slot before the

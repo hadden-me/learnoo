@@ -18,8 +18,9 @@ func orientedSize(w, h, o int) (int, int) {
 // orientation o (1 to 8); for 1 or any other value it returns img unchanged.
 // The result is a new image of the same pixel count: *image.Gray for
 // grayscale input, *image.RGBA otherwise. The JPEG decoder's output types
-// (*image.YCbCr, *image.Gray, *image.CMYK) are read directly from their pixel
-// buffers, without per-pixel allocations.
+// (*image.YCbCr, *image.Gray, and *image.RGBA for JPEGs stored as RGB) are
+// read directly from their pixel buffers, without per-pixel allocations.
+// (Four-component JPEGs are rejected before decoding; see jpegCost.)
 func orient(img image.Image, o int) image.Image {
 	if o < 2 || o > 8 {
 		return img
@@ -70,16 +71,13 @@ func orient(img image.Image, o int) image.Image {
 			}
 		}
 		return dst
-	case *image.CMYK: // Adobe CMYK JPEGs
+	case *image.RGBA: // JPEGs stored as RGB
 		dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
 		for y := 0; y < h; y++ {
 			row := src.Pix[src.PixOffset(b.Min.X, b.Min.Y+y):]
 			for x := 0; x < w; x++ {
-				p := row[4*x : 4*x+4 : 4*x+4]
-				r, g, bl := color.CMYKToRGB(p[0], p[1], p[2], p[3])
 				dx, dy := to(x, y)
-				i := dst.PixOffset(dx, dy)
-				dst.Pix[i], dst.Pix[i+1], dst.Pix[i+2], dst.Pix[i+3] = r, g, bl, 0xFF
+				copy(dst.Pix[dst.PixOffset(dx, dy):][:4], row[4*x:4*x+4])
 			}
 		}
 		return dst
