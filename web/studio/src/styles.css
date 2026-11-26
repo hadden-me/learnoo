@@ -188,3 +188,37 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .status.error, .errors { color: var(--learnoo-color-danger); }
 .errors { margin: var(--learnoo-space-2) 0 0; padding-inline-start: var(--learnoo-space-5); }
 .json-output pre { max-height: 20rem; overflow: auto; background: var(--learnoo-color-surface-subtle); padding: var(--learnoo-space-2); font-size: var(--learnoo-text-caption); }
+
+/* Courses (LMS-B05): the course editor reuses the lesson editor's bar, panels, banners and buttons.
+   Ordering is done with buttons, never drag; no animation. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.course-editor .course-section { margin-block-start: var(--learnoo-space-4); }
+.course-editor .course-section > h2 { margin-block-start: 0; }
+.problems:focus { outline: none; }
+.problems:focus-visible { outline: 3px solid var(--learnoo-color-focus); }
+.placement-list, .module-list, .step-list, .picker-results { list-style: none; padding: 0; margin: var(--learnoo-space-3) 0; display: grid; gap: var(--learnoo-space-3); }
+.placement { padding: var(--learnoo-space-2) var(--learnoo-space-3); border: 1px solid var(--learnoo-color-border); border-inline-start-width: 4px; border-radius: var(--learnoo-radius-control); }
+.placement p { margin: 0 0 var(--learnoo-space-1); overflow-wrap: anywhere; }
+.placement.carried { border-inline-start-color: var(--learnoo-color-control-border); border-style: dashed; }
+.placement.flagged { border-color: var(--learnoo-color-danger); background: var(--learnoo-color-danger-soft); }
+.placement-picker { border: 1px solid var(--learnoo-color-border); border-radius: var(--learnoo-radius-control); padding: var(--learnoo-space-3); margin: var(--learnoo-space-3) 0 0; min-width: 0; }
+.placement-picker legend { font-weight: var(--learnoo-weight-emphasis); }
+.module { padding: var(--learnoo-space-3); border: 1px solid var(--learnoo-color-border); border-radius: var(--learnoo-radius-control); background: var(--learnoo-color-surface-subtle); min-width: 0; }
+.module h3 { margin: 0 0 var(--learnoo-space-2); font-size: var(--learnoo-text-body); overflow-wrap: anywhere; }
+.module > .actions { margin-block-end: var(--learnoo-space-3); }
+.step { padding: var(--learnoo-space-2) var(--learnoo-space-3); background: var(--learnoo-color-surface); border: 1px solid var(--learnoo-color-border); border-inline-start: 4px solid var(--learnoo-color-brand); border-radius: var(--learnoo-radius-control); min-width: 0; }
+.step .fields { margin-block-end: var(--learnoo-space-1); }
+.step .lesson-context { margin-block-end: var(--learnoo-space-1); }
+.step-list { margin-block: var(--learnoo-space-2) var(--learnoo-space-3); }
+.step-warning { margin: 0 0 var(--learnoo-space-2); padding: var(--learnoo-space-1) var(--learnoo-space-2); background: var(--learnoo-color-warning-background); color: var(--learnoo-color-warning-text); border-radius: var(--learnoo-radius-control); }
+.move-to select { width: auto; max-width: 100%; }
+.add-module { display: flex; flex-wrap: wrap; align-items: end; gap: var(--learnoo-space-2) var(--learnoo-space-3); }
+.add-module .fields { flex: 1 1 16rem; margin: 0; }
+.cover { margin-block-start: var(--learnoo-space-3); }
+.cover legend { font-weight: var(--learnoo-weight-emphasis); }
+.picker-search .actions { flex-wrap: nowrap; }
+.picker-search input { flex: 1 1 auto; min-width: 0; }
+.picker-results { gap: var(--learnoo-space-1); max-height: 16rem; overflow-y: auto; }
+.picker-results button { width: 100%; text-align: start; padding-block: var(--learnoo-space-1); overflow-wrap: anywhere; }
+.picked { margin-block-start: var(--learnoo-space-3); padding-block-start: var(--learnoo-space-3); border-block-start: 1px solid var(--learnoo-color-border); }
+.picked p { margin: 0; }

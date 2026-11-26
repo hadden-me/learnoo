@@ -14,6 +14,10 @@ import { findUserRecovery, purgeRecovery, RECOVERY_MAX_AGE_MS, suspendRecovery }
 import { LessonList } from './pages/LessonList';
 import { NewLesson } from './pages/NewLesson';
 import { EditorPage } from './pages/EditorPage';
+import { CourseList } from './pages/CourseList';
+import { NewCourse } from './pages/NewCourse';
+import { CourseEditorPage } from './pages/CourseEditorPage';
+import { findUserCourseRecovery, purgeCourseRecovery } from './courses/courseRecovery';
 import { discoverSpaces, type Spaces } from './spaces';
 import { SpaceNav, StudioHome, editorialPage } from './editorial/spacesUi';
 import { isEditorialRoute } from './editorialRoutes';
@@ -62,6 +66,7 @@ export function App() {
     window.addEventListener('focus', recheck);
     // Recovery copies are short-lived crash protection: forget old ones.
     purgeRecovery(localStorage, { olderThan: new Date(Date.now() - RECOVERY_MAX_AGE_MS) });
+    purgeCourseRecovery(localStorage, { olderThan: new Date(Date.now() - RECOVERY_MAX_AGE_MS) });
     (async () => {
       try {
         const session = await api.session();
@@ -112,7 +117,7 @@ export function App() {
             },
           ]}
         >
-          <p>Des modifications ne sont pas enregistrées sur le serveur. Une copie de secours reste sur cet appareil et vous sera proposée à la prochaine ouverture de la leçon.</p>
+          <p>Des modifications ne sont pas enregistrées sur le serveur. Une copie de secours reste sur cet appareil et vous sera proposée à la prochaine ouverture de la leçon ou du cours.</p>
         </Dialog>
       )}
     </StudioContext.Provider>
@@ -141,6 +146,7 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
     // Shared devices: this account's unsaved-edit copies do not outlive its session.
     suspendRecovery();
     purgeRecovery(localStorage, { userId });
+    purgeCourseRecovery(localStorage, { userId });
     allowUnload();
     location.assign('/login');
   }, [studio.api, userId]);
@@ -151,6 +157,9 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   else if (route.name === 'lessons') page = <LessonList />;
   else if (route.name === 'new') page = <NewLesson />;
   else if (route.name === 'edit') page = <EditorPage key={route.lessonId} lessonId={route.lessonId} />;
+  else if (route.name === 'courses') page = <CourseList />;
+  else if (route.name === 'newCourse') page = <NewCourse />;
+  else if (route.name === 'course') page = <CourseEditorPage key={route.courseId} courseId={route.courseId} />;
   else page = <NotFound />;
 
   return (
@@ -168,13 +177,18 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
               Mes leçons
             </Link>
           )}
+          {studio.isAuthor && (
+            <Link to={`${BASE}/courses`} current={route.name === 'courses' || route.name === 'newCourse' || route.name === 'course'}>
+              Mes cours
+            </Link>
+          )}
           <SpaceNav spaces={studio.spaces} route={route} />
         </nav>
         <div className="account">
           <span className="who">{studio.session.user.displayName}</span>
           <button
             type="button"
-            onClick={() => (hasBlockingGuard() || findUserRecovery(localStorage, userId).length > 0 ? setSigningOut('ask') : void signOut())}
+            onClick={() => (hasBlockingGuard() || findUserRecovery(localStorage, userId).length > 0 || findUserCourseRecovery(localStorage, userId).length > 0 ? setSigningOut('ask') : void signOut())}
             disabled={signingOut === 'busy'}
           >
             Se déconnecter

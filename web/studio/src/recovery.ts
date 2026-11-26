@@ -78,6 +78,8 @@ let suspended = false;
 export const suspendRecovery = () => {
   suspended = true;
 };
+/** Also honoured by the course draft copies (courses/courseRecovery.ts). */
+export const isRecoverySuspended = () => suspended;
 
 export function writeRecovery(
   storage: Storage,
