@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -250,11 +251,32 @@ func (s *Store) syncDir(dir string) error {
 
 // matches reports whether the file at rel exists with exactly data.
 func (s *Store) matches(rel string, data []byte) (bool, error) {
-	existing, err := s.root.ReadFile(rel)
+	// Compared in chunks rather than read whole: the file may predate the
+	// stored-size limit, and this runs while upload slots are held.
+	f, err := s.root.Open(rel)
 	if err != nil {
 		return false, err
 	}
-	return bytes.Equal(existing, data), nil
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if fi.Size() != int64(len(data)) {
+		return false, nil
+	}
+	buf := make([]byte, 32<<10)
+	for off := 0; off < len(data); {
+		n, err := io.ReadFull(f, buf[:min(len(buf), len(data)-off)])
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(buf[:n], data[off:off+n]) {
+			return false, nil
+		}
+		off += n
+	}
+	return true, nil
 }
 
 // CheckWritable reports whether the store directory is currently writable

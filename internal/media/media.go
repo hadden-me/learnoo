@@ -276,10 +276,16 @@ func Process(ctx context.Context, r io.Reader, declaredType string) (*Asset, err
 		return nil, fmt.Errorf("media: re-encode: %w", err)
 	}
 
-	sum := sha256.Sum256(out.buf.Bytes())
+	// The buffer may have up to twice the capacity it needs; keep only the
+	// bytes, since the asset is held through storage and recording.
+	canonical := out.buf.Bytes()
+	if cap(canonical)-len(canonical) > len(canonical)/8 {
+		canonical = bytes.Clone(canonical)
+	}
+	sum := sha256.Sum256(canonical)
 	return &Asset{
 		processed:   true,
-		data:        out.buf.Bytes(),
+		data:        canonical,
 		sha256:      hex.EncodeToString(sum[:]),
 		contentType: stored,
 		sourceType:  f.contentType,
@@ -296,7 +302,7 @@ func decodeCost(f format, data []byte, cfg image.Config, ins inspection) (int64,
 	case ContentTypePNG:
 		return pngCost(data, cfg.Width, cfg.Height)
 	default:
-		return webpCost(cfg.Width, cfg.Height), nil
+		return webpCost(data, cfg.Width, cfg.Height), nil
 	}
 }
 
