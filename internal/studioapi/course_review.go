@@ -65,6 +65,8 @@ func (h *Handlers) registerCourseReview(mux *http.ServeMux) {
 	chain("DELETE /api/admin/course-revisions/{revisionId}", admin, h.adminDiscardCourseDraft)
 	chain("GET /api/admin/courses/archive-requests", admin, h.archiveRequests)
 	chain("GET /api/admin/courses/blocked-reviews", admin, h.blockedReviews)
+	chain("GET /api/admin/courses", admin, h.adminCourses)
+	chain("GET /api/admin/courses/{courseId}", admin, h.adminCourse)
 }
 
 // ---- JSON ----
@@ -106,11 +108,25 @@ func toBlockedJSON(b *courses.Blocked) *blockedJSON {
 	return &blockedJSON{Reason: "no_eligible_reviewer", Details: toProblemsJSON(b.Reasons, true)}
 }
 
-func toCourseDecisionJSON(d *courses.Decision) *decisionJSON {
+// courseDecisionJSON is a course review decision: the lesson decision
+// object with the reviewer's display name (authors see who reviewed them,
+// LMS_PRODUCT_SPEC §8).
+type courseDecisionJSON struct {
+	decisionJSON
+	ReviewerName string `json:"reviewerName"`
+}
+
+func toCourseDecisionJSON(d *courses.Decision) *courseDecisionJSON {
 	if d == nil {
 		return nil
 	}
-	return &decisionJSON{Action: d.Action, ReviewerID: d.ReviewerID, Comment: d.Comment, DecidedAt: d.DecidedAt}
+	return &courseDecisionJSON{decisionJSON{Action: d.Action, ReviewerID: d.ReviewerID, Comment: d.Comment, DecidedAt: d.DecidedAt}, d.ReviewerName}
+}
+
+type earlierDecisionJSON struct {
+	RevisionID int64 `json:"revisionId"`
+	Number     int   `json:"number"`
+	courseDecisionJSON
 }
 
 type ineligibleStepJSON struct {
@@ -343,6 +359,8 @@ type stepChangeJSON struct {
 	PreviousTitle          *string          `json:"previousTitle"`
 	StructureChanged       bool             `json:"structureChanged"`
 	Diff                   *contentDiffJSON `json:"diff"`
+	Eligible               bool             `json:"eligible"`
+	Content                json.RawMessage  `json:"content"`
 }
 
 func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +379,10 @@ func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) 
 			RevisionID: s.RevisionID, RevisionNumber: s.RevisionNumber, Change: s.Change,
 			PreviousRevisionID: s.PreviousRevisionID, PreviousRevisionNumber: s.PreviousRevisionNumber,
 			PreviousModuleKey: s.PreviousModuleKey, PreviousPosition: s.PreviousPosition, PreviousTitle: s.PreviousTitle,
-			StructureChanged: s.StructureChanged}
+			StructureChanged: s.StructureChanged, Eligible: s.Eligible, Content: s.Content}
+		if s.Content == nil {
+			steps[i].Content = json.RawMessage("null")
+		}
 		if d := s.Diff; d != nil {
 			dj := &contentDiffJSON{Fields: []fieldChangeJSON{}, Blocks: []blockChangeJSON{}}
 			for _, f := range d.Fields {
@@ -377,14 +398,20 @@ func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) 
 	for i, s := range p.Removed {
 		removed[i] = ineligibleStepJSON{ModuleKey: s.ModuleKey, Position: s.Position, Title: s.Title, LessonID: s.LessonID, RevisionID: s.RevisionID}
 	}
+	earlier := make([]earlierDecisionJSON, len(p.Earlier))
+	for i, e := range p.Earlier {
+		d := e.Decision
+		earlier[i] = earlierDecisionJSON{RevisionID: e.RevisionID, Number: e.Number, courseDecisionJSON: *toCourseDecisionJSON(&d)}
+	}
 	writeJSON(w, http.StatusOK, struct {
-		Revision        courseRevisionJSON    `json:"revision"`
-		Eligible        bool                  `json:"eligible"`
-		Problems        []reviewerProblemJSON `json:"problems"`
-		MetadataChanged bool                  `json:"metadataChanged"`
-		Steps           []stepChangeJSON      `json:"steps"`
-		RemovedSteps    []ineligibleStepJSON  `json:"removedSteps"`
-	}{toCourseRevisionJSON(p.Revision), p.Eligible, toProblemsJSON(p.Problems, false), p.MetadataChanged, steps, removed})
+		Revision         courseRevisionJSON    `json:"revision"`
+		Eligible         bool                  `json:"eligible"`
+		Problems         []reviewerProblemJSON `json:"problems"`
+		MetadataChanged  bool                  `json:"metadataChanged"`
+		Steps            []stepChangeJSON      `json:"steps"`
+		RemovedSteps     []ineligibleStepJSON  `json:"removedSteps"`
+		EarlierDecisions []earlierDecisionJSON `json:"earlierDecisions"`
+	}{toCourseRevisionJSON(p.Revision), p.Eligible, toProblemsJSON(p.Problems, false), p.MetadataChanged, steps, removed, earlier})
 }
 
 func (h *Handlers) approveCourse(w http.ResponseWriter, r *http.Request) {
@@ -770,4 +797,118 @@ func writeCourseWorkflowError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// ---- administrator reads (LMS-B06) ----
+
+type adminCourseJSON struct {
+	courseJSON
+	OwnerName string `json:"ownerName"`
+	Title     string `json:"title"`
+}
+
+func toAdminCourseJSON(a courses.AdminCourse) adminCourseJSON {
+	out := adminCourseJSON{courseJSON: toCourseJSON(a.Course), OwnerName: a.OwnerName, Title: a.Title}
+	if l := a.Latest; l != nil {
+		out.LatestRevision = &courseRevisionSummaryJSON{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title,
+			Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn}
+	}
+	return out
+}
+
+func (h *Handlers) adminCourses(w http.ResponseWriter, r *http.Request) {
+	var before int64
+	for key, vals := range r.URL.Query() {
+		c, ok := int64(0), key == "cursor" && len(vals) == 1
+		if ok {
+			c, ok = parseID(vals[0])
+		}
+		if !ok {
+			badRequest(w, "The only query parameter is an optional cursor (the nextCursor of a previous page).")
+			return
+		}
+		before = c
+	}
+	list, next, err := h.Courses.AdminCourses(r.Context(), actor(r), before)
+	if err != nil {
+		h.writeCourseError(w, "admin courses", err)
+		return
+	}
+	out := make([]adminCourseJSON, len(list))
+	for i, a := range list {
+		out[i] = toAdminCourseJSON(a)
+	}
+	var cursor *string
+	if next != nil {
+		c := strconv.FormatInt(*next, 10)
+		cursor = &c
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"courses": out, "nextCursor": cursor})
+}
+
+type adminRevisionJSON struct {
+	ID            int64               `json:"id"`
+	Number        int                 `json:"number"`
+	Status        courses.Status      `json:"status"`
+	Kind          string              `json:"kind"`
+	Title         string              `json:"title"`
+	AuthorID      int64               `json:"authorId"`
+	AuthorName    string              `json:"authorName"`
+	UpdatedAt     time.Time           `json:"updatedAt"`
+	SubmittedAt   *time.Time          `json:"submittedAt"`
+	WithdrawnAt   *time.Time          `json:"withdrawnAt"`
+	EverPublished bool                `json:"everPublished"`
+	Review        *courseDecisionJSON `json:"review"`
+}
+
+type coursePointerEventJSON struct {
+	coursePointerJSON
+	ActorName string `json:"actorName"`
+}
+
+type namedLifecycleJSON struct {
+	lifecycleJSON
+	ActorName string `json:"actorName"`
+}
+
+type accountJSON struct {
+	ID          int64  `json:"id"`
+	DisplayName string `json:"displayName"`
+}
+
+func (h *Handlers) adminCourse(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "courseId")
+	if !ok || !noQuery(w, r) {
+		return
+	}
+	d, err := h.Courses.AdminCourseByID(r.Context(), actor(r), id)
+	if err != nil {
+		h.writeCourseError(w, "admin course", err)
+		return
+	}
+	revs := make([]adminRevisionJSON, len(d.Revisions))
+	for i, x := range d.Revisions {
+		revs[i] = adminRevisionJSON{ID: x.ID, Number: x.Number, Status: x.Status, Kind: x.Kind, Title: x.Title, AuthorID: x.AuthorID,
+			AuthorName: x.AuthorName, UpdatedAt: x.UpdatedAt, SubmittedAt: x.SubmittedAt, WithdrawnAt: x.WithdrawnAt,
+			EverPublished: x.EverPublished, Review: toCourseDecisionJSON(x.Decision)}
+	}
+	history := make([]coursePointerEventJSON, len(d.History))
+	for i, e := range d.History {
+		history[i] = coursePointerEventJSON{toCoursePointerJSON(e.PointerChange), e.ActorName}
+	}
+	events := make([]namedLifecycleJSON, len(d.Lifecycle))
+	for i, e := range d.Lifecycle {
+		events[i] = namedLifecycleJSON{toLifecycleJSON(e.LifecycleEvent), e.ActorName}
+	}
+	authors := make([]accountJSON, len(d.Authors))
+	for i, a := range d.Authors {
+		authors[i] = accountJSON{a.ID, a.Name}
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Course    adminCourseJSON          `json:"course"`
+		Revisions []adminRevisionJSON      `json:"revisions"`
+		History   []coursePointerEventJSON `json:"history"`
+		Lifecycle []namedLifecycleJSON     `json:"lifecycle"`
+		Authors   []accountJSON            `json:"authors"`
+	}{toAdminCourseJSON(d.AdminCourse), revs, history, events, authors})
 }

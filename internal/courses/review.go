@@ -313,6 +313,11 @@ type StepChange struct {
 	PreviousTitle          *string
 	StructureChanged       bool
 	Diff                   *ContentDiff
+	// Eligible: the pinned lesson revision is eligible now
+	// (course_step_revision_eligible). Content is its lesson document, set
+	// only then, so a withdrawn or unpublished lesson is never shown.
+	Eligible bool
+	Content  json.RawMessage
 }
 
 // RemovedStep is a step of the comparison revision whose lesson the
@@ -338,6 +343,16 @@ type ReviewPayload struct {
 	// structure (lesson, module, position, title of each step) differ from
 	// the comparison revision (always true without one).
 	MetadataChanged bool
+	// Earlier: the decisions on earlier revisions of the same course,
+	// newest first (the feedback a correction answers).
+	Earlier []EarlierDecision
+}
+
+// EarlierDecision is the review decision on an earlier revision of a course.
+type EarlierDecision struct {
+	RevisionID int64
+	Number     int
+	Decision
 }
 
 // ReviewRevision returns the review payload of a submitted course revision:
@@ -391,7 +406,8 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	rows, err := tx.Query(ctx, `
 		SELECT s.module_key::text, s.position, s.title, s.lesson_id, s.lesson_revision_id, lr.revision_number,
 		       ps.lesson_revision_id, pr.revision_number, lr.content, pr.content,
-		       ps.module_key::text, ps.position, ps.title
+		       ps.module_key::text, ps.position, ps.title,
+		       course_step_revision_eligible(s.lesson_id, s.lesson_revision_id)
 		  FROM course_steps s
 		  JOIN course_modules m ON m.course_revision_id = s.course_revision_id AND m.module_key = s.module_key
 		  JOIN lesson_revisions lr ON lr.id = s.lesson_revision_id
@@ -411,7 +427,7 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 		var x row
 		err := rw.Scan(&x.ModuleKey, &x.Position, &x.Title, &x.LessonID, &x.RevisionID, &x.RevisionNumber,
 			&x.inComparison, &x.PreviousRevisionNumber, &x.content, &x.prev,
-			&x.PreviousModuleKey, &x.PreviousPosition, &x.PreviousTitle)
+			&x.PreviousModuleKey, &x.PreviousPosition, &x.PreviousTitle, &x.Eligible)
 		return x, err
 	})
 	if err != nil {
@@ -420,6 +436,9 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	p.Steps = []StepChange{}
 	for _, x := range list {
 		c := x.StepChange
+		if c.Eligible {
+			c.Content = x.content
+		}
 		c.StructureChanged = x.inComparison != nil &&
 			(*c.PreviousModuleKey != c.ModuleKey || *c.PreviousPosition != c.Position || *c.PreviousTitle != c.Title)
 		switch {
@@ -462,6 +481,27 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	}
 	if p.Removed == nil {
 		p.Removed = []RemovedStep{}
+	}
+	rows, err = tx.Query(ctx, `
+		SELECT r.id, r.revision_number, d.action, d.reviewer_id, u.display_name, d.comment, d.decided_at
+		  FROM course_revisions r
+		  JOIN course_review_decisions d ON d.revision_id = r.id
+		  JOIN users u ON u.id = d.reviewer_id
+		 WHERE r.course_id = $1 AND r.revision_number < $2
+		 ORDER BY r.revision_number DESC`, r.CourseID, r.Number)
+	if err != nil {
+		return err
+	}
+	p.Earlier, err = pgx.CollectRows(rows, func(rw pgx.CollectableRow) (EarlierDecision, error) {
+		var x EarlierDecision
+		err := rw.Scan(&x.RevisionID, &x.Number, &x.Action, &x.ReviewerID, &x.ReviewerName, &x.Comment, &x.DecidedAt)
+		return x, err
+	})
+	if err != nil {
+		return err
+	}
+	if p.Earlier == nil {
+		p.Earlier = []EarlierDecision{}
 	}
 	return tx.QueryRow(ctx, `
 		SELECT c.id IS NULL

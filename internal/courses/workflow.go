@@ -67,10 +67,11 @@ func (e *IneligibleError) Is(target error) bool { return target == ErrIneligible
 
 // Decision is a review decision on a course revision.
 type Decision struct {
-	Action     string
-	ReviewerID int64
-	Comment    *string
-	DecidedAt  time.Time
+	Action       string
+	ReviewerID   int64
+	ReviewerName string
+	Comment      *string
+	DecidedAt    time.Time
 }
 
 // Blocked describes a revision in review that no active reviewer of its
@@ -109,8 +110,9 @@ func (s *Store) tx(ctx context.Context, actor int64, perms []permissions.Permiss
 
 func loadDecision(ctx context.Context, tx pgx.Tx, revisionID int64) (*Decision, error) {
 	var d Decision
-	err := tx.QueryRow(ctx, `SELECT action, reviewer_id, comment, decided_at FROM course_review_decisions WHERE revision_id = $1`,
-		revisionID).Scan(&d.Action, &d.ReviewerID, &d.Comment, &d.DecidedAt)
+	err := tx.QueryRow(ctx, `SELECT d.action, d.reviewer_id, u.display_name, d.comment, d.decided_at
+		FROM course_review_decisions d JOIN users u ON u.id = d.reviewer_id WHERE d.revision_id = $1`,
+		revisionID).Scan(&d.Action, &d.ReviewerID, &d.ReviewerName, &d.Comment, &d.DecidedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

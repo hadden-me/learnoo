@@ -51,6 +51,7 @@ type courseRevisionSummaryJSON struct {
 	Title     string         `json:"title"`
 	Version   int            `json:"version"`
 	UpdatedAt time.Time      `json:"updatedAt"`
+	Withdrawn bool           `json:"withdrawn"`
 }
 
 type courseJSON struct {
@@ -61,6 +62,7 @@ type courseJSON struct {
 	Language            string                     `json:"language"`
 	PublishedRevisionID *int64                     `json:"publishedRevisionId"`
 	Archived            bool                       `json:"archived"`
+	Suspended           bool                       `json:"suspended"`
 	CreatedAt           time.Time                  `json:"createdAt"`
 	LatestRevision      *courseRevisionSummaryJSON `json:"latestRevision,omitempty"`
 }
@@ -115,10 +117,10 @@ type courseRevisionJSON struct {
 	WithdrawnAt       *time.Time     `json:"withdrawnAt"`
 	// The review decision (null until decided) and, for a revision in
 	// review that no active reviewer may decide, why (LMS-B04).
-	Review      *decisionJSON   `json:"review"`
-	Blocked     *blockedJSON    `json:"blocked"`
-	Assignments []placementJSON `json:"assignments"`
-	Modules     []moduleJSON    `json:"modules"`
+	Review      *courseDecisionJSON `json:"review"`
+	Blocked     *blockedJSON        `json:"blocked"`
+	Assignments []placementJSON     `json:"assignments"`
+	Modules     []moduleJSON        `json:"modules"`
 	// Only on POST /api/courses/{id}/drafts.
 	DroppedSteps *[]droppedStepJSON `json:"droppedSteps,omitempty"`
 }
@@ -133,7 +135,7 @@ type droppedStepJSON struct {
 
 func toCourseJSON(c courses.Course) courseJSON {
 	return courseJSON{ID: c.ID, PublicID: c.PublicID, OwnerID: c.OwnerID, SubjectID: c.SubjectID, Language: c.Language,
-		PublishedRevisionID: c.PublishedRevisionID, Archived: c.ArchivedAt != nil, CreatedAt: c.CreatedAt}
+		PublishedRevisionID: c.PublishedRevisionID, Archived: c.ArchivedAt != nil, Suspended: c.Suspended, CreatedAt: c.CreatedAt}
 }
 
 func toCourseRevisionJSON(r courses.Revision) courseRevisionJSON {
@@ -308,7 +310,7 @@ func (h *Handlers) listCourses(w http.ResponseWriter, r *http.Request) {
 		if c.Latest != nil {
 			l := c.Latest
 			out[i].LatestRevision = &courseRevisionSummaryJSON{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title,
-				Version: l.Version, UpdatedAt: l.UpdatedAt}
+				Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn}
 		}
 	}
 	var cursor *string

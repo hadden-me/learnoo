@@ -114,7 +114,14 @@ type Course struct {
 	PublishedRevisionID *int64
 	ArchivedAt          *time.Time
 	CreatedAt           time.Time
+	// Suspended: not archived, no published revision, and the last pointer
+	// change was a suspension (LMS-B04).
+	Suspended bool
 }
+
+// suspendedSQL computes Course.Suspended for the courses row c.
+const suspendedSQL = `(c.published_revision_id IS NULL AND c.archived_at IS NULL AND coalesce((
+	SELECT a.action = 'suspend' FROM course_publication_audit a WHERE a.course_id = c.id ORDER BY a.id DESC LIMIT 1), false))`
 
 // Revision is a stored course revision with its children.
 type Revision struct {
@@ -576,9 +583,10 @@ func (s *Store) CreateCourse(ctx context.Context, actor, subjectID int64, langua
 func loadCourse(ctx context.Context, tx pgx.Tx, id int64) (Course, error) {
 	var c Course
 	err := tx.QueryRow(ctx, `
-		SELECT id, public_id::text, owner_id, subject_id, language, published_revision_id, archived_at, created_at
-		  FROM courses WHERE id = $1`, id).Scan(&c.ID, &c.PublicID, &c.OwnerID, &c.SubjectID, &c.Language,
-		&c.PublishedRevisionID, &c.ArchivedAt, &c.CreatedAt)
+		SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
+		       `+suspendedSQL+`
+		  FROM courses c WHERE c.id = $1`, id).Scan(&c.ID, &c.PublicID, &c.OwnerID, &c.SubjectID, &c.Language,
+		&c.PublishedRevisionID, &c.ArchivedAt, &c.CreatedAt, &c.Suspended)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -599,6 +607,8 @@ type RevisionSummary struct {
 	Title     string
 	Version   int
 	UpdatedAt time.Time
+	// Withdrawn by an administrator (LMS-B04).
+	Withdrawn bool
 }
 
 // Owned pages through the courses actor owns, newest first (by course
@@ -610,9 +620,9 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 	err := s.read(ctx, actor, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
-			       r.id, r.revision_number, r.status, r.title, r.version, r.updated_at
+			       `+suspendedSQL+`, r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL
 			  FROM courses c
-			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at FROM course_revisions
+			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
 			                      WHERE course_id = c.id ORDER BY revision_number DESC LIMIT 1) r ON true
 			 WHERE c.owner_id = $1 AND ($2 = 0 OR c.id < $2)
 			 ORDER BY c.id DESC
@@ -626,10 +636,11 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 			var number, version *int
 			var status, title *string
 			var updated *time.Time
+			var withdrawn *bool
 			err := row.Scan(&o.ID, &o.PublicID, &o.OwnerID, &o.SubjectID, &o.Language, &o.PublishedRevisionID, &o.ArchivedAt,
-				&o.CreatedAt, &id, &number, &status, &title, &version, &updated)
+				&o.CreatedAt, &o.Suspended, &id, &number, &status, &title, &version, &updated, &withdrawn)
 			if err == nil && id != nil {
-				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated}
+				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated, Withdrawn: *withdrawn}
 			}
 			return o, err
 		})
