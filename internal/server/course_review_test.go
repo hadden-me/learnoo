@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/hadden-me/learnoo/internal/curriculum"
@@ -237,6 +238,14 @@ func TestCourseReviewPublicationAPI(t *testing.T) {
 	// lesson): publication is refused with the step.
 	wantStatus(t, "withdraw lesson revision", e.api(admin, http.MethodPost, fmt.Sprintf("/api/revisions/%d/withdraw", lesson2.ID),
 		map[string]any{"reason": "Simulated.", "expectedPublishedRevisionId": lesson2.ID}), http.StatusOK, "")
+	// The review payload no longer carries either side's content: the new
+	// revision is withdrawn and the lesson unpublished.
+	w = e.api(publisher, http.MethodGet, fmt.Sprintf("/api/review/course-revisions/%d", amRev.ID), nil)
+	wantStatus(t, "payload after withdrawal", w, http.StatusOK, "")
+	if body := w.Body.String(); strings.Contains(body, "Simulated text") || strings.Contains(body, "Lesson v2") ||
+		!strings.Contains(body, `"unavailable":true`) || !strings.Contains(body, `"previousUnavailable":true`) || !strings.Contains(body, `"diff":null`) {
+		t.Fatalf("payload leaks unreadable content: %s", body)
+	}
 	w = e.api(publisher, http.MethodPost, revPath(amRev.ID)+"/publish", map[string]any{"expectedPublishedRevisionId": rev.ID})
 	wantStatus(t, "publish ineligible", w, http.StatusConflict, "ineligible")
 	if b := decodeBody[courseErrBody](t, w); len(b.Error.Steps) != 1 || b.Error.Steps[0].LessonID != lesson.LessonID {

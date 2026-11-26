@@ -312,7 +312,13 @@ type StepChange struct {
 	PreviousPosition       *int
 	PreviousTitle          *string
 	StructureChanged       bool
-	Diff                   *ContentDiff
+	// For a replaced step, Unavailable (new pin) and PreviousUnavailable
+	// (previous revision) mark a side that is not readable now (withdrawn,
+	// or its lesson unpublished or archived); Diff is then nil, so no
+	// content of either side is returned.
+	Unavailable         bool
+	PreviousUnavailable bool
+	Diff                *ContentDiff
 	// Eligible: the pinned lesson revision is eligible now
 	// (course_step_revision_eligible). Content is its lesson document, set
 	// only then, so a withdrawn or unpublished lesson is never shown.
@@ -405,11 +411,19 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	r := p.Revision
 	rows, err := tx.Query(ctx, `
 		SELECT s.module_key::text, s.position, s.title, s.lesson_id, s.lesson_revision_id, lr.revision_number,
-		       ps.lesson_revision_id, pr.revision_number, lr.content, pr.content,
+		       ps.lesson_revision_id, pr.revision_number,
+		       -- Content is read only for a side that is readable now: the
+		       -- new pin when eligible, the previous revision when not
+		       -- withdrawn and its lesson is published and not archived.
+		       CASE WHEN course_step_revision_eligible(s.lesson_id, s.lesson_revision_id) THEN lr.content END,
+		       CASE WHEN pr.id IS NOT NULL AND l.published_revision_id IS NOT NULL AND l.archived_at IS NULL
+		                 AND NOT EXISTS (SELECT 1 FROM revision_withdrawals w WHERE w.revision_id = pr.id)
+		            THEN pr.content END,
 		       ps.module_key::text, ps.position, ps.title,
 		       course_step_revision_eligible(s.lesson_id, s.lesson_revision_id)
 		  FROM course_steps s
 		  JOIN course_modules m ON m.course_revision_id = s.course_revision_id AND m.module_key = s.module_key
+		  JOIN lessons l ON l.id = s.lesson_id
 		  JOIN lesson_revisions lr ON lr.id = s.lesson_revision_id
 		  LEFT JOIN course_steps ps ON ps.course_revision_id = $2 AND ps.lesson_id = s.lesson_id
 		  LEFT JOIN lesson_revisions pr ON pr.id = ps.lesson_revision_id
@@ -454,6 +468,12 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 		default:
 			c.Change = "replaced"
 			c.PreviousRevisionID = x.inComparison
+			// A withdrawn, unpublished or archived side is unreadable in
+			// every context: no diff, only the marker.
+			c.Unavailable, c.PreviousUnavailable = x.content == nil, x.prev == nil
+			if c.Unavailable || c.PreviousUnavailable {
+				break
+			}
 			d, err := DiffContent(x.prev, x.content)
 			if err != nil {
 				return err

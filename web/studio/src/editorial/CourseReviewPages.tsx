@@ -99,7 +99,7 @@ export const UNAVAILABLE_CONTENT = 'Contenu indisponible (leçon retirée ou dé
  * a side it marked unavailable says so instead (diffSides).
  */
 function StepDiff({ step, language }: { step: StepChange; language: 'fr' | 'ar' }) {
-  const sides = diffSides(step.diff, step.eligible);
+  const sides = diffSides(step);
   const [shown, setShown] = useState(false);
   const cell = (value: unknown, visible: boolean) => (visible ? text(value) : UNAVAILABLE_CONTENT);
   const hasBlocks = (sides.removed?.length ?? 0) > 0 || (sides.added?.length ?? 0) > 0;
@@ -187,7 +187,7 @@ function StepRow({ step, language, moduleTitle }: { step: StepChange; language: 
           </>
         )}
       </p>
-      {step.change === 'replaced' && step.diff && <StepDiff step={step} language={language} />}
+      {step.change === 'replaced' && <StepDiff step={step} language={language} />}
       {step.content === null || step.content === undefined ? (
         <p className="hint">{UNAVAILABLE_CONTENT} : la leçon ne peut pas être lue ici.</p>
       ) : (

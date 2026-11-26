@@ -4,7 +4,7 @@
 // course review queue (filters, pages, submission age), change labels, and
 // which administrator recovery actions apply to a course. The server checks
 // everything again; these only explain and offer.
-import type { AdminCourseDetail, AdminCourseRevision, Blocked, ContentDiff, FieldChange, CourseReviewItem, ReviewerProblem, StepChange, StepRef } from '../api/courseReview';
+import type { AdminCourseDetail, AdminCourseRevision, Blocked, FieldChange, CourseReviewItem, ReviewerProblem, StepChange, StepRef } from '../api/courseReview';
 import type { ReviewQueueItem } from '../api/editorial';
 import type { CourseDraft, Problem } from './outline';
 
@@ -183,12 +183,14 @@ export interface DiffSides {
 
 /**
  * What a replaced step's diff may show: only what the server sent. A side
- * marked unavailable, or a pinned revision that is no longer eligible
- * (`stepEligible` false), is never rendered.
+ * the server marks unavailable (`unavailable`, `previousUnavailable`), a
+ * pinned revision that is no longer eligible, or a missing diff is never
+ * rendered.
  */
-export function diffSides(diff: ContentDiff | null, stepEligible: boolean): DiffSides {
-  const oldGone = !diff || !!diff.oldUnavailable || !!diff.unavailable?.old;
-  const newGone = !diff || !stepEligible || !!diff.newUnavailable || !!diff.unavailable?.new;
+export function diffSides(step: Pick<StepChange, 'diff' | 'eligible' | 'unavailable' | 'previousUnavailable'>): DiffSides {
+  const diff = step.diff;
+  const oldGone = !diff || !!step.previousUnavailable;
+  const newGone = !diff || !!step.unavailable || !step.eligible;
   const blocks = Array.isArray(diff?.blocks) ? diff!.blocks : [];
   const fields: FieldChange[] = Array.isArray(diff?.fields) ? diff!.fields : [];
   const sent = (op: string) => blocks.filter((b) => b.op === op && b.block !== undefined && b.block !== null).map((b) => b.block);

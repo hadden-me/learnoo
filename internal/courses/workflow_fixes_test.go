@@ -1,11 +1,14 @@
 package courses_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hadden-me/learnoo/internal/courses"
 	"github.com/hadden-me/learnoo/internal/database/dbtest"
+	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
 )
 
@@ -223,4 +226,90 @@ func TestKindAndTransferGuards(t *testing.T) {
 		`INSERT INTO S.course_revisions (course_id, subject_id, language, revision_number, author_id, base_revision_id, compare_revision_id)
 		 SELECT id, subject_id, language, last_revision_number + 1, owner_id, published_revision_id, published_revision_id
 		   FROM S.courses WHERE id = `+C), "was not applied")
+}
+
+// The review payload never carries content of an unreadable lesson
+// revision: a replaced step whose previous revision is withdrawn, whose new
+// revision is withdrawn after submission, or whose lesson is unpublished,
+// is marked unavailable on that side and has no diff.
+func TestReviewPayloadHidesUnreadableRevisions(t *testing.T) {
+	e := newEnv(t)
+	payload := func(revID int64) (courses.StepChange, string) {
+		t.Helper()
+		p, err := e.store.ReviewRevision(e.ctx, e.adminID(), revID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range p.Steps {
+			if s.Change == "replaced" {
+				return s, string(b)
+			}
+		}
+		t.Fatalf("no replaced step: %s", b)
+		return courses.StepChange{}, ""
+	}
+	setup := func(name string) (old, newer lessons.Revision, am courses.Revision) {
+		t.Helper()
+		old = e.publishedLesson(e.other, e.math, "fr", "OLD-MARKER-"+name)
+		e.publishedCourse(old)
+		newer = e.newerLessonRevision(old, "NEW-MARKER-"+name)
+		var err error
+		am, err = e.store.CreateAmendment(e.ctx, e.owner, e.courseOfLesson(old.LessonID), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return old, newer, e.submit(am)
+	}
+
+	// Readable on both sides: a diff.
+	_, _, am := setup("readable")
+	if s, body := payload(am.ID); s.Diff == nil || s.Unavailable || s.PreviousUnavailable || !strings.Contains(body, "OLD-MARKER-readable") {
+		t.Fatalf("readable: %+v", s)
+	}
+
+	// The previous revision withdrawn (it is no longer published).
+	old, current, am := setup("old")
+	if _, err := e.reviewStore().Withdraw(e.ctx, e.adminID(), old.ID, "Simulated unsafe content.", &current.ID); err != nil {
+		t.Fatal(err)
+	}
+	s, body := payload(am.ID)
+	if s.Diff != nil || !s.PreviousUnavailable || s.Unavailable || strings.Contains(body, "OLD-MARKER") {
+		t.Fatalf("old side withdrawn: %+v %s", s, body)
+	}
+
+	// The new revision withdrawn after submission; the lesson restored to
+	// the previous revision, so only the new side is unreadable.
+	old, newer, am := setup("new")
+	if _, err := e.reviewStore().Withdraw(e.ctx, e.adminID(), newer.ID, "Simulated unsafe content.", &newer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.reviewStore().Restore(e.ctx, e.adminID(), old.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, body = payload(am.ID)
+	if s.Diff != nil || !s.Unavailable || s.PreviousUnavailable || strings.Contains(body, "NEW-MARKER") || strings.Contains(body, "OLD-MARKER") {
+		t.Fatalf("new side withdrawn: %+v %s", s, body)
+	}
+
+	// The lesson unpublished: both sides unreadable.
+	_, newer, am = setup("unpublished")
+	e.unpublish(newer.LessonID)
+	s, body = payload(am.ID)
+	if s.Diff != nil || !s.Unavailable || !s.PreviousUnavailable || strings.Contains(body, "MARKER-unpublished") {
+		t.Fatalf("lesson unpublished: %+v %s", s, body)
+	}
+}
+
+func (e *env) courseOfLesson(lessonID int64) int64 {
+	e.t.Helper()
+	var id int64
+	if err := e.db.QueryRow(e.ctx, `SELECT c.id FROM courses c JOIN course_steps s ON s.course_revision_id = c.published_revision_id
+		WHERE s.lesson_id = $1`, lessonID).Scan(&id); err != nil {
+		e.t.Fatal(err)
+	}
+	return id
 }

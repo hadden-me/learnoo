@@ -360,28 +360,27 @@ describe('diff sides', () => {
     ],
   };
   it('shows both sides when the server sent them', () => {
-    const s = diffSides(diff, true);
+    const s = diffSides({ diff, eligible: true, unavailable: false, previousUnavailable: false });
     expect(s.removed).toEqual([{ type: 'paragraph', n: 1 }]);
     expect(s.added).toEqual([{ type: 'paragraph', n: 2 }]);
     expect(s.equal).toBe(1);
     expect(s.fields[0]).toMatchObject({ old: 'Ancien', new: 'Nouveau', oldShown: true, newShown: true });
   });
-  it('never renders a side marked unavailable, in either spelling, or a pinned revision no longer eligible', () => {
-    const old = diffSides({ fields: diff.fields, oldUnavailable: true, blocks: [{ op: 'added', block: { n: 2 } }] }, true);
+  it('renders nothing of a side the server marks unavailable (diff null)', () => {
+    const old = diffSides({ diff: null, eligible: true, unavailable: false, previousUnavailable: true });
+    expect(old).toMatchObject({ removed: null, added: null, equal: 0, fields: [] });
+    const pin = diffSides({ diff: null, eligible: false, unavailable: true, previousUnavailable: false });
+    expect(pin).toMatchObject({ removed: null, added: null, fields: [] });
+  });
+  it('never renders a side flagged unavailable even if blocks were sent', () => {
+    const old = diffSides({ diff, eligible: true, previousUnavailable: true });
     expect(old.removed).toBeNull();
-    expect(old.added).toEqual([{ n: 2 }]);
+    expect(old.added).toEqual([{ type: 'paragraph', n: 2 }]);
     expect(old.fields[0]).toMatchObject({ old: null, oldShown: false, new: 'Nouveau' });
-    const both = diffSides({ ...diff, unavailable: { old: true, new: true } }, true);
-    expect(both.removed).toBeNull();
-    expect(both.added).toBeNull();
-    expect(both.fields[0]).toMatchObject({ old: null, new: null });
-    const withdrawn = diffSides(diff, false);
+    const withdrawn = diffSides({ diff, eligible: false });
     expect(withdrawn.added).toBeNull();
     expect(withdrawn.fields[0].new).toBeNull();
-    expect(diffSides(null, true)).toMatchObject({ removed: null, added: null, fields: [] });
-  });
-  it('ignores blocks the server did not send', () => {
-    expect(diffSides({ blocks: [{ op: 'removed', block: null }] }, true).removed).toEqual([]);
+    expect(diffSides({ diff: { fields: [], blocks: [{ op: 'removed', block: null }] }, eligible: true }).removed).toEqual([]);
   });
 });
 

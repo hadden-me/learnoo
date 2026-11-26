@@ -358,6 +358,8 @@ type stepChangeJSON struct {
 	PreviousPosition       *int             `json:"previousPosition"`
 	PreviousTitle          *string          `json:"previousTitle"`
 	StructureChanged       bool             `json:"structureChanged"`
+	Unavailable            bool             `json:"unavailable"`
+	PreviousUnavailable    bool             `json:"previousUnavailable"`
 	Diff                   *contentDiffJSON `json:"diff"`
 	Eligible               bool             `json:"eligible"`
 	Content                json.RawMessage  `json:"content"`
@@ -379,7 +381,8 @@ func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) 
 			RevisionID: s.RevisionID, RevisionNumber: s.RevisionNumber, Change: s.Change,
 			PreviousRevisionID: s.PreviousRevisionID, PreviousRevisionNumber: s.PreviousRevisionNumber,
 			PreviousModuleKey: s.PreviousModuleKey, PreviousPosition: s.PreviousPosition, PreviousTitle: s.PreviousTitle,
-			StructureChanged: s.StructureChanged, Eligible: s.Eligible, Content: s.Content}
+			StructureChanged: s.StructureChanged, Unavailable: s.Unavailable, PreviousUnavailable: s.PreviousUnavailable,
+			Eligible: s.Eligible, Content: s.Content}
 		if s.Content == nil {
 			steps[i].Content = json.RawMessage("null")
 		}
