@@ -529,7 +529,7 @@ func TestForeignKeysAndUniqueness(t *testing.T) {
 			language, subject, chapter)
 	}
 	other := f.lesson("Other lesson")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
+	dbtest.Submit(t, f.db, rev.ID)
 	f.mustRequestChanges(rev.ID)
 	wantSQLState(t, "duplicate revision number", insert(rev.LessonID, 1, "fr", f.subject, nil, nil, "draft"), "23505")
 	wantSQLState(t, "chapter of another subject", insert(rev.LessonID, 2, "fr", f.subject, &foreignChapter, nil, "draft"), "23503")

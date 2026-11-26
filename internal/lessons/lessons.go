@@ -528,9 +528,11 @@ func (s *Store) SaveDraft(ctx context.Context, actor, revisionID int64, expected
 	return rev, err
 }
 
-// Submit moves the actor's own draft at expectedVersion into review. From
-// then on its content, metadata and media references are frozen by the
-// database; corrections need a successor draft.
+// Submit moves the actor's own draft at expectedVersion into review and
+// records the submission in submission_audit (actor, revision, transaction
+// time) in the same transaction. From then on its content, metadata and
+// media references are frozen by the database; corrections need a
+// successor draft. Its submitted_at is the transaction time.
 func (s *Store) Submit(ctx context.Context, actor, revisionID int64, expectedVersion int) (Revision, error) {
 	var rev Revision
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
@@ -548,12 +550,19 @@ func (s *Store) Submit(ctx context.Context, actor, revisionID int64, expectedVer
 		if err := CheckStoredContentTx(ctx, tx, revisionID); err != nil {
 			return err
 		}
-		now := s.now().UTC()
+		// The audit row first: the database lets a revision leave draft only
+		// together with a submission_audit row of the same transaction, and
+		// both record the transaction time (migrations/0011).
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO submission_audit (lesson_id, revision_id, actor_id)
+			SELECT lesson_id, id, $2 FROM lesson_revisions WHERE id = $1`, revisionID, actor); err != nil {
+			return mapErr(err)
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE lesson_revisions
-			   SET status = 'in_review', submitted_at = $4, updated_at = $4, version = version + 1
+			   SET status = 'in_review', submitted_at = now(), updated_at = now(), version = version + 1
 			 WHERE id = $1 AND version = $2 AND author_id = $3 AND status = 'draft'`,
-			revisionID, expectedVersion, actor, now)
+			revisionID, expectedVersion, actor)
 		if err != nil {
 			return mapErr(err)
 		}
