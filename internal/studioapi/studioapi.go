@@ -4,7 +4,7 @@
 // withdraw.go), for error reports (LRN-015, reports.go) and for the Studio
 // catalogue, owned-lesson listing and preview (issue #65, studio.go), for
 // the curriculum hierarchy and its administration (LMS-B02, curriculum.go),
-// documented in docs/API.md.
+// and for course drafts (LMS-B03, courses.go), documented in docs/API.md.
 //
 // Draft and media routes require a session and the global author
 // permission, checked on the server by permissions.Middleware before any
@@ -31,6 +31,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/courses"
 	"github.com/hadden-me/learnoo/internal/curriculum"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
@@ -68,7 +69,9 @@ type Config struct {
 	Catalogue *catalogue.Store
 	// Curriculum serves the curriculum reads and administration (curriculum.go).
 	Curriculum *curriculum.Store
-	Log        *slog.Logger
+	// Courses serves the course draft endpoints (courses.go).
+	Courses *courses.Store
+	Log     *slog.Logger
 }
 
 // Handlers serves the Studio API.
@@ -107,6 +110,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	h.registerStudio(mux)
 	h.registerPublishing(mux)
 	h.registerCurriculum(mux)
+	h.registerCourses(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or
@@ -502,6 +506,8 @@ func (h *Handlers) writeLessonError(w http.ResponseWriter, op string, err error,
 		conflict("active_candidate_exists", "The lesson already has a draft, a revision in review, or an approved revision awaiting publication.")
 	case errors.Is(err, lessons.ErrNotDraft):
 		conflict("not_draft", "The revision was submitted and can no longer change. Start a new draft instead.")
+	case errors.Is(err, lessons.ErrReferencedByCourse):
+		conflict("referenced_by_course", "A course draft uses this lesson draft as a step. Remove the step from the course draft first.")
 	case errors.Is(err, lessons.ErrVersionConflict):
 		conflict("version_conflict", "The draft was changed elsewhere since it was loaded. Reload it before saving.")
 	case errors.Is(err, lessons.ErrImmutable):
