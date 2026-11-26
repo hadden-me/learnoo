@@ -2,7 +2,8 @@
 // and media (LRN-006 slice 3), for review and publication (LRN-007,
 // review.go) and for withdrawal, unpublication and restoration (LRN-009,
 // withdraw.go), for error reports (LRN-015, reports.go) and for the Studio
-// catalogue, owned-lesson listing and preview (issue #65, studio.go),
+// catalogue, owned-lesson listing and preview (issue #65, studio.go), for
+// the curriculum hierarchy and its administration (LMS-B02, curriculum.go),
 // documented in docs/API.md.
 //
 // Draft and media routes require a session and the global author
@@ -30,6 +31,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/curriculum"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
@@ -64,7 +66,9 @@ type Config struct {
 	Reports *reports.Store
 	// Catalogue serves the subject and chapter lists (studio.go).
 	Catalogue *catalogue.Store
-	Log       *slog.Logger
+	// Curriculum serves the curriculum reads and administration (curriculum.go).
+	Curriculum *curriculum.Store
+	Log        *slog.Logger
 }
 
 // Handlers serves the Studio API.
@@ -102,6 +106,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	h.registerReports(mux)
 	h.registerStudio(mux)
 	h.registerPublishing(mux)
+	h.registerCurriculum(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or
