@@ -1,9 +1,11 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -33,7 +35,7 @@ import (
 //
 // The 0012 data is written by the current stores where their tables did not
 // change after 0012 (accounts, permissions, lessons, review, publication,
-// withdrawal, bookmarks), and by SQL that follows the 0012 guards where the
+// withdrawal, bookmarks, media uploads embedded in a lesson revision), and by SQL that follows the 0012 guards where the
 // current code writes later columns (error reports, invitations, catalogue
 // names): it is not produced by the develop binary itself.
 func TestUpgradeFrom0012KeepsLessonsBookmarksAndHistory(t *testing.T) {
@@ -86,6 +88,25 @@ func upgradeFrom0012(t *testing.T, db *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 
+	// A lesson with an uploaded image placed in its text, through the Studio
+	// API (upload, link, submit, approve, publish), and a failed sign-in.
+	rf := withdrawFixture{reviewFixture: reviewFixture{studioFixture: studioFixture{env: e, subject: subject, author: f.author}, reviewer: f.reviewer, publisher: f.publisher}, admin: f.admin}
+	image := pngBytes(t, 42)
+	w := rf.uploadBytes(f.author, "image/png", image)
+	wantStatus(t, "upload", w, http.StatusCreated, "")
+	var up struct{ ID int64 }
+	if err := json.Unmarshal(w.Body.Bytes(), &up); err != nil || up.ID == 0 {
+		t.Fatalf("upload: %v %s", err, w.Body)
+	}
+	w = rf.createWithMedia(f.author, subject, mediaDoc("TEST Leçon illustrée", false, up.ID), []int64{up.ID})
+	wantStatus(t, "create with image", w, http.StatusCreated, "")
+	illustrated := rf.approvedRev(rf.submitRev(f.author, decodeRevision(t, w)))
+	rf.publishedRev(illustrated)
+	illustratedID := f.publicID(illustrated.LessonID)
+	if w := e.login("test-student@example.test", "wrong-password-123", withAddr("198.51.100.250")); w.Code != http.StatusUnauthorized {
+		t.Fatalf("failed sign-in: %d", w.Code)
+	}
+
 	// Bookmarks through the reader, an error report and its resolution, an
 	// invitation, catalogue names and an account disabled and enabled again.
 	for _, p := range []published{placed, arabic} {
@@ -123,7 +144,8 @@ func upgradeFrom0012(t *testing.T, db *pgxpool.Pool) {
 	before := snapshot(t, db, shape)
 	for _, want := range []string{"users", "sessions", "user_permissions", "reviewer_assignments", "permission_audit", "lessons", "lesson_revisions", "publication_audit",
 		"revision_withdrawals", "review_decisions", "submission_audit", "bookmarks", "error_reports", "error_report_resolutions",
-		"student_invitations", "catalogue_audit", "account_status_audit"} {
+		"student_invitations", "student_invitation_audit", "catalogue_audit", "account_status_audit", "media_assets", "revision_media",
+		"media_uploads", "login_attempts", "translation_groups"} {
 		if before[want] == "" {
 			t.Fatalf("table %s is empty or missing before the upgrade", want)
 		}
@@ -161,6 +183,10 @@ func upgradeFrom0012(t *testing.T, db *pgxpool.Pool) {
 	}{{placed, "TEST Leçon placée"}, {arabic, "TEST درس بلا فصل"}, {restored, "TEST Leçon restaurée, première édition"}} {
 		wantPage(t, "read "+p.want, f.get(student, lessonPath(p.pub.publicID)), http.StatusOK, p.want)
 	}
+	wantPage(t, "read illustrated lesson", f.get(student, lessonPath(illustratedID)), http.StatusOK, "TEST Leçon illustrée")
+	if w := f.get(student, mediaPath(illustratedID, up.ID)); w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), image) {
+		t.Fatalf("image after the upgrade: %d", w.Code)
+	}
 	wantAbsent(t, "withdrawn edition", f.get(student, lessonPath(restored.publicID)), "deuxième édition")
 	if w := f.get(student, lessonPath(unpublished.publicID)); w.Code != http.StatusNotFound {
 		t.Fatalf("unpublished lesson: %d", w.Code)
@@ -168,7 +194,7 @@ func upgradeFrom0012(t *testing.T, db *pgxpool.Pool) {
 	wantPage(t, "dashboard", f.get(student, "/learn"), http.StatusOK, "Mes signets (2)", "TEST Leçon placée", "TEST درس بلا فصل")
 	// No edition yet: the public catalogue lists the published lessons as not yet placed, never under an invented level.
 	wantPage(t, "catalogue", f.page(apiUser{}, http.MethodGet, "/catalogue", nil), http.StatusOK, "TEST Leçon placée")
-	w := f.api(f.reviewer, http.MethodGet, "/api/review/error-reports?status=open", nil)
+	w = f.api(f.reviewer, http.MethodGet, "/api/review/error-reports?status=open", nil)
 	wantStatus(t, "error reports", w, http.StatusOK, "")
 	if !strings.Contains(w.Body.String(), "TEST erreur ouverte.") {
 		t.Fatalf("error reports after the upgrade: %s", w.Body)
