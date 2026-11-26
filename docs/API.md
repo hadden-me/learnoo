@@ -2,7 +2,7 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports, the Studio integration (issue #65) and the [curriculum](#curriculum-lms-b02) hierarchy and administration (LMS-B02).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports, the Studio integration (issue #65) the [curriculum](#curriculum-lms-b02) hierarchy and administration (LMS-B02) and the [administration API](#administration-lms-b10) for users, grants, account status, catalogue names and student invitations (LMS-B10).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
 
 ## Conventions
 
@@ -29,6 +29,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 403 | `cross_origin_rejected` | Cross-origin unsafe request |
 | 403 | `forbidden` | Signed in, but lacks the required permission (or it could not be verified) |
 | 403 | `self_review` | A reviewer tried to approve or request changes on their own revision (administrators included) |
+| 403 | `self_change` | An administrator tried to grant a permission to their own account or to disable it through the [administration API](#administration-lms-b10) |
 | 404 | `not_found` | Unknown route; a catalogue subject code, lesson, revision, media or error report ID that does not exist, is malformed, or (revisions) belongs to another author, or (error reports) belongs to a subject the caller does not review |
 | 408 | `upload_timeout` | The upload body did not arrive within the server's read timeout. No `Retry-After`: retry on a better connection or with a smaller image |
 | 409 | `version_conflict` | `expectedVersion` is stale: the draft changed since it was loaded. Nothing was written |
@@ -56,6 +57,8 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 409 | `already_retired` | Retirement of a curriculum entry, subject or chapter that is already retired |
 | 409 | `parent_retired` | A section under a retired level, or an edition created or made current under a retired section or level |
 | 409 | `assignment_exists` | The edition already assigns the subject |
+| 409 | `last_administrator` | Revoking `administrator` from, or disabling, the only active administrator. Nothing was changed |
+| 409 | `account_exists` | A student invitation for an email that already has an account |
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
@@ -75,7 +78,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
-| 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
+| 422 | `invalid_input` | A curriculum code, name, label or display order, a catalogue display name or order, an invitation email or lifetime, or a user search is malformed (`message` says which rule) |
 | 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
 | 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft created, saved with a chapter change, or submitted with a retired chapter other than the chapter of its published base revision |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
@@ -156,7 +159,7 @@ Protected endpoints wrap their handler in `permissions.Middleware.Require(permis
 
 The middleware is a fast early check: it reads outside the handler's transaction, so a revocation or account disablement can commit between it and the change. Every state-changing editorial action must therefore re-check inside its own transaction with `permissions.RequireTx(ctx, tx, userID, permission)` or `permissions.RequireReviewerTx(ctx, tx, userID, subjectID)`. These share-lock the grant and account rows (`FOR SHARE`), so a concurrent revocation or disablement waits until the action commits and applies from the next transaction on. Such lock waits can end in a PostgreSQL deadlock or serialization error (SQLSTATE `40P01`/`40001`); callers report it, or retry the whole transaction, and never treat it as success.
 
-Every grant and revoke is recorded in the append-only `permission_audit` table with actor (a user `actor_id`, or for local operator tools a self-asserted `operator_label` such as `user@host`, set through `permissions.OperatorAs`, the only operator constructor; labels with control, invisible, bidirectional or line-separator characters are rejected by both the code and the database), target, permission, subject and time (the database transaction time, equal to the grant's `granted_at`). Revoking from an unknown user or subject returns an error rather than a silent no-op. Revoking `administrator` from the last active administrator is refused (`permissions.ErrLastAdministrator`). Self-approval is rejected by the review workflow and by the database (LRN-007). No HTTP endpoint changes permissions or account status; they are administered by the local operator commands (`bootstrap-admin`, `grant`, `revoke`, `disable-user`, `enable-user`, `show-user`; [DEVELOPMENT.md](DEVELOPMENT.md#operator-commands-first-administrator-permissions-and-account-status)). Disabling an account deletes its sessions in the same transaction; a login racing the disable either fails with `invalid_credentials` or its new session is deleted by the disable.
+Every grant and revoke is recorded in the append-only `permission_audit` table with actor (a user `actor_id`, or for local operator tools a self-asserted `operator_label` such as `user@host`, set through `permissions.OperatorAs`, the only operator constructor; labels with control, invisible, bidirectional or line-separator characters are rejected by both the code and the database), target, permission, subject and time (the database transaction time, equal to the grant's `granted_at`). Revoking from an unknown user or subject returns an error rather than a silent no-op. Revoking `administrator` from the last active administrator is refused (`permissions.ErrLastAdministrator`). Self-approval is rejected by the review workflow and by the database (LRN-007). Since LMS-B10, administrators change permissions and account status through the [administration API](#administration-lms-b10) (`internal/studioapi/admin.go`, the only HTTP code allowed to call the change methods, always with the signed-in administrator as actor); the local operator commands (`bootstrap-admin`, `grant`, `revoke`, `disable-user`, `enable-user`, `show-user`; [DEVELOPMENT.md](DEVELOPMENT.md#operator-commands-first-administrator-permissions-and-account-status)) stay for bootstrap and recovery. Disabling an account deletes its sessions in the same transaction; a login racing the disable either fails with `invalid_credentials` or its new session is deleted by the disable.
 
 ## Studio: lesson drafts and media (LRN-006)
 
@@ -701,6 +704,65 @@ Level: `{"id", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version
 
 Retirement is never undone. Nothing deletes a level, section, edition, subject or chapter. A `409 retry` may answer any write that collided with a concurrent one.
 
+## Administration (LMS-B10)
+
+Administrator endpoints behind the Studio's administration pages ([DECISIONS.md](DECISIONS.md#administration-ui-lms-b10)), in `internal/studioapi/admin.go`. Every endpoint needs a session (`401 unauthenticated`) and the `administrator` permission, checked by the middleware before any lookup or body is read (`403 forbidden` for every other account, so existing and missing IDs look the same to them), and again inside the change's transaction by the stores (a permission revoked or an account disabled in between gives `403 forbidden`, nothing changed). Unsafe methods need the CSRF token and a same-origin request; bodies follow the [strict JSON rules](#conventions) and `null` is refused everywhere. Responses: `Cache-Control: private, no-store`. A `409 retry` may answer any write that collided with a concurrent one.
+
+Every change goes through the store the operator commands use, so the rules are theirs: `permissions.Store` (`permission_audit`), `accounts.Store` (`account_status_audit`, sessions deleted), `catalogue.Store` (`catalogue_audit` with old and new values) and `invitations.Store` (`student_invitation_audit`). The audit row records the signed-in administrator as `actor_id` (never an operator label), in the same transaction. Repeating a change that is already in effect answers `200` with `"changed": false` and writes no audit row. The existing audits have no reason column, so no reason is asked for.
+
+Rules on top of the stores:
+
+- **No self-grant, no self-disable.** Granting any permission (reviewer included) to one's own account, or disabling it: `403 self_change`, checked before the store is called. Revoking one's own permissions is allowed; revoking one's own `administrator` succeeds only while another active administrator exists (`409 last_administrator` otherwise, decided by the store under the administrators lock).
+- **Last active administrator.** Revoking `administrator` from, or disabling, the only active administrator is `409 last_administrator`. Two administrators revoking each other (or disabling each other) at the same time serialize on the administrators lock: the first succeeds, the second finds its own `administrator` gone and gets `403 forbidden`; at least one active administrator always remains.
+- **Administrators are not reviewers.** Reviewer subjects come only from explicit `reviewer` grants; `administrator` implies nothing.
+
+### User object
+
+```json
+{"id": 5, "email": "teacher@example.test", "displayName": "TEST Enseignante", "createdAt": "2026-11-20T09:00:00Z",
+ "disabled": false, "permissions": ["author", "publisher"],
+ "reviewerSubjects": [{"id": 1, "code": "maths", "nameFr": "Mathématiques", "nameAr": null, "retiredAt": null}]}
+```
+
+`permissions` lists the stored global grants (`author`, `publisher`, `administrator`, in that order), whether or not the account is disabled (a disabled account holds no effective permission; its grants apply again when it is enabled). `reviewerSubjects` are the stored reviewer grants, sorted by subject code.
+
+### Users, grants and account status
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `GET /api/admin/users?q=&permission=&status=&after=` | none | `200` `{"users": [user…], "nextAfter": id or null}` |
+| `GET /api/admin/users/{userId}` | none | `200` `{"user": user, "history": [event…]}` |
+| `POST /api/admin/users/{userId}/grant` | `permission`, and `subjectId` for `reviewer` only | `200` `{"user": user, "changed": bool}` |
+| `POST /api/admin/users/{userId}/revoke` | as for grant | `200` `{"user": user, "changed": bool}` |
+| `POST /api/admin/users/{userId}/disable` | `{}` | `200` `{"user": user, "changed": bool}`; the account's sessions are deleted in the same transaction |
+| `POST /api/admin/users/{userId}/enable` | `{}` | `200` `{"user": user, "changed": bool}` |
+
+- **Listing.** Users by ascending ID, 50 per page; pass the previous page's `nextAfter` as `after` for the next page (`null`: last page). Optional filters, combined: `q` (1 to 100 characters, matched case-insensitively as a substring of the email or display name), `permission` (`author`, `publisher`, `administrator`, `reviewer`: any reviewer grant, or `none`: no grant at all, i.e. students), `status` (`active` or `disabled`). Any other parameter, a repeated one, an empty or malformed value: `400 invalid_request`. `permission=author` is the teacher-access listing.
+- **History.** The user's permission and account status audit, newest first, at most 200 events: `{"kind": "permission" | "status", "action": "grant" | "revoke" | "disable" | "enable", "permission": "reviewer" or null, "subjectId": 1 or null, "subjectCode": "maths" or null, "actorId": 2 or null, "actorName": "…" or null, "operatorLabel": "user@host" or null, "occurredAt": "…"}`. Exactly one of `actorId` and `operatorLabel` is set.
+- **Errors.** `404 not_found`: unknown or malformed `userId`. `400 invalid_request`: an unknown permission, `subjectId` with a global permission or missing for `reviewer`. `422 unknown_subject`; `422 retired_subject`: a new reviewer grant on a retired subject (existing grants stay revocable). `403 self_change`, `409 last_administrator`.
+
+### Student invitations
+
+`POST /api/admin/invitations` with `{"email": "student@example.test", "ttlHours": 72}` (`ttlHours` optional, 1 to 720, default 72) issues a single-use Student invitation through `invitations.Store` (no permissions; the database audits the issue with the administrator as actor). `201`:
+
+```json
+{"invitation": {"id": 9, "email": "student@example.test", "createdAt": "…", "expiresAt": "…"}, "path": "/invite/<token>"}
+```
+
+The token is shown once and never stored (only its hash); the client builds the link from its own origin. Nothing is emailed: the administrator passes the link on. `409 account_exists`; `422 invalid_input` for a malformed email or lifetime. Teachers are onboarded with the same flow: invite, then grant `author` (and `reviewer` or `publisher` as needed) once the account exists. There is no self-registration and no teacher invitation type.
+
+### Catalogue display names and order
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `GET /api/admin/catalogue` | none | `200` `{"subjects": [subject with "chapters": [chapter…]…]}`, retired entries included, each list by order then code |
+| `PUT /api/admin/catalogue/subjects/{subjectCode}/names` | `nameFr`, `nameAr` (each optional, at least one) | `200` `{"subject": subject, "changed": bool}` |
+| `PUT /api/admin/catalogue/subjects/{subjectCode}/order` | `sortOrder` (0 to 9999) | `200` `{"subject": subject, "changed": bool}` |
+| `PUT /api/admin/catalogue/subjects/{subjectCode}/chapters/{chapterCode}/names` | as for a subject | `200` `{"chapter": chapter, "changed": bool}` |
+| `PUT /api/admin/catalogue/subjects/{subjectCode}/chapters/{chapterCode}/order` | as for a subject | `200` `{"chapter": chapter, "changed": bool}` |
+
+Entries are the [catalogue](#catalogue) objects (`id`, `code`, `nameFr`, `nameAr`, `sortOrder`, `retiredAt`). Names follow the catalogue name rule (`422 invalid_input`); an omitted name is kept; a name cannot be removed, only replaced. `404 not_found` for an unknown subject or chapter code. Adding subjects and chapters stays an operator command; the curriculum hierarchy is the [curriculum administration API](#administration-apiadmincurriculum).
+
 ## Not yet defined
 
-Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); the pilot catalogue seed (LRN-014, waiting for teacher-confirmed names); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
+Public registration, password recovery, email verification, account deletion (LRN-022); invitations sent by email, teacher access requests and a listing of pending invitations; administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); the pilot catalogue seed (LRN-014, waiting for teacher-confirmed names); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
