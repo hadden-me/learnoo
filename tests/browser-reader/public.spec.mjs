@@ -40,22 +40,22 @@ test('signed-out visitor finds a course from the homepage', async ({ page, baseU
   await expect(page).toHaveURL(/\/catalogue\/test-bac\/test-maths\/test-math$/);
   const courses = page.getByRole('region', { name: 'Cours' });
   const lessons = page.getByRole('region', { name: 'Leçons', exact: true });
-  await expect(courses.getByRole('link', { name: 'TEST Cours de nombres complexes' })).toBeVisible();
+  await expect(courses.getByRole('link', { name: 'TEST Parcours public des nombres complexes' })).toBeVisible();
   await expect(lessons.getByRole('link', { name: 'TEST Équations et nombres complexes' })).toBeVisible();
-  await expect(lessons.getByRole('link', { name: 'TEST Cours de nombres complexes' })).toHaveCount(0);
+  await expect(lessons.getByRole('link', { name: 'TEST Parcours public des nombres complexes' })).toHaveCount(0);
   expect(await noOverflow(page)).toBe(true);
 
   // Course overview: metadata, cover with alt text, outline; no lesson
   // body or solution.
-  await courses.getByRole('link', { name: 'TEST Cours de nombres complexes' }).click();
+  await courses.getByRole('link', { name: 'TEST Parcours public des nombres complexes' }).click();
   await expect(page).toHaveURL(/\/courses\/[0-9a-f-]{36}$/);
   const id = page.url().split('/courses/')[1];
-  await expect(page.getByRole('heading', { level: 1, name: 'TEST Cours de nombres complexes' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'TEST Parcours public des nombres complexes' })).toBeVisible();
   const cover = page.getByRole('img', { name: 'TEST description de la couverture' });
   await expect(cover).toBeVisible();
   expect(await cover.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole('heading', { name: 'Plan du cours' })).toBeVisible();
-  await expect(page.getByText('TEST Étape A TEST Cours de nombres complexes')).toBeVisible();
+  await expect(page.getByText('TEST Étape A TEST Parcours public des nombres complexes')).toBeVisible();
   await expect(page.getByText('Solution de test.')).toHaveCount(0);
   await expect(page.getByText('Texte de test avec')).toHaveCount(0);
   expect(await noOverflow(page)).toBe(true);
