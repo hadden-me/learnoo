@@ -215,7 +215,9 @@ func TestCourseReportGuardIgnoresShadowTables(t *testing.T) {
 	spec.Title = "TEST Cours ombre v2"
 	c2 := coursetest.Republish(t, e.db, c, spec)
 	asRole, qs := e.leastPrivilegeRole()
-	q := func(sql string, args ...any) string { return strings.ReplaceAll(fmt.Sprintf(sql, args...), "S.", qs+".") }
+	q := func(sql string, args ...any) string {
+		return strings.ReplaceAll(fmt.Sprintf(sql, args...), "S.", qs+".")
+	}
 	report := func(courseRev int64) string {
 		return q(`INSERT INTO S.error_reports (lesson_id, revision_id, reporter_id, message, course_revision_id) VALUES (%d, %d, %d, 'Erreur.', %d)`,
 			first.id, first.revision, e.student, courseRev)

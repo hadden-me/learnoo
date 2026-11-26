@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hadden-me/learnoo/internal/coursetest"
 	"github.com/hadden-me/learnoo/internal/courses"
+	"github.com/hadden-me/learnoo/internal/coursetest"
 )
 
 // Course reading (LMS-B08) through the real server handler: outline,
@@ -398,4 +398,3 @@ func TestCourseContextReportsNameTheDisplayedRevision(t *testing.T) {
 		t.Fatalf("refused reports stored: %d -> %d", before, after)
 	}
 }
-
