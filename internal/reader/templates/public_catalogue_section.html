@@ -1,0 +1,8 @@
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span>{{.LevelName}}</span> › <span aria-current="page">{{.Name}}</span></nav>
+<p class="eyebrow">{{.LevelName}}</p>
+<h1>{{.Name}}</h1>
+{{template "edition" .}}
+{{if .Edition}}<section aria-labelledby="subjects-heading"><h2 id="subjects-heading">Matières</h2>
+{{if .Subjects}}{{$q := .EditionQuery}}{{$base := .Path}}<ul class="cards">{{range .Subjects}}<li class="card"><a href="{{$base}}/{{.Code}}{{$q}}">{{template "catname" .Label}}</a><span class="context">{{if .Empty}}Aucun contenu relu pour l’instant{{else}}{{.Courses}} cours, {{.Lessons}} leçon{{if gt .Lessons 1}}s{{end}}{{end}}</span></li>{{end}}</ul>
+{{else}}<p>Cette édition ne contient encore aucune matière.</p>{{end}}</section>{{end}}
+{{template "earlier" .}}{{end}}{{end}}

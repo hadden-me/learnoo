@@ -89,7 +89,8 @@ func TestBrowserReaderServer(t *testing.T) {
 	if _, _, _, err := cat.SetChapterNames(context.Background(), testOperator, "test-math", "test-chapter", &chFr, &chAr); err != nil {
 		t.Fatal(err)
 	}
-	f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
+	rich := f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
+	seedBrowserCatalogue(f, ch, rich) // public catalogue journey (public.spec.mjs)
 	f.publish(f.approved(0, readerDoc("TEST درس تجريبي", "ar",
 		para(text("نص تجريبي يحتوي على صيغة "), map[string]any{"type": "math", "text": `\sqrt{a^2 + b^2}`}),
 		map[string]any{"type": "displayMath", "text": `\lim_{n \to +\infty} \left(1 + \frac{1}{n}\right)^n = e`},
