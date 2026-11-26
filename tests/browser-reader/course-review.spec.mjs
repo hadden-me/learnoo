@@ -91,7 +91,7 @@ test('course submission, change request, correction, approval, publication, amen
   await a.page.getByLabel('Titre du cours').fill(courseTitle);
   await a.page.getByLabel('Description courte (publique)').fill('TEST Un cours relu de bout en bout.');
   await a.page.getByLabel('Niveau').selectOption({ label: 'TEST Baccalauréat' });
-  await a.page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section mathématiques' });
+  await a.page.getByLabel('Section', { exact: true }).selectOption({ label: 'TEST Section sciences mathématiques' });
   await a.page.getByRole('button', { name: `Ajouter l’édition en vigueur « ${current.labelFr} »` }).click();
   await a.page.getByLabel('Titre du nouveau module').fill('TEST Module un');
   await a.page.keyboard.press('Enter');
