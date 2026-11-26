@@ -92,17 +92,34 @@ type publicationJSON struct {
 func (h *Handlers) reviewQueue(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	var subject int64
-	switch {
-	case len(q) == 0:
-	case len(q) == 1 && len(q["subjectId"]) == 1:
-		id, ok := parseID(q.Get("subjectId"))
+	course := false
+	for key, vals := range q {
+		if len(vals) != 1 || (key != "subjectId" && key != "type") {
+			badRequest(w, "The query parameters are an optional subjectId and an optional type (lesson or course), once each.")
+			return
+		}
+	}
+	if raw, ok := q["type"]; ok {
+		switch raw[0] {
+		case "lesson":
+		case "course":
+			course = true
+		default:
+			badRequest(w, "type must be lesson or course.")
+			return
+		}
+	}
+	if raw, ok := q["subjectId"]; ok {
+		id, ok := parseID(raw[0])
 		if !ok {
 			badRequest(w, "subjectId must be a positive integer.")
 			return
 		}
 		subject = id
-	default:
-		badRequest(w, "The only query parameter is an optional subjectId.")
+	}
+	if course {
+		w.Header().Set("Cache-Control", privateNoStore)
+		h.courseReviewQueue(w, r, subject)
 		return
 	}
 	items, err := h.Review.ReviewQueue(r.Context(), actor(r), subject)
