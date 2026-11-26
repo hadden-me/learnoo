@@ -1,0 +1,14 @@
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span aria-current="page">Cours</span></nav>
+<article class="course-overview" aria-labelledby="course-title"><p class="eyebrow">Cours · {{template "catname" .SubjectLabel}}</p>
+<h1 id="course-title" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</h1>
+{{if .HasCover}}<figure class="course-cover"><img src="{{.CoverURL}}" alt="{{.CoverAlt}}" lang="{{.Language}}"></figure>{{end}}
+{{with .Summary}}<p class="lead multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p>{{end}}
+<p class="credit">Conçu par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Structure relue et approuvée par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}. Chaque leçon du cours a été relue séparément.</p>
+<dl class="course-facts"><div><dt>Langue</dt><dd>{{.LanguageName}}</dd></div><div><dt>Matière</dt><dd>{{template "catname" .SubjectLabel}}</dd></div>
+{{range .Placements}}<div><dt>Programme</dt><dd><a href="/catalogue/{{.LevelCode}}/{{.SectionCode}}/{{$.Data.SubjectCode}}{{if not .Current}}?edition={{.EditionCode}}{{end}}">{{.LevelName}} › {{.SectionName}}</a> · {{.EditionLabel}} ({{.StateLabel}})</dd></div>{{end}}</dl>
+<p class="actions"><a class="action primary" href="{{.SignIn}}">Se connecter pour lire le cours</a></p>
+<p class="hint">La lecture des leçons est réservée aux comptes du pilote, créés sur invitation.</p>
+{{with .Objectives}}<section aria-labelledby="objectives-heading"><h2 id="objectives-heading">Objectifs</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
+{{with .Prerequisites}}<section aria-labelledby="prerequisites-heading"><h2 id="prerequisites-heading">Prérequis</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
+<section aria-labelledby="outline-heading"><h2 id="outline-heading">Plan du cours</h2>
+<ol class="outline">{{range .Modules}}<li><h3 lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</h3>{{with .Steps}}<ol class="outline-steps">{{range .}}<li><span lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="unavailable">Leçon temporairement indisponible</span>{{end}}</li>{{end}}</ol>{{end}}</li>{{end}}</ol></section></article>{{end}}{{end}}

@@ -110,6 +110,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	page("GET /learn/lessons/{publicId}/media/{mediaId}", h.lessonMedia)
 	mux.Handle("GET /static/{path...}", headers(h.Auth.Middleware(http.HandlerFunc(h.static))))
 	mux.Handle("GET "+AssetPrefix+"{version}/{path...}", http.HandlerFunc(h.serveAsset))
+	h.registerPublic(mux) // public.go (LMS-B07)
 }
 
 // headers applies the reader's cache rule and default CSP; handlers may

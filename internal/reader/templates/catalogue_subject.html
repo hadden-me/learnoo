@@ -1,0 +1,11 @@
+{{define "content"}}{{with .Data}}{{$sec := .Section}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span>{{$sec.LevelName}}</span> › <a href="{{$sec.Path}}{{$sec.EditionQuery}}">{{$sec.Name}}</a> › <span aria-current="page">{{template "catname" .Label}}</span></nav>
+<p class="eyebrow">{{$sec.LevelName}} › {{$sec.Name}}</p>
+<h1>{{template "catname" .Label}}</h1>
+{{template "edition" $sec}}
+<section aria-labelledby="courses-heading"><h2 id="courses-heading">Cours</h2>
+{{if .Courses}}<ul class="cards">{{range .Courses}}{{template "pubcourse" .}}{{end}}</ul>
+{{else}}<p>Aucun cours relu n’est encore publié pour cette matière dans cette édition. <a href="/catalogue">Parcourir le catalogue</a></p>{{end}}</section>
+<section aria-labelledby="lessons-heading"><h2 id="lessons-heading">Leçons</h2>
+{{if .Chapters}}<p class="hint">Leçons publiées seules, classées par chapitre du programme. Leur lecture nécessite un compte.</p>{{range .Chapters}}<section class="chapter"><h3>{{template "catname" .Label}}</h3><ul class="cards">{{range .Lessons}}{{template "publesson" .}}{{end}}</ul></section>{{end}}
+{{else}}<p>Aucune leçon publiée n’est encore placée dans cette édition pour cette matière.</p>{{end}}</section>
+{{with .Unplaced}}<section aria-labelledby="unplaced-heading"><h2 id="unplaced-heading">Leçons pas encore placées dans une édition du programme</h2><ul class="cards">{{range .}}{{template "publesson" .}}{{end}}</ul></section>{{end}}{{end}}{{end}}
