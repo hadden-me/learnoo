@@ -38,7 +38,13 @@ func TestProcessDecodeBudget(t *testing.T) {
 		{"12 MP phone photo, orientation 6, Ultra HDR", phoneJPEG(t, n, 3000), nil},
 		{"16 MP phone photo, orientation 6, Ultra HDR", phoneJPEG(t, n, n), nil},
 		{"16 MP 16-bit PNG", png16(t, n, n), nil},
-		{"16 MP WebP lossless with palette", webpLossless(n, n, true), nil},
+		{"6 MP WebP lossless with palette", webpLossless(2400, 2400, true), nil},
+		{"16 MP WebP lossless", webpLossless(n, n, false), ErrTooComplex},
+		{"16 MP WebP lossless, 2600 Huffman groups", webpManyGroups(4096, 3906, false), ErrTooComplex},
+		{"6 MP WebP lossless, 2600 Huffman groups", webpManyGroups(2400, 2400, true), nil},
+		{"4 MP WebP with lossless alpha, 2600 Huffman groups", webpAlphaManyGroups(2048, 2048), nil},
+		{"16 MP WebP with lossless alpha", webpAlphaManyGroups(n, n), ErrTooComplex},
+		{"16 MP lossy WebP", webpLossy(n, n), nil},
 	} {
 		_, err := Process(context.Background(), bytes.NewReader(c.data), "")
 		if c.want == nil && err != nil || c.want != nil && !errors.Is(err, c.want) {

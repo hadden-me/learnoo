@@ -137,11 +137,94 @@ func pngCost(b []byte, w, h int) (int64, error) {
 	return cost, nil
 }
 
-// webpCost bounds the decode allocations of a w x h WebP: at most 8.5 bytes
-// per pixel (lossy with lossless alpha: the 4:2:0 frame padded to 16 px, the
-// alpha plane decoded as a full lossless image, a colour-indexing transform
-// buffer and the extracted alpha), rounded up to 9; lossless images need at
-// most 6.
-func webpCost(w, h int) int64 {
-	return 9 * int64(w) * int64(h)
+// WebP (golang.org/x/image v0.45.0). Line numbers below refer to that
+// version; a dependency update must re-check them.
+//
+// A lossless (VP8L) stream decodes its pixels into one 4-byte-per-pixel
+// buffer (vp8l/decode.go:463). The colour-indexing transform packs pixels
+// before decoding (w is replaced by nTiles(w, bits), :122) and then expands
+// them into a new full-size buffer (transform.go:247): at most 2 + 4 bytes
+// per pixel plus row padding. Predictor and cross-colour transforms keep a
+// sub-image of 4 bytes per tile of at least 4x4 pixels (:101), and the meta
+// prefix image is another such sub-image (:337). The colour table is at most
+// 256 pixels (:123).
+//
+// The Huffman groups of the top-level image do not depend on the image size:
+// up to 2600 groups (:358-362), each built only if a tile references it
+// (:390-406), with five trees whose node arrays hold 2n-1 nodes of 8 bytes
+// for n symbols (huffman.go:161) and a 128-entry lookup table (huffman.go:60).
+// The alphabets are 280 + 2^ccBits green symbols with ccBits at most 11
+// (:442), 256 for red, blue and alpha and 40 for distances (:421). The
+// code-length buffers of each tree (:277, huffman.go:138) are released before
+// the next tree is read, so only one tree's worth is counted. Sub-images
+// (transforms, the meta image) are not top-level and have one group each.
+const (
+	vp8lMaxGroups = 2600
+	// One group: the hGroup itself (5 trees of a slice header and a 128 x
+	// uint32 table, 2680 bytes), plus node arrays rounded up to Go's
+	// allocation sizes: green (2*2328-1)*8 = 37240 -> 40960 (whole pages),
+	// red, blue, alpha 511*8 = 4088 -> 4096 each, distance 79*8 = 632 -> 640.
+	vp8lGroupBytes = 2680 + 40960 + 3*4096 + 640
+	// One tree's code lengths and codes (2 x 2328 x 4 bytes, rounded), the
+	// code-length tree, the colour cache (2048 x 4 bytes), the group index
+	// mapping (2 bytes per group) and the bit reader's buffer.
+	vp8lFixedBytes = 2*20480 + 4096 + 8192 + 2*vp8lMaxGroups + 4096
+	// The Huffman groups of the sub-images (at most three transforms and the
+	// meta image), each released or kept small.
+	vp8lSubImageGroups = 4
+)
+
+// vp8lCost bounds the allocations of decoding one w x h VP8L stream.
+func vp8lCost(w, h int) int64 {
+	px := int64(w) * int64(h)
+	tiles := int64((w+3)/4) * int64((h+3)/4)
+	pixels := 6*px + 4*int64(h) // decoded (packed) pixels and the colour-indexing expansion
+	subImages := 3*4*tiles + 4*256
+	groups := int64(vp8lMaxGroups+vp8lSubImageGroups)*vp8lGroupBytes + vp8lFixedBytes
+	return pixels + subImages + groups
+}
+
+// webpCost bounds the decode allocations of a w x h WebP b (structure
+// already checked by checkWebPStructure):
+//   - lossless (VP8L, also inside VP8X): vp8lCost;
+//   - lossy (VP8): the 4:2:0 frame padded to whole 16x16 macroblocks
+//     (vp8/decode.go:205), per-macroblock filter parameters (:207) and copies
+//     of the partitions, at most the file size (:286, :309, :326);
+//   - an ALPH chunk adds the w x h alpha plane (webp/decode.go:206, :238) and,
+//     when it is losslessly compressed, a VP8L decode of the same size (:222).
+//
+// The input bytes themselves are counted once as a margin.
+func webpCost(b []byte, w, h int) int64 {
+	lossless, alpha, compressedAlpha := false, false, false
+	for off := 12; off+8 <= len(b); {
+		id := string(b[off : off+4])
+		n := int(binary.LittleEndian.Uint32(b[off+4:]))
+		payload := off + 8
+		switch id {
+		case "VP8L":
+			lossless = true
+		case "ALPH":
+			alpha = true
+			compressedAlpha = compressedAlpha || n < 1 || payload >= len(b) || b[payload]&0x03 != 0
+		}
+		if n < 0 || payload+n > len(b) {
+			break
+		}
+		off = payload + n + n&1
+	}
+	px := int64(w) * int64(h)
+	cost := int64(len(b))
+	if lossless {
+		cost += vp8lCost(w, h)
+	} else {
+		mbw, mbh := int64((w+15)/16), int64((h+15)/16)
+		cost += 16*16*mbw*mbh*3/2 + 16*mbw*mbh
+	}
+	if alpha {
+		cost += px
+		if compressedAlpha {
+			cost += vp8lCost(w, h)
+		}
+	}
+	return cost
 }

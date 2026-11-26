@@ -82,6 +82,14 @@ func worstCases(t testing.TB) []worstCase {
 		{"PNG 16 MP 16-bit RGBA, Adam7 interlaced", "png16-adam7.png", adam7PNG16(n, n)},
 		{"WebP lossless 16 MP", "lossless.webp", webpLossless(n, n, false)},
 		{"WebP lossless 16 MP, 16-colour palette", "lossless-palette.webp", webpLossless(n, n, true)},
+		{"WebP lossy 16 MP", "lossy.webp", webpLossy(n, n)},
+		{"WebP lossless 256 x 256, 2600 Huffman groups", "groups-256.webp", webpManyGroups(256, 256, false)},
+		{"WebP lossless 2400 x 2400, 2600 Huffman groups", "groups-6mp.webp", webpManyGroups(2400, 2400, false)},
+		{"WebP lossless 2400 x 2400, 2600 Huffman groups, palette", "groups-6mp-palette.webp", webpManyGroups(2400, 2400, true)},
+		{"WebP lossless 4096 x 3906, 2600 Huffman groups", "groups-16mp.webp", webpManyGroups(4096, 3906, false)},
+		{"WebP lossless 4096 x 3906, 2600 Huffman groups, palette", "groups-16mp-palette.webp", webpManyGroups(4096, 3906, true)},
+		{"WebP lossy 256 x 256, alpha with 2600 Huffman groups", "alpha-groups-256.webp", webpAlphaManyGroups(256, 256)},
+		{"WebP lossy 2048 x 2048, alpha with 2600 Huffman groups", "alpha-groups-4mp.webp", webpAlphaManyGroups(2048, 2048)},
 	}
 }
 

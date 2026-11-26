@@ -353,3 +353,225 @@ func webpLossless(w, h int, palette bool) []byte {
 	b.put(0, 7)
 	return riff(webpChunk("VP8L", b.out))
 }
+
+// Adversarial lossless WebP: the most Huffman groups Go's decoder accepts
+// (2600, each referenced by a tile of the meta image so that all are built),
+// each with five full trees and an 11-bit colour cache in the green alphabet,
+// as small as possible in the file. Pixels are one literal and LZ77 copies.
+
+// code writes a Huffman code MSB first, as the decoder reads it.
+func (b *vp8lBits) code(c uint32, n uint) {
+	for i := int(n) - 1; i >= 0; i-- {
+		b.put(c>>uint(i)&1, 1)
+	}
+}
+
+// prefixCode is a canonical prefix code: lengths and codes per symbol.
+type prefixCode struct{ len, code []uint32 }
+
+// canonical assigns canonical codes to lengths (0 = unused symbol).
+func canonical(lengths []uint32) prefixCode {
+	codes := make([]uint32, len(lengths))
+	next := uint32(0)
+	for l := uint32(1); l <= 15; l++ {
+		for s, sl := range lengths {
+			if sl == l {
+				codes[s] = next
+				next++
+			}
+		}
+		next <<= 1
+	}
+	return prefixCode{lengths, codes}
+}
+
+func (b *vp8lBits) sym(c prefixCode, s uint32) { b.code(c.code[s], uint(c.len[s])) }
+
+// fullTree writes a complete normal prefix code over all n symbols (Go's
+// decoder allocates 2n-1 nodes for it): the first 2^L-n symbols get length
+// L-1, the rest length L, with L = ceil(log2 n). The code lengths are coded
+// with a code-length code of the two lengths and 16 (repeat the previous
+// length 3-6 times). It returns the code for writing symbols.
+func (b *vp8lBits) fullTree(n int) prefixCode {
+	L := uint32(1)
+	for 1<<L < n {
+		L++
+	}
+	short := 1<<L - n
+	lengths := make([]uint32, n)
+	for i := range lengths {
+		lengths[i] = L
+		if i < short {
+			lengths[i] = L - 1
+		}
+	}
+	clLengths := make([]uint32, 19)
+	clLengths[16] = 1
+	if short > 0 {
+		clLengths[L-1], clLengths[L] = 2, 2
+	} else {
+		clLengths[L] = 1
+	}
+	cl := canonical(clLengths)
+	order := []int{17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	last := 0
+	for i, sym := range order {
+		if clLengths[sym] != 0 {
+			last = i
+		}
+	}
+	b.put(0, 1) // normal code
+	b.put(uint32(last+1-4), 4)
+	for _, sym := range order[:last+1] {
+		b.put(clLengths[sym], 3)
+	}
+	b.put(0, 1) // lengths for the whole alphabet
+	run := func(l uint32, count int) {
+		if count == 0 {
+			return
+		}
+		b.sym(cl, l)
+		r := count - 1
+		for r >= 3 {
+			k := min(r, 6)
+			if rem := r - k; (rem == 1 || rem == 2) && k-(3-rem) >= 3 {
+				k -= 3 - rem
+			}
+			b.sym(cl, 16)
+			b.put(uint32(k-3), 2)
+			r -= k
+		}
+		for ; r > 0; r-- {
+			b.sym(cl, l)
+		}
+	}
+	run(L-1, short)
+	run(L, n-short)
+	return canonical(lengths)
+}
+
+// oneSymbol writes a simple prefix code with a single symbol (zero bits).
+func (b *vp8lBits) oneSymbol(s uint32) {
+	b.put(1, 1)
+	b.put(0, 1)
+	b.put(1, 1)
+	b.put(s, 8)
+}
+
+// lz77 returns the prefix symbol and extra bits of an LZ77 length or distance.
+func lz77(v uint32) (sym uint32, extra uint32, n uint) {
+	if v <= 4 {
+		return v - 1, 0, 0
+	}
+	for s := uint32(4); ; s++ {
+		eb := (s - 2) >> 1
+		off := (2 + s&1) << eb
+		if v-1 >= off && v-1 < off+1<<eb {
+			return s, v - 1 - off, uint(eb)
+		}
+	}
+}
+
+// manyGroupsVP8L returns the VP8L bitstream after the 5-byte header (as an
+// ALPH chunk carries it) for a w x h image; palette adds a 16-colour colour
+// indexing transform.
+func manyGroupsVP8L(w, h int, palette bool) []byte {
+	var b vp8lBits
+	if palette {
+		b.put(1, 1)
+		b.put(3, 2)
+		b.put(15, 8)
+		b.put(0, 1)
+		b.simpleCodes(0x20, 0x40, 0x60, 0xFF)
+		w = (w + 1) / 2
+	}
+	b.put(0, 1) // no more transforms
+	b.put(1, 1) // colour cache
+	b.put(11, 4)
+	// The largest tiles (smallest meta image) that still give every group a
+	// tile; the decoder reads as many groups as the largest index plus one.
+	tiles := func(bits int) (int, int) { return (w + 1<<bits - 1) >> bits, (h + 1<<bits - 1) >> bits }
+	hBits := 2
+	for hBits < 9 {
+		tw, th := tiles(hBits + 1)
+		if tw*th < 2600 {
+			break
+		}
+		hBits++
+	}
+	tw, th := tiles(hBits)
+	groups := min(2600, tw*th)
+	b.put(1, 1) // meta prefix codes
+	b.put(uint32(hBits-2), 3)
+	// Meta image: tile i uses group i % groups; green and red carry the index.
+	b.put(0, 1) // no colour cache
+	mg := b.fullTree(280)
+	mr := b.fullTree(256)
+	b.oneSymbol(0)
+	b.oneSymbol(0)
+	b.oneSymbol(0)
+	for i := 0; i < tw*th; i++ {
+		g := uint32(i % groups)
+		b.sym(mg, g&0xFF)
+		b.sym(mr, g>>8)
+	}
+	var green, red, blue, alpha, dist prefixCode
+	for g := 0; g < groups; g++ {
+		green = b.fullTree(280 + 2048)
+		red = b.fullTree(256)
+		blue = b.fullTree(256)
+		alpha = b.fullTree(256)
+		dist = b.fullTree(40)
+	}
+	// One literal pixel, then copies of the previous pixel.
+	b.sym(green, 3)
+	b.sym(red, 0)
+	b.sym(blue, 0)
+	b.sym(alpha, 255)
+	for left := uint32(w*h - 1); left > 0; {
+		n := min(left, 4096)
+		s, e, eb := lz77(n)
+		b.sym(green, 256+s)
+		b.put(e, eb)
+		ds, de, deb := lz77(121) // distance code 121: the previous pixel
+		b.sym(dist, ds)
+		b.put(de, deb)
+		left -= n
+	}
+	b.put(0, 7)
+	return b.out
+}
+
+// webpManyGroups is a lossless WebP with manyGroupsVP8L.
+func webpManyGroups(w, h int, palette bool) []byte {
+	var hdr vp8lBits
+	hdr.put(0x2f, 8)
+	hdr.put(uint32(w-1), 14)
+	hdr.put(uint32(h-1), 14)
+	hdr.put(0, 1)
+	hdr.put(0, 3)
+	return riff(webpChunk("VP8L", append(hdr.out, manyGroupsVP8L(w, h, palette)...)))
+}
+
+// vp8Frame is a lossy key frame of w x h with zero-filled partitions, which
+// Go's decoder reads as a flat image.
+func vp8Frame(w, h int) []byte {
+	const firstPart = 1 << 16
+	frame := make([]byte, 10+firstPart+1<<16)
+	tag := uint32(1<<4 | firstPart<<5) // key frame, version 0, shown
+	frame[0], frame[1], frame[2] = byte(tag), byte(tag>>8), byte(tag>>16)
+	copy(frame[3:], []byte{0x9d, 0x01, 0x2a})
+	binary.LittleEndian.PutUint16(frame[6:], uint16(w))
+	binary.LittleEndian.PutUint16(frame[8:], uint16(h))
+	return frame
+}
+
+// webpLossy is a flat w x h lossy WebP.
+func webpLossy(w, h int) []byte { return riff(webpChunk("VP8 ", vp8Frame(w, h))) }
+
+// webpAlphaManyGroups is a lossy WebP whose alpha channel is the
+// adversarial lossless stream.
+func webpAlphaManyGroups(w, h int) []byte {
+	alph := append([]byte{1}, manyGroupsVP8L(w, h, false)...) // lossless compression, no filter
+	return riff(vp8xChunk(0x10, uint32(w), uint32(h)), webpChunk("ALPH", alph), webpChunk("VP8 ", vp8Frame(w, h)))
+}
