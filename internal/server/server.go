@@ -68,11 +68,16 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 	})
 	readerH.Register(mux)
 	if o.studio != nil {
+		meta := map[string]string{}
+		for name, asset := range map[string]string{"learnoo-katex-js": "vendor/katex/katex.min.js", "learnoo-katex-css": "vendor/katex/katex.min.css"} {
+			meta[name], _ = readerH.AssetURL(asset) // public asset names: never an error
+		}
 		studioweb.New(studioweb.Config{
 			Auth:      authH,
 			Perms:     permissions.NewStore(db),
 			Files:     o.studio,
 			ErrorPage: readerH.ErrorPage,
+			Meta:      meta,
 			Log:       log,
 		}).Register(mux)
 	}

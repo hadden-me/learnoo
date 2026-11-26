@@ -73,3 +73,15 @@ func TestBuiltIndexFitsTheCSP(t *testing.T) {
 		}
 	}
 }
+
+func TestWithMeta(t *testing.T) {
+	h := &Handler{Config{Meta: map[string]string{"b": `/x?a=1&b="2"`, "a": "/y"}}}
+	got := string(h.withMeta([]byte(`<html><head><title>t</title></head><body></body></html>`)))
+	want := `<html><head><title>t</title><meta name="a" content="/y"><meta name="b" content="/x?a=1&amp;b=&#34;2&#34;"></head><body></body></html>`
+	if got != want {
+		t.Fatalf("got %s", got)
+	}
+	if got := string(h.withMeta([]byte("no head"))); got != "no head" {
+		t.Fatalf("without </head>: %s", got)
+	}
+}

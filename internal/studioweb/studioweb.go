@@ -21,13 +21,16 @@ package studioweb
 import (
 	"bytes"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,7 +78,11 @@ type Config struct {
 	Files fs.FS
 	// ErrorPage renders an HTML error page (the reader's).
 	ErrorPage func(w http.ResponseWriter, r *http.Request, status int, heading, message string)
-	Log       *slog.Logger
+	// Meta is added to index.html as <meta name content> elements before
+	// </head>: the application's fingerprinted asset URLs the Studio loads
+	// at run time (KaTeX for the preview, see web/studio/src/preview.ts).
+	Meta map[string]string
+	Log  *slog.Logger
 }
 
 // Handler serves the Studio.
@@ -179,12 +186,18 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 	content, ok := f.(io.ReadSeeker)
+	if name == "index.html" && len(h.Meta) > 0 {
+		ok = false // read into memory to add the meta elements
+	}
 	if !ok {
 		data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
 		if err != nil || len(data) > MaxFileBytes {
 			h.Log.Error("studio: read file", "err", err)
 			auth.WriteError(w, http.StatusInternalServerError, "internal", "Something went wrong. Try again later.")
 			return
+		}
+		if name == "index.html" {
+			data = h.withMeta(data)
 		}
 		content = bytes.NewReader(data)
 	}
@@ -194,6 +207,22 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 		w.Header().Set("Cache-Control", AssetCacheControl)
 	}
 	http.ServeContent(w, r, path.Base(name), time.Time{}, content)
+}
+
+// withMeta inserts the Meta elements, sorted by name, before the first
+// </head>; a page without one is returned unchanged.
+func (h *Handler) withMeta(page []byte) []byte {
+	i := bytes.Index(page, []byte("</head>"))
+	if i < 0 || len(h.Meta) == 0 {
+		return page
+	}
+	var b bytes.Buffer
+	b.Write(page[:i])
+	for _, name := range slices.Sorted(maps.Keys(h.Meta)) {
+		b.WriteString(`<meta name="` + html.EscapeString(name) + `" content="` + html.EscapeString(h.Meta[name]) + `">`)
+	}
+	b.Write(page[i:])
+	return b.Bytes()
 }
 
 func notFound(w http.ResponseWriter) {

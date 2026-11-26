@@ -142,8 +142,18 @@ func TestStudioDeniesUsersWithoutStaffAccess(t *testing.T) {
 	wantPage(t, "revoked author", f.studio(f.author, http.MethodGet, "/studio"), http.StatusForbidden)
 }
 
+// servedStudioIndex is studioIndex as the server sends it: with the
+// fingerprinted KaTeX URLs for the preview (web/studio/src/preview.ts).
+func servedStudioIndex(t *testing.T) string {
+	t.Helper()
+	meta := `<meta name="learnoo-katex-css" content="` + mustAssetURL(t, "vendor/katex/katex.min.css") + `">` +
+		`<meta name="learnoo-katex-js" content="` + mustAssetURL(t, "vendor/katex/katex.min.js") + `">`
+	return strings.Replace(studioIndex, "</head>", meta+"</head>", 1)
+}
+
 func TestStudioServesTheBundleToStaff(t *testing.T) {
 	f := newStudioReader(t)
+	studioIndex := servedStudioIndex(t)
 	for name, u := range map[string]apiUser{"author": f.author, "reviewer": f.reviewer, "publisher": f.publisher, "admin": f.admin} {
 		w := f.studio(u, http.MethodGet, "/studio")
 		if w.Code != http.StatusOK || w.Body.String() != studioIndex {
