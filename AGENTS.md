@@ -16,7 +16,7 @@ Never credit an AI tool (Claude, Codex, Copilot, ChatGPT or similar) in commits,
 
 ## Task boundaries and implementation
 
-Work on an assigned issue or explicitly requested scope. Read its dependencies and acceptance criteria before editing. If prerequisites are missing, identify them rather than silently inventing educational content, legal permissions, or completed work.
+Work on an assigned issue or explicitly requested scope. Scoped exception: on 2026-11-26 the maintainer authorized agents to implement the bounded LMS product-completion backlog ([docs/LMS_DELIVERY_BACKLOG.md](docs/LMS_DELIVERY_BACKLOG.md)) continuously, through issues they create and assign, independent review, CI and merge, without a per-slice approval checkpoint; limits and remaining gates are in [DECISIONS.md](docs/DECISIONS.md#lms-scope-reconciliation--2026-11-26). Read its dependencies and acceptance criteria before editing. If prerequisites are missing, identify them rather than silently inventing educational content, legal permissions, or completed work.
 
 The selected stack is Go for the backend and server-rendered reader, PostgreSQL for persistence, and React/TypeScript with TipTap for Studio. Begin math rendering with locally hosted browser-side KaTeX. A local renderer experiment exists; read docs/DEVELOPMENT.md for verified setup and test commands. It is not the authenticated application. Do not expose the experiment publicly.
 

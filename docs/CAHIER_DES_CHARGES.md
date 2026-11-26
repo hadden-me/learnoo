@@ -4,7 +4,7 @@
 
 The maintainer expects a usable LMS: teacher-managed courses, curriculum level/section/subject assignment, and a real public/student entry experience. Read [the complete product specification](LMS_PRODUCT_SPEC.md) and [delivery backlog](LMS_DELIVERY_BACKLOG.md), incorporated by the implementation plan. They define the next milestone, not implemented status. Course means a teacher-owned collection of ordered modules/lessons; official curriculum chapters remain administrator-managed. A teacher can create modules and select valid curriculum assignments without creating official subjects/levels. Public homepage, discovery and course CRUD are part of product completion, not optional polish.
 
-The status table below is a historical snapshot; consult GitHub for live progress. Core lesson workflows have since been merged, but completion of those issues does not imply the entire LMS is complete.
+The LMS specification moves the Arabic interface (LRN-023) and the public catalogue (LRN-024) from M3 into product completion; their public release still waits for the M3 gates. The status table below is a historical snapshot; consult GitHub for live progress. Core lesson workflows have since been merged, but completion of those issues does not imply the entire LMS is complete.
 
 Status: living project specification. Last updated 2026-11-24.
 
