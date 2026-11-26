@@ -62,13 +62,12 @@ func (s SubjectAvailability) Empty() bool { return s.Courses == 0 && s.Lessons =
 // PublicSection is an academic section in the catalogue with its current
 // edition (nil when none) and that edition's subjects.
 type PublicSection struct {
-	LevelCode  string
-	LevelName  string
-	Code       string
-	Name       string
-	Current    *Edition
-	HasEarlier bool
-	Subjects   []SubjectAvailability
+	LevelCode string
+	LevelName string
+	Code      string
+	Name      string
+	Current   *Edition
+	Subjects  []SubjectAvailability
 }
 
 // Path is the section's catalogue URL (current edition).
@@ -111,13 +110,50 @@ type UnplacedSubject struct {
 // Label is the subject's name in the French interface.
 func (s UnplacedSubject) Label() catalogue.Label { return s.Names.Label(s.Code, "fr") }
 
+// readOnly runs fn in one read-only repeatable-read snapshot, so that a page
+// assembled from several queries is consistent.
+func (s *Store) readOnly(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("public snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // Curriculum lists non-retired levels and sections, by display order then
 // code, each section with its current edition and that edition's subjects.
 func (s *Store) Curriculum(ctx context.Context) ([]PublicLevel, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT lv.code, lv.name_fr, sc.code, sc.name_fr, e.id, e.code, e.label_fr,
-		       EXISTS (SELECT 1 FROM curriculum_editions o
-		                WHERE o.section_id = sc.id AND o.state IN ('superseded', 'retired'))
+	var levels []PublicLevel
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var err error
+		levels, err = s.curriculum(ctx, tx)
+		return err
+	})
+	return levels, err
+}
+
+// CatalogueIndex is Curriculum and Unplaced in one snapshot.
+func (s *Store) CatalogueIndex(ctx context.Context) ([]PublicLevel, []UnplacedSubject, error) {
+	var levels []PublicLevel
+	var unplaced []UnplacedSubject
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var err error
+		if levels, err = s.curriculum(ctx, tx); err != nil {
+			return err
+		}
+		unplaced, err = s.unplaced(ctx, tx)
+		return err
+	})
+	return levels, unplaced, err
+}
+
+func (s *Store) curriculum(ctx context.Context, q querier) ([]PublicLevel, error) {
+	rows, err := q.Query(ctx, `
+		SELECT lv.code, lv.name_fr, sc.code, sc.name_fr, e.id, e.code, e.label_fr
 		  FROM education_levels lv
 		  JOIN academic_sections sc ON sc.level_id = lv.id
 		  LEFT JOIN curriculum_editions e ON e.section_id = sc.id AND e.state = 'current'
@@ -135,7 +171,7 @@ func (s *Store) Curriculum(ctx context.Context) ([]PublicLevel, error) {
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		err := r.Scan(&x.sec.LevelCode, &x.sec.LevelName, &x.sec.Code, &x.sec.Name, &x.editionID, &x.code, &x.label, &x.sec.HasEarlier)
+		err := r.Scan(&x.sec.LevelCode, &x.sec.LevelName, &x.sec.Code, &x.sec.Name, &x.editionID, &x.code, &x.label)
 		return x, err
 	})
 	if err != nil {
@@ -148,7 +184,7 @@ func (s *Store) Curriculum(ctx context.Context) ([]PublicLevel, error) {
 			ids = append(ids, *list[i].editionID)
 		}
 	}
-	subjects, err := s.editionSubjects(ctx, ids)
+	subjects, err := s.editionSubjects(ctx, q, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -167,12 +203,12 @@ func (s *Store) Curriculum(ctx context.Context) ([]PublicLevel, error) {
 
 // editionSubjects returns, per edition, its assigned subjects (by the
 // catalogue's display order, then code) with their readable content.
-func (s *Store) editionSubjects(ctx context.Context, editionIDs []int64) (map[int64][]SubjectAvailability, error) {
+func (s *Store) editionSubjects(ctx context.Context, q querier, editionIDs []int64) (map[int64][]SubjectAvailability, error) {
 	out := map[int64][]SubjectAvailability{}
 	if len(editionIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(ctx, `
+	rows, err := q.Query(ctx, `
 		SELECT a.edition_id, sj.code, sj.name_fr, sj.name_ar,
 		       (SELECT count(DISTINCT pc.course_id)
 		          FROM course_revision_assignments cra
@@ -213,10 +249,12 @@ const unplacedCondition = `(p.chapter_id IS NULL OR NOT EXISTS (
 		  JOIN curriculum_editions e ON e.id = a.edition_id
 		 WHERE cac.chapter_id = p.chapter_id AND e.state <> 'draft'))`
 
-// Unplaced lists published lessons not yet placed in a curriculum edition,
+// unplaced lists published lessons not yet placed in a curriculum edition,
 // grouped by subject (display order, then code), lessons by folded title.
-func (s *Store) Unplaced(ctx context.Context) ([]UnplacedSubject, error) {
-	rows, err := s.db.Query(ctx, `
+// They are listed under their subject only, never under a level, section or
+// edition (spec §2 rule 5).
+func (s *Store) unplaced(ctx context.Context, q querier) ([]UnplacedSubject, error) {
+	rows, err := q.Query(ctx, `
 		SELECT sj.code, sj.name_fr, sj.name_ar, p.public_id::text, p.title, p.language
 		  FROM reader_published_lessons p
 		  JOIN subjects sj ON sj.id = p.subject_id
@@ -282,16 +320,23 @@ var codePattern = subjectCodePattern
 // draft editions are ErrNotFound. Retired levels and sections still
 // resolve, so that the labelled path of their editions keeps working.
 func (s *Store) Section(ctx context.Context, levelCode, sectionCode, editionCode string) (SectionPage, error) {
-	p, _, err := s.section(ctx, s.db, levelCode, sectionCode, editionCode)
+	var p SectionPage
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var err error
+		if p, _, err = s.section(ctx, tx, levelCode, sectionCode, editionCode); err != nil {
+			return err
+		}
+		if p.Edition != nil {
+			subjects, err := s.editionSubjects(ctx, tx, []int64{p.Edition.ID})
+			if err != nil {
+				return err
+			}
+			p.Subjects = subjects[p.Edition.ID]
+		}
+		return nil
+	})
 	if err != nil {
 		return SectionPage{}, err
-	}
-	if p.Edition != nil {
-		subjects, err := s.editionSubjects(ctx, []int64{p.Edition.ID})
-		if err != nil {
-			return SectionPage{}, err
-		}
-		p.Subjects = subjects[p.Edition.ID]
 	}
 	return p, nil
 }
@@ -322,7 +367,7 @@ func (s *Store) section(ctx context.Context, q querier, levelCode, sectionCode, 
 	rows, err := q.Query(ctx, `
 		SELECT id, code, label_fr, state FROM curriculum_editions
 		 WHERE section_id = $1 AND state <> 'draft'
-		 ORDER BY current_since DESC, id DESC
+		 ORDER BY current_since DESC NULLS LAST, id DESC
 		 LIMIT $2`, sectionID, maxListed)
 	if err != nil {
 		return SectionPage{}, 0, fmt.Errorf("editions: %w", err)
@@ -356,15 +401,15 @@ func (s *Store) section(ctx context.Context, q querier, levelCode, sectionCode, 
 }
 
 // SubjectPage is a subject of a section's edition: its published courses
-// placed in that edition, its published lessons placed there (by the
-// assignment's chapter order) and its lessons not yet placed in any edition.
+// placed in that edition and its published lessons placed there (by the
+// assignment's chapter order). Lessons not yet placed in any edition are not
+// listed here (see unplaced).
 type SubjectPage struct {
 	Section  SectionPage
 	Code     string
 	Names    catalogue.Names
 	Courses  []PublicCourseSummary
 	Chapters []PublicChapter
-	Unplaced []PublicLesson
 }
 
 // Label is the subject's name in the French interface.
@@ -410,12 +455,12 @@ func (s *Store) Subject(ctx context.Context, levelCode, sectionCode, subjectCode
 		return SubjectPage{}, ErrNotFound
 	}
 	p := SubjectPage{Section: sec}
-	var assignmentID, subjectID int64
+	var assignmentID int64
 	err = tx.QueryRow(ctx, `
-		SELECT a.id, sj.id, sj.code, sj.name_fr, sj.name_ar
+		SELECT a.id, sj.code, sj.name_fr, sj.name_ar
 		  FROM curriculum_assignments a JOIN subjects sj ON sj.id = a.subject_id
 		 WHERE a.edition_id = $1 AND sj.code = $2`, sec.Edition.ID, subjectCode).Scan(
-		&assignmentID, &subjectID, &p.Code, &p.Names.Fr, &p.Names.Ar)
+		&assignmentID, &p.Code, &p.Names.Fr, &p.Names.Ar)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SubjectPage{}, ErrNotFound
 	}
@@ -471,25 +516,7 @@ func (s *Store) Subject(ctx context.Context, levelCode, sectionCode, subjectCode
 		p.Chapters[len(p.Chapters)-1].Lessons = append(p.Chapters[len(p.Chapters)-1].Lessons, x.l)
 	}
 
-	rows, err = tx.Query(ctx, `
-		SELECT p.public_id::text, p.title, p.language
-		  FROM reader_published_lessons p
-		 WHERE p.subject_id = $1 AND `+unplacedCondition+`
-		 ORDER BY reader_fold(p.title), p.public_id
-		 LIMIT $2`, subjectID, maxListed)
-	if err != nil {
-		return SubjectPage{}, fmt.Errorf("unplaced lessons: %w", err)
-	}
-	if p.Unplaced, err = pgx.CollectRows(rows, scanPublicLesson); err != nil {
-		return SubjectPage{}, fmt.Errorf("unplaced lessons: %w", err)
-	}
 	return p, tx.Commit(ctx)
-}
-
-func scanPublicLesson(r pgx.CollectableRow) (PublicLesson, error) {
-	var l PublicLesson
-	err := r.Scan(&l.PublicID, &l.Title, &l.Language)
-	return l, err
 }
 
 // CourseOverview is the public overview of a readable course: the
@@ -608,7 +635,7 @@ func (s *Store) Course(ctx context.Context, publicID string) (CourseOverview, er
 		  JOIN academic_sections sc ON sc.id = e.section_id
 		  JOIN education_levels lv ON lv.id = sc.level_id
 		 WHERE cra.course_revision_id = $1
-		 ORDER BY lv.display_order, lv.code, sc.display_order, sc.code, e.current_since DESC, e.id DESC`, revisionID)
+		 ORDER BY lv.display_order, lv.code, sc.display_order, sc.code, e.current_since DESC NULLS LAST, e.id DESC`, revisionID)
 	if err != nil {
 		return CourseOverview{}, fmt.Errorf("course placement: %w", err)
 	}

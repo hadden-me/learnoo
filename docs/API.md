@@ -770,14 +770,14 @@ Submission, independent review, amendments, publication, suspension, archive, wi
 
 ## Public pages (LMS-B07)
 
-Server-rendered HTML, readable without an account, identical for every visitor ([LMS_CONTRACT.md §9](LMS_CONTRACT.md#9-reader-and-public-routes-b07b08)). They are mounted without the session middleware: the cookie is never read or cleared, and no user, CSRF token or signed-in navigation appears. Headers: `Cache-Control: public, no-cache`, a strong `ETag` of the page (`If-None-Match` answers `304`), no `Vary`, the reader's page CSP. A `GET` route also answers `HEAD`.
+Server-rendered HTML, readable without an account, identical for every visitor ([LMS_CONTRACT.md §9](LMS_CONTRACT.md#9-reader-and-public-routes-b07b08)). They are mounted without the session middleware: the cookie is never read or cleared, and no user, CSRF token or signed-in navigation appears. Headers: `Cache-Control: public, no-cache`, a strong `ETag` of the page (`If-None-Match` answers `304`), no `Vary`, the reader's page CSP; `404` notices and every cover `404` are `no-store` without an `ETag`. A `GET` route also answers `HEAD`.
 
 | Route | Content |
 | --- | --- |
 | `GET /` | Homepage: the free service, the review process, the contribution path (Studio access by invitation), sign-in and catalogue links, and the curriculum actually available (non-retired levels and sections with a current edition, subjects with real counts of readable courses and placed lessons). No registration link. |
-| `GET /catalogue` | Levels and sections with their current edition; published lessons not yet placed in an edition, by subject. |
+| `GET /catalogue` | Levels and sections with their current edition; published lessons not yet placed in an edition, by subject (the only place they are listed). |
 | `GET /catalogue/{level}/{section}[?edition={code}]` | The section in its current edition (or the named current, superseded or retired edition, labelled as earlier), its subjects, and links to its earlier editions. |
-| `GET /catalogue/{level}/{section}/{subject}[?edition={code}]` | Readable courses placed in that edition's assignment; published lessons whose published revision's chapter the assignment lists (by its chapter order); the subject's lessons not yet placed. Courses and lessons are labelled. |
+| `GET /catalogue/{level}/{section}/{subject}[?edition={code}]` | Readable courses placed in that edition's assignment; published lessons whose published revision's chapter the assignment lists (by its chapter order). Courses and lessons are labelled. Lessons not yet placed are never listed under a level, section or edition. |
 | `GET /courses/{publicId}` | Overview of a course in `reader_published_courses`: title, summary, objectives, prerequisites, language, subject, placements with edition labels, module titles and course-authored step titles (with an unavailable notice for unreadable steps), author and course reviewer, cover with its alt text, and a sign-in link to `/login?next=/learn/courses/{publicId}`. |
 | `GET /courses/{publicId}/cover` | The cover image of the published revision of a readable course (`ETag`, the media CSP). Anything else: JSON `404 not_found`. |
 

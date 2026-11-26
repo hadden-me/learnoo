@@ -100,8 +100,8 @@ func (h *Handlers) renderPublic(w http.ResponseWriter, r *http.Request, status i
 	sum := sha256.Sum256(buf.Bytes())
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/html; charset=utf-8")
-	hdr.Set("ETag", `"`+hex.EncodeToString(sum[:16])+`"`)
 	if status == http.StatusOK {
+		hdr.Set("ETag", `"`+hex.EncodeToString(sum[:16])+`"`)
 		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(buf.Bytes()))
 		return
 	}
@@ -112,7 +112,10 @@ func (h *Handlers) renderPublic(w http.ResponseWriter, r *http.Request, status i
 	}
 }
 
+// publicNotFound renders the 404 notice. A negative answer is never stored
+// (no-store, no ETag), so a course that becomes readable shows at once.
 func (h *Handlers) publicNotFound(w http.ResponseWriter, r *http.Request, heading, message string) {
+	w.Header().Set("Cache-Control", "no-store")
 	h.renderPublic(w, r, http.StatusNotFound, "public_notice", publicView{Title: heading,
 		Data: struct{ Heading, Message string }{heading, message}})
 }
@@ -159,14 +162,9 @@ type catalogueData struct {
 }
 
 func (h *Handlers) catalogueIndex(w http.ResponseWriter, r *http.Request) {
-	levels, err := h.Store.Curriculum(r.Context())
+	levels, unplaced, err := h.Store.CatalogueIndex(r.Context())
 	if err != nil {
-		h.publicInternal(w, r, "curriculum", err)
-		return
-	}
-	unplaced, err := h.Store.Unplaced(r.Context())
-	if err != nil {
-		h.publicInternal(w, r, "unplaced lessons", err)
+		h.publicInternal(w, r, "catalogue index", err)
 		return
 	}
 	h.renderPublic(w, r, http.StatusOK, "catalogue", publicView{Title: "Catalogue",
@@ -273,28 +271,35 @@ func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
 // 404. Readability is checked before the ETag, so a revalidation after a
 // suspension gets 404, not 304. The stored file never changes for a key, so
 // the ETag derives from the key.
+// coverNotFound is the JSON 404 of the cover route; like every negative
+// answer it must not be stored by any cache.
+func coverNotFound(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Del("ETag")
+	staticNotFound(w)
+}
+
 func (h *Handlers) courseCover(w http.ResponseWriter, r *http.Request) {
 	key, err := h.Store.CourseCover(r.Context(), r.PathValue("publicId"))
 	if errors.Is(err, ErrNotFound) {
-		staticNotFound(w)
+		coverNotFound(w)
 		return
 	}
 	if err != nil {
 		h.Log.Error("public page failure", "op", "course cover", "err", err)
-		w.Header().Set("Cache-Control", "no-store")
-		staticNotFound(w)
+		coverNotFound(w)
 		return
 	}
 	ctype, err := media.ContentTypeForKey(key)
 	if err != nil {
 		h.Log.Error("course cover unavailable", "err", err)
-		staticNotFound(w)
+		coverNotFound(w)
 		return
 	}
 	f, err := h.Media.Open(key)
 	if err != nil {
 		h.Log.Error("course cover unavailable", "err", err)
-		staticNotFound(w)
+		coverNotFound(w)
 		return
 	}
 	defer f.Close()

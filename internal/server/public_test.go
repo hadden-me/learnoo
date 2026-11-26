@@ -183,8 +183,16 @@ func checkPublicHeaders(t *testing.T, what string, w *httptest.ResponseRecorder)
 	if w.Code >= 500 {
 		t.Fatalf("%s: %d %s", what, w.Code, w.Body)
 	}
-	if cc := w.Header().Get("Cache-Control"); cc != reader.PublicCacheControl {
-		t.Errorf("%s: Cache-Control %q, want %q", what, cc, reader.PublicCacheControl)
+	// Negative answers are never stored; everything else revalidates.
+	want := reader.PublicCacheControl
+	if w.Code == http.StatusNotFound {
+		want = "no-store"
+		if w.Header().Get("ETag") != "" {
+			t.Errorf("%s: 404 with an ETag", what)
+		}
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != want {
+		t.Errorf("%s: Cache-Control %q, want %q", what, cc, want)
 	}
 	if v := w.Header().Values("Vary"); len(v) != 0 {
 		t.Errorf("%s: Vary %q", what, v)
@@ -217,6 +225,14 @@ func TestPublicCatalogueAndCourseOverview(t *testing.T) {
 	p.publishNew("TEST Titre leçon sans chapitre", "fr", nil)
 	p.publishNew("TEST Titre leçon hors programme", "fr", &chD)
 	p.publishNew("TEST Titre leçon brouillon", "fr", &chE)
+	// Another subject, in no edition, with an unplaced lesson.
+	g := p.readerFixture
+	g.subject, g.reviewer = p.newSubject("test-physics"), p.newUser("test-reviewer-physics", 0)
+	if _, err := permissions.NewStore(p.db).GrantReviewer(ctx, testOperator, g.reviewer.id, g.subject); err != nil {
+		t.Fatal(err)
+	}
+	g.publishNew("TEST Titre physique sans chapitre", "fr", nil)
+	unplacedTitles := []string{"TEST Titre leçon sans chapitre", "TEST Titre leçon hors programme", "TEST Titre leçon brouillon", "TEST Titre physique sans chapitre"}
 	// An unpublished lesson in a placed chapter is never listed.
 	p.approved(0, readerDoc("TEST Titre leçon non publiée", "fr"), "fr", &chA)
 
@@ -278,6 +294,20 @@ func TestPublicCatalogueAndCourseOverview(t *testing.T) {
 		`<a href="/catalogue/test-bac/test-maths">TEST Section mathématiques</a>`, "TEST Édition 2026 (en vigueur)",
 		"Leçons pas encore placées dans une édition du programme", "TEST Titre leçon sans chapitre", "TEST Titre leçon hors programme", "TEST Titre leçon brouillon")
 	wantAbsent(t, "catalogue", bodies["/catalogue"], "TEST Titre leçon A", "TEST Titre leçon B")
+	// Each unplaced lesson is listed under its own subject only.
+	index := bodies["/catalogue"].Body.String()
+	mathPart, physicsPart, ok := strings.Cut(index[strings.Index(index, `id="unplaced-heading"`):], "<h3>test-physics</h3>")
+	if !ok || !strings.Contains(mathPart, "<h3>TEST Mathématiques</h3>") || strings.Contains(mathPart, "TEST Titre physique") ||
+		!strings.Contains(physicsPart, "TEST Titre physique sans chapitre") || strings.Contains(physicsPart, "TEST Titre leçon") {
+		t.Errorf("unplaced lessons grouped under the wrong subject: %s", index)
+	}
+	// Never under a level, section or edition.
+	for path, w := range bodies {
+		if strings.HasPrefix(path, "/catalogue/") {
+			wantAbsent(t, "unplaced under "+path, w, unplacedTitles...)
+			wantAbsent(t, "unplaced under "+path, w, "pas encore placées dans une édition du programme</h2>")
+		}
+	}
 
 	// Section: current edition by default, subjects by name with real
 	// counts, earlier editions behind an explicit labelled link; drafts
@@ -298,8 +328,9 @@ func TestPublicCatalogueAndCourseOverview(t *testing.T) {
 	wantInOrder(t, "subject", subj.Body.String(), "<h1>TEST Mathématiques</h1>", "Édition : TEST Édition 2026 (en vigueur)",
 		`<h2 id="courses-heading">Cours</h2>`, `<span class="kind">Cours</span><a href="/courses/`+c2.PublicID+`" lang="fr" dir="ltr">TEST Cours 2026</a>`,
 		`<h2 id="lessons-heading">Leçons</h2>`, "<h3>TEST Suites</h3>", `<span class="kind lesson">Leçon</span><a href="/learn/lessons/`+lA.publicID+`" lang="fr" dir="ltr">TEST Titre leçon A</a>`,
-		"<h3>ch-b</h3>", "TEST Titre leçon B", "Leçons pas encore placées", "TEST Titre leçon brouillon")
+		"<h3>ch-b</h3>", "TEST Titre leçon B")
 	wantPage(t, "subject", subj, http.StatusOK, `<a href="/courses/`+c3.PublicID+`" lang="ar" dir="rtl">TEST دورة</a>`,
+		`<span class="kind lesson">Leçon</span><a href="/learn/lessons/`+lAr.publicID+`" lang="ar" dir="rtl">TEST عنوان درس</a>`,
 		`<p class="summary multiline" lang="fr" dir="ltr">TEST résumé 2026`)
 	wantAbsent(t, "subject", subj, "TEST Cours 2025", cHidden.PublicID)
 	subjOld := bodies["/catalogue/test-bac/test-maths/test-math?edition=test-2025"]
@@ -312,7 +343,7 @@ func TestPublicCatalogueAndCourseOverview(t *testing.T) {
 	// credit, language, cover, and a sign-in link carrying the return path.
 	co := bodies["/courses/"+c2.PublicID]
 	wantPage(t, "course", co, http.StatusOK, `<h1 id="course-title" lang="fr" dir="ltr">TEST Cours 2026</h1>`,
-		`<img src="/courses/`+c2.PublicID+`/cover" alt="TEST description de la couverture" lang="fr">`,
+		`<img src="/courses/`+c2.PublicID+`/cover" alt="TEST description de la couverture" lang="fr" dir="ltr">`,
 		"TEST résumé 2026\nSur deux lignes.", "TEST objectifs du cours\nSavoir calculer.", "TEST prérequis du cours",
 		"<dd>Français</dd>", `<a href="/catalogue/test-bac/test-maths/test-math">TEST Baccalauréat › TEST Section mathématiques</a> · TEST Édition 2026 (en vigueur)`,
 		"TEST Module TEST Cours 2026", "TEST Étape A TEST Cours 2026", "TEST Étape B TEST Cours 2026",
@@ -464,4 +495,98 @@ func TestPublicSignInReturnPath(t *testing.T) {
 		w = f.page(apiUser{}, http.MethodPost, "/login", form, withAddr("203.0.113.77"))
 		wantRedirect(t, "login submit "+next, w, want)
 	}
+}
+
+// version reads the optimistic version of a curriculum row.
+func (p publicEnv) version(table string, id int64) int {
+	p.t.Helper()
+	var v int
+	if err := p.db.QueryRow(context.Background(), `SELECT version FROM `+table+` WHERE id = $1`, id).Scan(&v); err != nil {
+		p.t.Fatal(err)
+	}
+	return v
+}
+
+func TestPublicRetiredCurriculumAndWithdrawnRevisions(t *testing.T) {
+	p := newPublic(t)
+	ctx := context.Background()
+	admin := permissions.UserActor(p.admin.id)
+	ch := p.chapter(p.subject, "ch-a")
+	lA := p.publish(p.approved(0, readerDoc("TEST Titre leçon A", "fr"), "fr", &ch))
+	ed2025, asg2025 := p.edition("test-2025", "TEST Édition 2025", true, nil, ch)
+	old, _ := p.publishedCourse(courseSpec{title: "TEST Cours 2025", summary: "TEST résumé 2025", assignment: asg2025, steps: []published{lA}})
+	_, asg2026 := p.edition("test-2026", "TEST Édition 2026", true, &ed2025, ch)
+
+	// Withdrawing the published revision is refused; a previously
+	// published one can be withdrawn and is never shown.
+	c, rev1 := p.publishedCourse(courseSpec{title: "TEST Cours version 1", summary: "TEST résumé v1", assignment: asg2026, steps: []published{lA}})
+	if _, err := p.cs.Withdraw(ctx, p.admin.id, rev1.ID, "TEST withdrawal"); err == nil {
+		t.Fatal("withdrawing the published revision was accepted")
+	}
+	wantPage(t, "after refused withdrawal", p.public(apiUser{}, "/courses/"+c.PublicID), http.StatusOK, "TEST Cours version 1")
+	_, rev2 := p.approvedCourse(c.ID, courseSpec{title: "TEST Cours version 2", summary: "TEST résumé v2", assignment: asg2026, steps: []published{lA}})
+	p.publishCourse(rev2, &rev1.ID)
+	if _, err := p.cs.Withdraw(ctx, p.admin.id, rev1.ID, "TEST withdrawal"); err != nil {
+		t.Fatal(err)
+	}
+	w := p.public(apiUser{}, "/courses/"+c.PublicID)
+	wantPage(t, "earlier revision withdrawn", w, http.StatusOK, "TEST Cours version 2")
+	wantAbsent(t, "earlier revision withdrawn", w, "TEST Cours version 1", "TEST résumé v1")
+	// Suspended, then its last published revision withdrawn: nothing shows.
+	if _, err := p.cs.Suspend(ctx, p.admin.id, c.ID, &rev2.ID, "TEST suspension"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.cs.Withdraw(ctx, p.admin.id, rev2.ID, "TEST withdrawal"); err != nil {
+		t.Fatal(err)
+	}
+	w = p.public(apiUser{}, "/courses/"+c.PublicID)
+	wantPage(t, "withdrawn", w, http.StatusNotFound, "Cours indisponible")
+	wantAbsent(t, "withdrawn", w, "TEST Cours version", "TEST résumé")
+	wantAbsent(t, "withdrawn in catalogue", p.public(apiUser{}, "/catalogue/test-bac/test-maths/test-math"), "TEST Cours version")
+
+	// A retired edition: labelled and reachable through its path; its
+	// course stays readable and is listed only there.
+	if _, err := p.cur.RetireEdition(ctx, admin, ed2025, p.version("curriculum_editions", ed2025)); err != nil {
+		t.Fatal(err)
+	}
+	wantPage(t, "section with a retired edition", p.public(apiUser{}, "/catalogue/test-bac/test-maths"), http.StatusOK,
+		`<a href="/catalogue/test-bac/test-maths?edition=test-2025">TEST Édition 2025</a><span class="context">retirée</span>`)
+	retiredPaths := []string{"/catalogue/test-bac/test-maths?edition=test-2025", "/catalogue/test-bac/test-maths/test-math?edition=test-2025"}
+	for _, path := range retiredPaths {
+		wantPage(t, path, p.public(apiUser{}, path), http.StatusOK, "Édition antérieure : TEST Édition 2025 (retirée).")
+	}
+	wantPage(t, "retired subject", p.public(apiUser{}, retiredPaths[1]), http.StatusOK, "TEST Cours 2025")
+	wantAbsent(t, "current subject", p.public(apiUser{}, "/catalogue/test-bac/test-maths/test-math"), "TEST Cours 2025")
+	wantPage(t, "course on a retired edition", p.public(apiUser{}, "/courses/"+old.PublicID), http.StatusOK,
+		`<a href="/catalogue/test-bac/test-maths/test-math?edition=test-2025">TEST Baccalauréat › TEST Section mathématiques</a> · TEST Édition 2025 (retirée)`)
+	for _, path := range []string{"/", "/catalogue"} {
+		wantAbsent(t, path, p.public(apiUser{}, path), "TEST Édition 2025")
+	}
+
+	// A retired section, then a retired level: the index and the homepage
+	// omit them, their labelled paths still resolve.
+	var levelID int64
+	if err := p.db.QueryRow(ctx, `SELECT level_id FROM academic_sections WHERE id = $1`, p.section).Scan(&levelID); err != nil {
+		t.Fatal(err)
+	}
+	all := append([]string{"/catalogue/test-bac/test-maths", "/catalogue/test-bac/test-maths/test-math"}, retiredPaths...)
+	if _, err := p.cur.RetireSection(ctx, admin, p.section, p.version("academic_sections", p.section)); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/catalogue"} {
+		wantAbsent(t, path, p.public(apiUser{}, path), "TEST Section mathématiques", "TEST Édition 2026")
+	}
+	for _, path := range all {
+		wantPage(t, "retired section "+path, p.public(apiUser{}, path), http.StatusOK, "TEST Section mathématiques")
+	}
+	if _, err := p.cur.RetireLevel(ctx, admin, levelID, p.version("education_levels", levelID)); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/catalogue"} {
+		wantAbsent(t, path, p.public(apiUser{}, path), "TEST Baccalauréat", "TEST Section mathématiques")
+	}
+	for _, path := range all {
+		wantPage(t, "retired level "+path, p.public(apiUser{}, path), http.StatusOK, "TEST Baccalauréat")
+	}
+	wantPage(t, "course after retirements", p.public(apiUser{}, "/courses/"+old.PublicID), http.StatusOK, "TEST Cours 2025")
 }

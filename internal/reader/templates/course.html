@@ -1,7 +1,7 @@
 {{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span aria-current="page">Cours</span></nav>
 <article class="course-overview" aria-labelledby="course-title"><p class="eyebrow">Cours · {{template "catname" .SubjectLabel}}</p>
 <h1 id="course-title" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</h1>
-{{if .HasCover}}<figure class="course-cover"><img src="{{.CoverURL}}" alt="{{.CoverAlt}}" lang="{{.Language}}"></figure>{{end}}
+{{if .HasCover}}<figure class="course-cover"><img src="{{.CoverURL}}" alt="{{.CoverAlt}}" lang="{{.Language}}" dir="{{dir .Language}}"></figure>{{end}}
 {{with .Summary}}<p class="lead multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p>{{end}}
 <p class="credit">Conçu par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Structure relue et approuvée par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}. Chaque leçon du cours a été relue séparément.</p>
 <dl class="course-facts"><div><dt>Langue</dt><dd>{{.LanguageName}}</dd></div><div><dt>Matière</dt><dd>{{template "catname" .SubjectLabel}}</dd></div>

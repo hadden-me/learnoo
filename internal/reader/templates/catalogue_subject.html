@@ -7,5 +7,5 @@
 {{else}}<p>Aucun cours relu n’est encore publié pour cette matière dans cette édition. <a href="/catalogue">Parcourir le catalogue</a></p>{{end}}</section>
 <section aria-labelledby="lessons-heading"><h2 id="lessons-heading">Leçons</h2>
 {{if .Chapters}}<p class="hint">Leçons publiées seules, classées par chapitre du programme. Leur lecture nécessite un compte.</p>{{range .Chapters}}<section class="chapter"><h3>{{template "catname" .Label}}</h3><ul class="cards">{{range .Lessons}}{{template "publesson" .}}{{end}}</ul></section>{{end}}
-{{else}}<p>Aucune leçon publiée n’est encore placée dans cette édition pour cette matière.</p>{{end}}</section>
-{{with .Unplaced}}<section aria-labelledby="unplaced-heading"><h2 id="unplaced-heading">Leçons pas encore placées dans une édition du programme</h2><ul class="cards">{{range .}}{{template "publesson" .}}{{end}}</ul></section>{{end}}{{end}}{{end}}
+{{else}}<p>Aucune leçon publiée n’est encore placée dans cette édition pour cette matière.</p>{{end}}<p class="hint">Les leçons qui ne sont encore placées dans aucune édition du programme sont listées par matière dans le <a href="/catalogue">catalogue</a>.</p></section>
+{{end}}{{end}}
