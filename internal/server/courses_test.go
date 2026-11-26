@@ -109,6 +109,12 @@ func TestCourseDraftAPI(t *testing.T) {
 	wantStatus(t, "list without mine", e.api(owner, http.MethodGet, "/api/courses", nil), http.StatusBadRequest, "invalid_request")
 	wantStatus(t, "bad cursor", e.api(owner, http.MethodGet, coursePath+"/attachable-lessons?cursor=abc", nil), http.StatusBadRequest, "invalid_request")
 
+	wantStatus(t, "get with query", e.api(owner, http.MethodGet, revPath+"?x=1", nil), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "save with query", e.api(owner, http.MethodPut, revPath+"?expectedVersion=2", body(saved.Version, "x")), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "drafts with query", e.api(owner, http.MethodPost, coursePath+"/drafts?x=1", map[string]any{}), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "list with bad cursor", e.api(owner, http.MethodGet, "/api/courses?mine=1&cursor=0", nil), http.StatusBadRequest, "invalid_request")
+	wantStatus(t, "list with extra parameter", e.api(owner, http.MethodGet, "/api/courses?mine=1&x=1", nil), http.StatusBadRequest, "invalid_request")
+
 	// Reads.
 	w = e.api(owner, http.MethodGet, "/api/courses?mine=1", nil)
 	wantStatus(t, "list", w, http.StatusOK, "")
@@ -116,7 +122,8 @@ func TestCourseDraftAPI(t *testing.T) {
 		Courses []struct {
 			ID int64 `json:"id"`
 		} `json:"courses"`
-	}](t, w); len(list.Courses) != 1 || list.Courses[0].ID != courseID {
+		NextCursor *string `json:"nextCursor"`
+	}](t, w); len(list.Courses) != 1 || list.Courses[0].ID != courseID || list.NextCursor != nil {
 		t.Fatalf("list: %+v", list)
 	}
 	wantStatus(t, "get", e.api(owner, http.MethodGet, revPath, nil), http.StatusOK, "")

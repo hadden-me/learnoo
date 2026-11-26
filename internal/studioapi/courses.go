@@ -114,6 +114,16 @@ type courseRevisionJSON struct {
 	SubmittedAt       *time.Time      `json:"submittedAt"`
 	Assignments       []placementJSON `json:"assignments"`
 	Modules           []moduleJSON    `json:"modules"`
+	// Only on POST /api/courses/{id}/drafts.
+	DroppedSteps *[]droppedStepJSON `json:"droppedSteps,omitempty"`
+}
+
+type droppedStepJSON struct {
+	ModuleKey  string `json:"moduleKey"`
+	Position   int    `json:"position"`
+	Title      string `json:"title"`
+	LessonID   int64  `json:"lessonId"`
+	RevisionID int64  `json:"revisionId"`
 }
 
 func toCourseJSON(c courses.Course) courseJSON {
@@ -267,11 +277,21 @@ func (req saveCourseRequest) draft() (courses.Draft, error) {
 
 func (h *Handlers) listCourses(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if len(q) != 1 || len(q["mine"]) != 1 || q.Get("mine") != "1" {
-		badRequest(w, "Pass ?mine=1: only the caller's own courses can be listed.")
+	var before int64
+	ok := len(q["mine"]) == 1 && q.Get("mine") == "1"
+	for key, vals := range q {
+		if (key != "mine" && key != "cursor") || len(vals) != 1 {
+			ok = false
+		}
+	}
+	if raw, present := q["cursor"]; ok && present {
+		before, ok = parseID(raw[0])
+	}
+	if !ok {
+		badRequest(w, "Pass ?mine=1 (only the caller's own courses can be listed) and optionally the nextCursor of a previous page as cursor.")
 		return
 	}
-	list, err := h.Courses.Owned(r.Context(), actor(r))
+	list, next, err := h.Courses.Owned(r.Context(), actor(r), before)
 	if err != nil {
 		h.writeCourseError(w, "list courses", err)
 		return
@@ -285,9 +305,15 @@ func (h *Handlers) listCourses(w http.ResponseWriter, r *http.Request) {
 				Version: l.Version, UpdatedAt: l.UpdatedAt}
 		}
 	}
+	var cursor *string
+	if next != nil {
+		c := strconv.FormatInt(*next, 10)
+		cursor = &c
+	}
 	writeJSON(w, http.StatusOK, struct {
-		Courses []courseJSON `json:"courses"`
-	}{out})
+		Courses    []courseJSON `json:"courses"`
+		NextCursor *string      `json:"nextCursor"`
+	}{out, cursor})
 }
 
 func (h *Handlers) createCourse(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +351,7 @@ func (h *Handlers) deleteCourse(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) createCourseDraft(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "courseId")
-	if !ok {
+	if !ok || !noQuery(w, r) {
 		return
 	}
 	var req emptyRequest
@@ -337,12 +363,20 @@ func (h *Handlers) createCourseDraft(w http.ResponseWriter, r *http.Request) {
 		h.writeCourseError(w, "create course draft", err)
 		return
 	}
-	writeCourseRevision(w, http.StatusCreated, rev)
+	out := toCourseRevisionJSON(rev)
+	dropped := []droppedStepJSON{}
+	out.DroppedSteps = &dropped
+	for _, d := range rev.DroppedSteps {
+		dropped = append(dropped, droppedStepJSON{ModuleKey: d.ModuleKey, Position: d.Position, Title: d.Title,
+			LessonID: d.LessonID, RevisionID: d.RevisionID})
+	}
+	w.Header().Set("Location", "/api/course-revisions/"+strconv.FormatInt(rev.ID, 10))
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func (h *Handlers) getCourseRevision(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "revisionId")
-	if !ok {
+	if !ok || !noQuery(w, r) {
 		return
 	}
 	rev, err := h.Courses.Revision(r.Context(), actor(r), id)
@@ -355,7 +389,7 @@ func (h *Handlers) getCourseRevision(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) saveCourseDraft(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "revisionId")
-	if !ok {
+	if !ok || !noQuery(w, r) {
 		return
 	}
 	var req saveCourseRequest
