@@ -74,5 +74,12 @@ test('signed-out visitor finds a course from the homepage', async ({ page, baseU
     page.getByRole('button', { name: 'Se connecter' }).click(),
   ]);
   expect(new URL(page.url()).pathname).toBe(`/learn/courses/${id}`);
+  // The signed-in course reader (LMS-B08) serves that route: the course and
+  // its step open.
+  await expect(page.getByRole('heading', { level: 1, name: 'TEST Parcours public des nombres complexes' })).toBeVisible();
+  await page.getByRole('link', { name: /TEST Étape A TEST Parcours public des nombres complexes/ }).first().click();
+  await expect(page).toHaveURL(new RegExp(`/learn/courses/${id}/lessons/[0-9a-f-]{36}$`));
+  await expect(page.getByRole('heading', { level: 1, name: 'TEST Équations et nombres complexes' })).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
   expect(external).toEqual([]);
 });
