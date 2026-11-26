@@ -145,17 +145,18 @@ END;
 -- their lesson, module, position and title and pin a newer eligible
 -- revision of that lesson, and at least one step does so. Anything else
 -- (including no change at all, or no comparison revision) is ordinary.
-CREATE FUNCTION course_revision_derived_kind(rev_id bigint) RETURNS text
+-- course_revision_structure_amends checks everything but the overview
+-- fields, so that a save can derive the kind in the UPDATE that writes them
+-- (course_revision_derived_kind compares the stored ones).
+CREATE FUNCTION course_revision_structure_amends(rev_id bigint) RETURNS boolean
 LANGUAGE sql STABLE PARALLEL SAFE
 SET search_path = pg_catalog, pg_temp
 BEGIN ATOMIC
-    SELECT CASE WHEN EXISTS (
+    SELECT EXISTS (
         SELECT 1
           FROM course_revisions r
           JOIN course_revisions c ON c.id = r.compare_revision_id AND c.course_id = r.course_id
-         WHERE r.id = course_revision_derived_kind.rev_id
-           AND (r.title, r.summary, r.objectives, r.prerequisites, r.cover_media_id, r.cover_alt)
-               IS NOT DISTINCT FROM (c.title, c.summary, c.objectives, c.prerequisites, c.cover_media_id, c.cover_alt)
+         WHERE r.id = course_revision_structure_amends.rev_id
            AND NOT EXISTS ((SELECT assignment_id FROM course_revision_assignments WHERE course_revision_id = r.id
                             EXCEPT SELECT assignment_id FROM course_revision_assignments WHERE course_revision_id = c.id)
                            UNION ALL
@@ -183,7 +184,21 @@ BEGIN ATOMIC
            AND EXISTS (SELECT 1
                          FROM course_steps s
                          JOIN course_steps p ON p.course_revision_id = c.id AND p.lesson_id = s.lesson_id
-                        WHERE s.course_revision_id = r.id AND s.lesson_revision_id <> p.lesson_revision_id))
+                        WHERE s.course_revision_id = r.id AND s.lesson_revision_id <> p.lesson_revision_id));
+END;
+
+CREATE FUNCTION course_revision_derived_kind(rev_id bigint) RETURNS text
+LANGUAGE sql STABLE PARALLEL SAFE
+SET search_path = pg_catalog, pg_temp
+BEGIN ATOMIC
+    SELECT CASE WHEN EXISTS (
+        SELECT 1
+          FROM course_revisions r
+          JOIN course_revisions c ON c.id = r.compare_revision_id AND c.course_id = r.course_id
+         WHERE r.id = course_revision_derived_kind.rev_id
+           AND (r.title, r.summary, r.objectives, r.prerequisites, r.cover_media_id, r.cover_alt)
+               IS NOT DISTINCT FROM (c.title, c.summary, c.objectives, c.prerequisites, c.cover_media_id, c.cover_alt))
+       AND course_revision_structure_amends(course_revision_derived_kind.rev_id)
     THEN 'amendment' ELSE 'ordinary' END;
 END;
 
