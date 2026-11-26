@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/server"
 )
@@ -67,6 +68,18 @@ func TestBrowserReaderServer(t *testing.T) {
 	f.setName(f.newUser("test-reviewer-physique", other, permissions.Reviewer).id, "TEST Relecteur Physique")
 	f.setName(f.newUser("test-author-reviewer", f.subject, permissions.Author, permissions.Reviewer).id, "TEST Autrice relectrice")
 	ch := f.chapter(f.subject, "test-chapter")
+	// TEST display names (LRN-014) through the audited operator path:
+	// test-math and test-chapter are named in both languages; test-physique
+	// keeps its code (the fallback).
+	cat := catalogue.NewStore(f.db)
+	nameFr, nameAr := "TEST Mathématiques", "TEST رياضيات"
+	if _, _, err := cat.SetSubjectNames(context.Background(), testOperator, "test-math", &nameFr, &nameAr); err != nil {
+		t.Fatal(err)
+	}
+	chFr, chAr := "TEST Nombres complexes", "TEST الأعداد العقدية"
+	if _, _, _, err := cat.SetChapterNames(context.Background(), testOperator, "test-math", "test-chapter", &chFr, &chAr); err != nil {
+		t.Fatal(err)
+	}
 	f.publish(f.approved(0, richDoc("TEST Équations et nombres complexes"), "fr", &ch))
 	f.publish(f.approved(0, readerDoc("TEST درس تجريبي", "ar",
 		para(text("نص تجريبي يحتوي على صيغة "), map[string]any{"type": "math", "text": `\sqrt{a^2 + b^2}`}),

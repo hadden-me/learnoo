@@ -7,6 +7,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEv
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
 import { NodeSelection } from '@tiptap/pm/state';
+import { CatalogueName, entryLabel, labelAttrs, type CatalogueLabel } from '../catalogue';
 import { ApiError, type Chapter, type Media, type Revision } from '../api/client';
 import { describeError, isHeif } from '../api/messages';
 import { isUnloadAllowed, useStudio } from '../context';
@@ -31,7 +32,8 @@ const AUTOSAVE_DELAY = 700;
 export interface DraftEditorProps {
   target: SaveTarget;
   language: Lang;
-  subjectCode: string;
+  /** The lesson's subject, named in the lesson's language. */
+  subject: CatalogueLabel;
   chapters: Chapter[];
   /** What the server holds (or an empty document for a lesson not yet created). */
   initial: RecoveryData;
@@ -667,16 +669,22 @@ export function DraftEditor(props: DraftEditorProps) {
           <fieldset className="classification">
             <legend>Classement</legend>
             <p className="hint">
-              Matière : <strong>{props.subjectCode}</strong> · Langue : <strong>{LANGUAGE_LABELS[language]}</strong> (fixées à la création)
+              Matière :{' '}
+              <strong>
+                <CatalogueName label={props.subject} />
+              </strong> · Langue : <strong>{LANGUAGE_LABELS[language]}</strong> (fixées à la création)
             </p>
             <label htmlFor={ids.chapter}>Chapitre</label>
             <select id={ids.chapter} value={chapterId ?? ''} onChange={(e) => setChapterId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">Sans chapitre</option>
-              {chapters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code}
-                </option>
-              ))}
+              {chapters.map((c) => {
+                const label = entryLabel(c, language);
+                return (
+                  <option key={c.id} value={c.id} {...labelAttrs(label)}>
+                    {label.text}
+                  </option>
+                );
+              })}
             </select>
             <label htmlFor={ids.prerequisites}>Prérequis</label>
             <textarea id={ids.prerequisites} value={prerequisites} rows={2} lang={language} dir={dir} onChange={(e) => setPrerequisites(e.target.value)} />

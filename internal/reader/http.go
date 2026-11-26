@@ -201,15 +201,17 @@ func validCSRF(got, want string) bool {
 
 // view is the data every template receives.
 type view struct {
-	Title    string
-	User     *users.User
-	CSRF     string
-	Lesson   bool // loads KaTeX
-	Data     any
-	Status   int
-	Heading  string
-	Message  string
-	BackLink string
+	Title string
+	// TitleLang is set when Title is not French (an Arabic catalogue name).
+	TitleLang string
+	User      *users.User
+	CSRF      string
+	Lesson    bool // loads KaTeX
+	Data      any
+	Status    int
+	Heading   string
+	Message   string
+	BackLink  string
 }
 
 func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, name string, v view) {
@@ -473,13 +475,13 @@ func (h *Handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 type subjectData struct {
-	Code     string
+	Subject  Subject
 	Chapters []Chapter
 }
 
 func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
-	chapters, err := h.Store.SubjectChapters(r.Context(), code)
+	subject, chapters, err := h.Store.SubjectChapters(r.Context(), code)
 	if errors.Is(err, ErrNotFound) {
 		h.notFound(w, r)
 		return
@@ -488,7 +490,12 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "subject", err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "subject", view{Title: code, Data: subjectData{Code: code, Chapters: chapters}})
+	label := subject.Label()
+	v := view{Title: label.Text, Data: subjectData{Subject: subject, Chapters: chapters}}
+	if label.Lang == "ar" {
+		v.TitleLang = "ar"
+	}
+	h.render(w, r, http.StatusOK, "subject", v)
 }
 
 type lessonData struct {

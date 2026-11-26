@@ -16,12 +16,18 @@ export interface Session {
   expiresAt: string;
 }
 
-export interface Subject {
+/** A subject or chapter: immutable code and ID, optional display names (null until set; show the code), display order. */
+export interface CatalogueEntry {
   id: number;
   code: string;
+  nameFr: string | null;
+  nameAr: string | null;
+  sortOrder: number;
 }
 
-export type Chapter = Subject;
+export type Subject = CatalogueEntry;
+
+export type Chapter = CatalogueEntry;
 
 export type RevisionStatus = 'draft' | 'in_review' | 'changes_requested' | 'approved';
 
@@ -63,6 +69,8 @@ export interface LatestRevision {
   title: string;
   chapterId: number | null;
   chapterCode: string | null;
+  chapterNameFr: string | null;
+  chapterNameAr: string | null;
   version: number;
   updatedAt: string;
 }
@@ -72,6 +80,8 @@ export interface OwnedLesson {
   publicId: string;
   subjectId: number;
   subjectCode: string;
+  subjectNameFr: string | null;
+  subjectNameAr: string | null;
   language: 'fr' | 'ar';
   translationGroupId: string;
   archived: boolean;

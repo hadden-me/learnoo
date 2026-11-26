@@ -12,7 +12,7 @@ import { paths } from '../editorialRoutes';
 import { formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
-import { ErrorPage, LoadingPage, NoteField, Quote, subjectLabel, useEditorial, useLoad, useSubjectCodes } from './common';
+import { ErrorPage, LoadingPage, NoteField, Quote, SubjectName, useEditorial, useLoad, useSubjects } from './common';
 import { canSeePublication } from '../spaces';
 
 export const REPORT_STATUS_LABELS: Record<ReportStatus, string> = { open: 'À traiter', resolved: 'Corrigé', dismissed: 'Écarté' };
@@ -32,7 +32,7 @@ export function excerpt(message: string, max = 160): string {
 
 export function ReportListPage() {
   const ed = useEditorial();
-  const codes = useSubjectCodes();
+  const subjects = useSubjects();
   const [status, setStatus] = useState<ReportStatus | ''>('open');
   const [reports] = useLoad(() => ed.reports(status || undefined), [ed, status]);
   return (
@@ -70,7 +70,7 @@ export function ReportListPage() {
                 {!r.currentlyPublished && <span className="state">Révision signalée plus publiée</span>}
               </p>
               <p className="lesson-context">
-                {subjectLabel(codes, r.subjectId)} · révision {r.revisionNumber} · reçu le {formatDateTime(r.createdAt)}
+                <SubjectName subjects={subjects} id={r.subjectId} /> · révision {r.revisionNumber} · reçu le {formatDateTime(r.createdAt)}
               </p>
               <p className="excerpt" dir="auto">
                 {excerpt(r.message)}
@@ -88,7 +88,7 @@ type Closing = 'resolve' | 'dismiss';
 export function ReportPage({ reportId }: { reportId: number }) {
   const ed = useEditorial();
   const { spaces } = useStudio();
-  const codes = useSubjectCodes();
+  const subjects = useSubjects();
   const [loaded, reload] = useLoad(() => ed.report(reportId), [ed, reportId]);
   const [note, setNote] = useState('');
   const [noteError, setNoteError] = useState<string | null>(null);
@@ -153,7 +153,7 @@ export function ReportPage({ reportId }: { reportId: number }) {
         </div>
         <div>
           <dt>Matière</dt>
-          <dd>{subjectLabel(codes, report.subjectId)}</dd>
+          <dd><SubjectName subjects={subjects} id={report.subjectId} /></dd>
         </div>
         <div>
           <dt>Révision lue par le lecteur</dt>

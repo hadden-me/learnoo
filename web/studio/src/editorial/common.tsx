@@ -2,8 +2,9 @@
 // error-report pages: loading state, the canonical preview of a stored
 // revision, the "no access" page and a confirmation step for decisions.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { isApiError, type MediaRoute } from '../api/client';
+import { isApiError, type MediaRoute, type Subject } from '../api/client';
 import { editorialApi } from '../api/editorial';
+import { CatalogueName, entryLabel, type CatalogueLabel } from '../catalogue';
 import { describeEditorialError } from '../api/editorialMessages';
 import { useStudio } from '../context';
 import { disableVideos, loadKatex, typeset } from '../preview';
@@ -48,20 +49,30 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [Loaded<T>,
   return [value, reload];
 }
 
-/** Subject codes by ID from the catalogue; empty when the account may not read it (administrators, publishers). */
-export function useSubjectCodes(): Map<number, string> {
+/** Catalogue subjects by ID; empty when the account may not read the catalogue (administrators, publishers). */
+export function useSubjects(): Map<number, Subject> {
   const { api } = useStudio();
-  const [codes, setCodes] = useState(() => new Map<number, string>());
+  const [subjects, setSubjects] = useState(() => new Map<number, Subject>());
   useEffect(() => {
     api.subjects().then(
-      (subjects) => setCodes(new Map(subjects.map((s) => [s.id, s.code]))),
+      (list) => setSubjects(new Map(list.map((s) => [s.id, s]))),
       () => undefined,
     );
   }, [api]);
-  return codes;
+  return subjects;
 }
 
-export const subjectLabel = (codes: Map<number, string>, id: number) => codes.get(id) ?? `matière n° ${id}`;
+/** A subject's name for the (French) editorial pages: French name, else Arabic, else code, else its ID. */
+export function subjectName(subjects: Map<number, Subject>, id: number): CatalogueLabel {
+  const s = subjects.get(id);
+  return s ? entryLabel(s, 'fr') : { text: `matière n° ${id}`, lang: null };
+}
+
+export const subjectLabel = (subjects: Map<number, Subject>, id: number) => subjectName(subjects, id).text;
+
+export function SubjectName({ subjects, id }: { subjects: Map<number, Subject>; id: number }) {
+  return <CatalogueName label={subjectName(subjects, id)} />;
+}
 
 /**
  * The server's canonical rendering (POST /api/preview) of a stored

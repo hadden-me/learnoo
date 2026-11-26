@@ -243,16 +243,19 @@ describe('load sequence', () => {
 });
 
 describe('lists', () => {
-  it('groups the review queue by subject code', () => {
-    const codes = new Map([
-      [1, 'test-math'],
-      [2, 'test-chimie'],
-    ]);
-    const groups = groupBySubject([{ subjectId: 1, n: 'a' }, { subjectId: 2, n: 'b' }, { subjectId: 1, n: 'c' }, { subjectId: 9, n: 'd' }], codes);
+  it('groups the review queue by subject in catalogue order', () => {
+    const entry = (id: number, code: string, sortOrder: number) => [id, { id, code, nameFr: null, nameAr: null, sortOrder }] as const;
+    const subjects = new Map([entry(1, 'test-math', 0), entry(2, 'test-chimie', 0), entry(3, 'test-arts', 5)]);
+    const groups = groupBySubject(
+      [{ subjectId: 1, n: 'a' }, { subjectId: 3, n: 'e' }, { subjectId: 2, n: 'b' }, { subjectId: 1, n: 'c' }, { subjectId: 9, n: 'd' }],
+      subjects,
+    );
+    // Display order, then code; a subject missing from the catalogue last.
     expect(groups.map((g) => [g.subjectId, g.items.map((i) => i.n).join('')])).toEqual([
-      [9, 'd'],
       [2, 'b'],
       [1, 'ac'],
+      [3, 'e'],
+      [9, 'd'],
     ]);
   });
 

@@ -114,7 +114,7 @@ Legend: ✅ done · 🟡 in progress / partially done · ⬜ not started · ⛔ 
 | LRN-012 | CI on pull requests | M0 | ⬜ | Proposed; see [ROADMAP](ROADMAP.md#proposed-backlog) |
 | [LRN-005](https://github.com/hadden-me/learnoo/issues/5) | Go/PostgreSQL foundation, sessions, roles | M1 | ⬜ | **Ready:** server skeleton, migrations tooling, users, password hashing, sessions, CSRF, login rate limiting. **Unblocked 2026-11-24:** permission/role tables (role model confirmed) |
 | LRN-013 | Role administration CLI and first admin bootstrap | M1 | ⬜ | Proposed |
-| LRN-014 | Curriculum catalogue seed (Math section) | M1 | ⬜ | Proposed; chapter list needs teacher input |
+| LRN-014 | Curriculum catalogue seed (Math section) | M1 | ⬜ | Proposed; chapter list needs teacher input. Names and order (schema, audit, display) implemented in issue #86; no seed |
 | [LRN-006](https://github.com/hadden-me/learnoo/issues/6) | Lessons, revisions, embedded exercises, media | M1 | ⬜ | Needs LRN-004, LRN-005 |
 | [LRN-007](https://github.com/hadden-me/learnoo/issues/7) | Submit, review, approve, publish | M1 | ⬜ | Needs LRN-006 |
 | [LRN-008](https://github.com/hadden-me/learnoo/issues/8) | Student reader, navigation, bookmarks, search | M1 | ⬜ | Needs LRN-007 |

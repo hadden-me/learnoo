@@ -8,6 +8,7 @@ import { describeError } from '../api/messages';
 import { setFlash, useStudio } from '../context';
 import { DraftEditor } from '../editor/DraftEditor';
 import { emptyData } from '../editor/convert';
+import { entryLabel, labelAttrs } from '../catalogue';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { findRecovery, removeRecovery, type NewLessonParams, type RecoveryEntry } from '../recovery';
 import { BASE, navigate, replacePath } from '../router';
@@ -24,7 +25,7 @@ export function NewLesson() {
   const [language, setLanguage] = useState<'fr' | 'ar'>('fr');
   const [translationOf, setTranslationOf] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [started, setStarted] = useState<{ params: NewLessonParams; chapters: Chapter[]; chapterId: number | null; restore?: RecoveryEntry } | null>(null);
+  const [started, setStarted] = useState<{ params: NewLessonParams; subject: Subject; chapters: Chapter[]; chapterId: number | null; restore?: RecoveryEntry } | null>(null);
   const [pending, setPending] = useState<RecoveryEntry[]>(() => findRecovery(localStorage, session.user.id, null, null));
 
   useEffect(() => {
@@ -53,7 +54,7 @@ export function NewLesson() {
   const start = (event: FormEvent) => {
     event.preventDefault();
     if (!subject) return;
-    setStarted({ params: { subjectId: subject.id, subjectCode: subject.code, language, translationOf }, chapters, chapterId });
+    setStarted({ params: { subjectId: subject.id, subjectCode: subject.code, language, translationOf }, subject, chapters, chapterId });
   };
 
   const resume = async (entry: RecoveryEntry) => {
@@ -61,7 +62,7 @@ export function NewLesson() {
     if (!params) return;
     try {
       const r = await api.chapters(params.subjectCode);
-      setStarted({ params, chapters: r.chapters, chapterId: entry.data.chapterId, restore: entry });
+      setStarted({ params, subject: r.subject, chapters: r.chapters, chapterId: entry.data.chapterId, restore: entry });
     } catch (e) {
       setError(describeError(e));
     }
@@ -91,7 +92,7 @@ export function NewLesson() {
         <DraftEditor
           target={{ kind: 'lesson', params: started.params }}
           language={started.params.language}
-          subjectCode={started.params.subjectCode}
+          subject={entryLabel(started.subject, started.params.language)}
           chapters={started.chapters}
           initial={emptyData(started.chapterId)}
           restore={started.restore}
@@ -156,20 +157,26 @@ export function NewLesson() {
           <div className="fields">
             <label htmlFor={ids.subject}>Matière</label>
             <select id={ids.subject} value={subjectId ?? ''} onChange={(e) => setSubjectId(Number(e.target.value))}>
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code}
-                </option>
-              ))}
+              {subjects.map((s) => {
+                const label = entryLabel(s, language);
+                return (
+                  <option key={s.id} value={s.id} {...labelAttrs(label)}>
+                    {label.text}
+                  </option>
+                );
+              })}
             </select>
             <label htmlFor={ids.chapter}>Chapitre (facultatif)</label>
             <select id={ids.chapter} value={chapterId ?? ''} onChange={(e) => setChapterId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">Sans chapitre</option>
-              {chapters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code}
-                </option>
-              ))}
+              {chapters.map((c) => {
+                const label = entryLabel(c, language);
+                return (
+                  <option key={c.id} value={c.id} {...labelAttrs(label)}>
+                    {label.text}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <fieldset className="choices">

@@ -16,6 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/rendering"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -63,24 +64,51 @@ func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 type Subject struct {
 	ID          int64
 	Code        string
+	Names       catalogue.Names
 	LessonCount int
 }
 
+// Label is the subject's name in navigation: French (the reader's
+// language), else Arabic, else the code.
+func (s Subject) Label() catalogue.Label { return s.Names.Label(s.Code, "fr") }
+
 // LessonSummary is a published lesson in a list.
 type LessonSummary struct {
-	PublicID    string
-	Title       string
-	Language    string
-	SubjectCode string
-	ChapterCode string // empty when the published revision has no chapter
+	PublicID     string
+	Title        string
+	Language     string
+	SubjectCode  string
+	SubjectNames catalogue.Names
+	ChapterCode  string // empty when the published revision has no chapter
+	ChapterNames catalogue.Names
+}
+
+// SubjectLabel is the subject's name next to the lesson: in the lesson's
+// language when set, else the other language, else the code.
+func (l LessonSummary) SubjectLabel() catalogue.Label {
+	return l.SubjectNames.Label(l.SubjectCode, l.Language)
+}
+
+// ChapterLabel is SubjectLabel for the lesson's chapter (empty Text when the
+// lesson has no chapter). Catalogue names are display metadata read at
+// request time, never part of the reviewed snapshot.
+func (l LessonSummary) ChapterLabel() catalogue.Label {
+	if l.ChapterCode == "" {
+		return catalogue.Label{}
+	}
+	return l.ChapterNames.Label(l.ChapterCode, l.Language)
 }
 
 // Chapter groups a subject's published lessons by their published
 // revision's chapter. Code is empty for lessons without a chapter.
 type Chapter struct {
 	Code    string
+	Names   catalogue.Names
 	Lessons []LessonSummary
 }
+
+// Label is the chapter's heading: French, else Arabic, else the code.
+func (c Chapter) Label() catalogue.Label { return c.Names.Label(c.Code, "fr") }
 
 // Lesson is a published lesson ready to render.
 type Lesson struct {
@@ -105,25 +133,27 @@ type Bookmark struct {
 	LessonSummary
 }
 
-// Subjects lists subjects that have published lessons, by code.
+// Subjects lists subjects that have published lessons, by the catalogue's
+// display order, then code.
 func (s *Store) Subjects(ctx context.Context) ([]Subject, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT sj.id, sj.code, count(*)
+		SELECT sj.id, sj.code, sj.name_fr, sj.name_ar, count(*)
 		  FROM reader_published_lessons p JOIN subjects sj ON sj.id = p.subject_id
-		 GROUP BY sj.id, sj.code
-		 ORDER BY sj.code
+		 GROUP BY sj.id
+		 ORDER BY sj.sort_order, sj.code
 		 LIMIT $1`, maxListed)
 	if err != nil {
 		return nil, fmt.Errorf("list subjects: %w", err)
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Subject, error) {
 		var sj Subject
-		err := r.Scan(&sj.ID, &sj.Code, &sj.LessonCount)
+		err := r.Scan(&sj.ID, &sj.Code, &sj.Names.Fr, &sj.Names.Ar, &sj.LessonCount)
 		return sj, err
 	})
 }
 
-const summaryColumns = `p.public_id::text, p.title, p.language, sj.code, coalesce(ch.code, '')`
+const summaryColumns = `p.public_id::text, p.title, p.language, sj.code, sj.name_fr, sj.name_ar,
+	coalesce(ch.code, ''), ch.name_fr, ch.name_ar`
 
 const summaryJoins = `
 	  JOIN subjects sj ON sj.id = p.subject_id
@@ -131,42 +161,50 @@ const summaryJoins = `
 
 func scanSummary(r pgx.CollectableRow) (LessonSummary, error) {
 	var l LessonSummary
-	err := r.Scan(&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.ChapterCode)
+	err := r.Scan(&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.SubjectNames.Fr, &l.SubjectNames.Ar,
+		&l.ChapterCode, &l.ChapterNames.Fr, &l.ChapterNames.Ar)
 	return l, err
 }
 
-// SubjectChapters returns a subject's published lessons grouped by chapter
-// (chapters by code, lessons without a chapter last; lessons by folded
-// title). Unknown subjects and subjects without published lessons are
-// ErrNotFound.
-func (s *Store) SubjectChapters(ctx context.Context, code string) ([]Chapter, error) {
+// SubjectChapters returns a subject and its published lessons grouped by
+// chapter (chapters by the catalogue's display order, then code; lessons
+// without a chapter last; lessons by folded title). Unknown subjects and
+// subjects without published lessons are ErrNotFound.
+func (s *Store) SubjectChapters(ctx context.Context, code string) (Subject, []Chapter, error) {
 	if !subjectCodePattern.MatchString(code) {
-		return nil, ErrNotFound
+		return Subject{}, nil, ErrNotFound
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT `+summaryColumns+`
+		SELECT `+summaryColumns+`, sj.id
 		  FROM reader_published_lessons p`+summaryJoins+`
 		 WHERE sj.code = $1
-		 ORDER BY ch.code NULLS LAST, reader_fold(p.title), p.public_id
+		 ORDER BY ch.id IS NULL, ch.sort_order, ch.code, reader_fold(p.title), p.public_id
 		 LIMIT $2`, code, maxListed)
 	if err != nil {
-		return nil, fmt.Errorf("list lessons: %w", err)
+		return Subject{}, nil, fmt.Errorf("list lessons: %w", err)
 	}
-	lessons, err := pgx.CollectRows(rows, scanSummary)
+	var subject Subject
+	lessons, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (LessonSummary, error) {
+		var l LessonSummary
+		err := r.Scan(&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.SubjectNames.Fr, &l.SubjectNames.Ar,
+			&l.ChapterCode, &l.ChapterNames.Fr, &l.ChapterNames.Ar, &subject.ID)
+		return l, err
+	})
 	if err != nil {
-		return nil, fmt.Errorf("list lessons: %w", err)
+		return Subject{}, nil, fmt.Errorf("list lessons: %w", err)
 	}
 	if len(lessons) == 0 {
-		return nil, ErrNotFound
+		return Subject{}, nil, ErrNotFound
 	}
+	subject.Code, subject.Names, subject.LessonCount = lessons[0].SubjectCode, lessons[0].SubjectNames, len(lessons)
 	var chapters []Chapter
 	for _, l := range lessons {
 		if n := len(chapters); n == 0 || chapters[n-1].Code != l.ChapterCode {
-			chapters = append(chapters, Chapter{Code: l.ChapterCode})
+			chapters = append(chapters, Chapter{Code: l.ChapterCode, Names: l.ChapterNames})
 		}
 		chapters[len(chapters)-1].Lessons = append(chapters[len(chapters)-1].Lessons, l)
 	}
-	return chapters, nil
+	return subject, chapters, nil
 }
 
 // Lesson loads a published lesson by public ID with its credit and whether
@@ -189,7 +227,8 @@ func (s *Store) Lesson(ctx context.Context, userID int64, publicID string) (Less
 		  FROM reader_published_lessons p`+summaryJoins+`
 		  JOIN users au ON au.id = p.author_id
 		 WHERE p.public_id = $1::uuid`, publicID, userID).Scan(
-		&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.ChapterCode,
+		&l.PublicID, &l.Title, &l.Language, &l.SubjectCode, &l.SubjectNames.Fr, &l.SubjectNames.Ar,
+		&l.ChapterCode, &l.ChapterNames.Fr, &l.ChapterNames.Ar,
 		&l.LessonID, &l.RevisionID, &l.RevisionNumber, &l.Objectives, &content, &l.AuthorName, &reviewer, &l.Bookmarked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lesson{}, ErrNotFound
@@ -304,7 +343,8 @@ func (s *Store) Search(ctx context.Context, query string) ([]LessonSummary, erro
 func (s *Store) Bookmarks(ctx context.Context, userID int64) ([]Bookmark, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT l.public_id::text, p.lesson_id IS NOT NULL,
-		       coalesce(p.title, ''), coalesce(p.language, ''), coalesce(sj.code, ''), coalesce(ch.code, '')
+		       coalesce(p.title, ''), coalesce(p.language, ''), coalesce(sj.code, ''), sj.name_fr, sj.name_ar,
+		       coalesce(ch.code, ''), ch.name_fr, ch.name_ar
 		  FROM bookmarks b
 		  JOIN lessons l ON l.id = b.lesson_id
 		  LEFT JOIN reader_published_lessons p ON p.lesson_id = b.lesson_id
@@ -318,7 +358,8 @@ func (s *Store) Bookmarks(ctx context.Context, userID int64) ([]Bookmark, error)
 	}
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Bookmark, error) {
 		var b Bookmark
-		err := r.Scan(&b.PublicID, &b.Available, &b.Title, &b.Language, &b.SubjectCode, &b.ChapterCode)
+		err := r.Scan(&b.PublicID, &b.Available, &b.Title, &b.Language, &b.SubjectCode, &b.SubjectNames.Fr, &b.SubjectNames.Ar,
+			&b.ChapterCode, &b.ChapterNames.Fr, &b.ChapterNames.Ar)
 		b.LessonSummary.PublicID = b.PublicID
 		return b, err
 	})

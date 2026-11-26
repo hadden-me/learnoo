@@ -5,7 +5,7 @@
 // decides who may review what (assignment per subject, no self-review);
 // this page only explains its answers.
 import { useRef, useState } from 'react';
-import { isApiError, type Revision } from '../api/client';
+import { isApiError, type Revision, type Subject } from '../api/client';
 import type { ReviewQueueItem } from '../api/editorial';
 import { describeEditorialError } from '../api/editorialMessages';
 import { setFlash, takeFlash, useStudio } from '../context';
@@ -14,20 +14,29 @@ import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { navigate } from '../router';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
-import { CanonicalPreview, ErrorPage, LoadingPage, NoteField, Quote, dirOf, subjectLabel, useEditorial, useLoad, useSubjectCodes } from './common';
+import { CatalogueName, catalogueLabel, entryLabel, type CatalogueLabel } from '../catalogue';
+import { CanonicalPreview, ErrorPage, LoadingPage, NoteField, Quote, SubjectName, dirOf, subjectLabel, useEditorial, useLoad, useSubjects } from './common';
 
-/** Queue items grouped by subject, subjects in code order (then ID). */
-export function groupBySubject<T extends { subjectId: number }>(items: T[], codes: Map<number, string>): Array<{ subjectId: number; items: T[] }> {
+/** Queue items grouped by subject, in catalogue order (display order, then code); subjects missing from the catalogue last, by ID. */
+export function groupBySubject<T extends { subjectId: number }>(items: T[], subjects: Map<number, Subject>): Array<{ subjectId: number; items: T[] }> {
   const groups = new Map<number, T[]>();
   for (const item of items) groups.set(item.subjectId, [...(groups.get(item.subjectId) ?? []), item]);
+  const rank = (id: number) => {
+    const s = subjects.get(id);
+    return s ? [0, s.sortOrder, s.code] as const : [1, 0, ''] as const;
+  };
   return [...groups.entries()]
-    .sort(([a], [b]) => subjectLabel(codes, a).localeCompare(subjectLabel(codes, b)) || a - b)
+    .sort(([a], [b]) => {
+      const [ka, oa, ca] = rank(a);
+      const [kb, ob, cb] = rank(b);
+      return ka - kb || oa - ob || (ca < cb ? -1 : ca > cb ? 1 : 0) || a - b;
+    })
     .map(([subjectId, list]) => ({ subjectId, items: list }));
 }
 
 export function ReviewQueuePage() {
   const ed = useEditorial();
-  const codes = useSubjectCodes();
+  const subjects = useSubjects();
   const [queue] = useLoad(() => ed.reviewQueue(), [ed]);
   const [flash] = useState(takeFlash);
   return (
@@ -47,12 +56,12 @@ export function ReviewQueuePage() {
       )}
       {queue.state === 'ready' && queue.data.length === 0 && <p>Aucune révision n’attend de relecture dans vos matières.</p>}
       {queue.state === 'ready' &&
-        groupBySubject(queue.data, codes).map((group) => (
+        groupBySubject(queue.data, subjects).map((group) => (
           <section key={group.subjectId} aria-labelledby={`subject-${group.subjectId}`}>
             <h2 id={`subject-${group.subjectId}`}>
-              {subjectLabel(codes, group.subjectId)} ({group.items.length})
+              <SubjectName subjects={subjects} id={group.subjectId} /> ({group.items.length})
             </h2>
-            <ul className="lesson-list" aria-label={`À relire en ${subjectLabel(codes, group.subjectId)}`}>
+            <ul className="lesson-list" aria-label={`À relire en ${subjectLabel(subjects, group.subjectId)}`}>
               {group.items.map((item) => (
                 <QueueCard key={item.revisionId} item={item} />
               ))}
@@ -82,8 +91,8 @@ function QueueCard({ item }: { item: ReviewQueueItem }) {
 interface ReviewData {
   revision: Revision;
   authorName: string | null;
-  subjectCode: string | null;
-  chapterCode: string | null;
+  subject: CatalogueLabel | null;
+  chapter: CatalogueLabel | null;
 }
 
 type Decision = 'approve' | 'request_changes';
@@ -95,12 +104,15 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
     const revision = await ed.reviewRevision(revisionId);
     // Context only: a failure here does not block the review.
     const [queue, subjects] = await Promise.all([ed.reviewQueue(revision.subjectId).catch(() => []), api.subjects().catch(() => [])]);
-    const subjectCode = subjects.find((s) => s.id === revision.subjectId)?.code ?? null;
-    let chapterCode: string | null = null;
-    if (subjectCode && revision.chapterId !== null) {
-      chapterCode = (await api.chapters(subjectCode).catch(() => null))?.chapters.find((c) => c.id === revision.chapterId)?.code ?? null;
+    // Names in the revision's language, else the other, else the code.
+    const entry = subjects.find((s) => s.id === revision.subjectId);
+    const subject = entry ? entryLabel(entry, revision.language) : null;
+    let chapter: CatalogueLabel | null = null;
+    if (entry && revision.chapterId !== null) {
+      const c = (await api.chapters(entry.code).catch(() => null))?.chapters.find((ch) => ch.id === revision.chapterId);
+      chapter = c ? catalogueLabel(c.code, c.nameFr, c.nameAr, revision.language) : null;
     }
-    return { revision, authorName: queue.find((q) => q.revisionId === revisionId)?.authorName ?? null, subjectCode, chapterCode };
+    return { revision, authorName: queue.find((q) => q.revisionId === revisionId)?.authorName ?? null, subject, chapter };
   }, [ed, api, revisionId]);
 
   if (loaded.state === 'loading') return <LoadingPage label="Chargement de la révision…" />;
@@ -116,7 +128,7 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
         back={{ to: paths.reviewQueue, label: 'Revenir à la file de relecture' }}
       />
     );
-  const { revision, authorName, subjectCode, chapterCode } = loaded.data;
+  const { revision, authorName, subject, chapter } = loaded.data;
   const own = revision.authorId === session.user.id;
   const dir = dirOf(revision.language);
   return (
@@ -138,8 +150,13 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
         <div>
           <dt>Matière</dt>
           <dd>
-            {subjectCode ?? `matière n° ${revision.subjectId}`}
-            {revision.chapterId !== null && ` · ${chapterCode ?? `chapitre n° ${revision.chapterId}`}`}
+            {subject ? <CatalogueName label={subject} /> : `matière n° ${revision.subjectId}`}
+            {revision.chapterId !== null && (
+              <>
+                {' · '}
+                {chapter ? <CatalogueName label={chapter} /> : `chapitre n° ${revision.chapterId}`}
+              </>
+            )}
           </dd>
         </div>
         <div>

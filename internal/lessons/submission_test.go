@@ -462,7 +462,7 @@ func TestUpgradeBackfillsSubmissionAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 1 || applied[0] != "0011_submission_audit.sql" {
+	if len(applied) == 0 || applied[0] != "0011_submission_audit.sql" { // later migrations may follow
 		t.Fatalf("applied %v", applied)
 	}
 	if err := database.Check(ctx, db, migrations.FS); err != nil {

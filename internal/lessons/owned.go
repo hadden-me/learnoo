@@ -16,12 +16,15 @@ const MaxOwnedListed = 500
 
 // OwnedLesson is a lesson in its owner's listing.
 type OwnedLesson struct {
-	ID                  int64
-	PublicID            string
-	TranslationGroupID  string
-	Language            string
-	SubjectID           int64
-	SubjectCode         string
+	ID                 int64
+	PublicID           string
+	TranslationGroupID string
+	Language           string
+	SubjectID          int64
+	SubjectCode        string
+	// SubjectNames are the subject's display names (display only, never
+	// part of a revision).
+	SubjectNames        CatalogueNames
 	PublishedRevisionID *int64
 	Archived            bool
 	CreatedAt           time.Time
@@ -44,8 +47,17 @@ type LatestRevision struct {
 	Title       string
 	ChapterID   *int64
 	ChapterCode *string
-	Version     int
-	UpdatedAt   time.Time
+	// ChapterNames are the chapter's display names; empty without a chapter.
+	ChapterNames CatalogueNames
+	Version      int
+	UpdatedAt    time.Time
+}
+
+// CatalogueNames are a subject's or chapter's French and Arabic display
+// names (migrations/0012), nil when not set.
+type CatalogueNames struct {
+	Fr *string
+	Ar *string
 }
 
 // Owned lists the lessons actor created (lessons.created_by), most recently
@@ -60,9 +72,9 @@ func (s *Store) Owned(ctx context.Context, actor int64) ([]OwnedLesson, error) {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT l.id, l.public_id::text, l.translation_group_id::text, l.language, l.subject_id, sj.code,
+			SELECT l.id, l.public_id::text, l.translation_group_id::text, l.language, l.subject_id, sj.code, sj.name_fr, sj.name_ar,
 			       l.published_revision_id, l.archived_at IS NOT NULL, l.created_at,
-			       r.id, r.revision_number, r.status, r.title, r.chapter_id, ch.code, r.version, r.updated_at,
+			       r.id, r.revision_number, r.status, r.title, r.chapter_id, ch.code, ch.name_fr, ch.name_ar, r.version, r.updated_at,
 			       CASE WHEN fd.action = 'request_changes'
 			             AND NOT EXISTS (SELECT 1 FROM lesson_revisions later
 			                              WHERE later.lesson_id = l.id
@@ -98,9 +110,9 @@ func (s *Store) Owned(ctx context.Context, actor int64) ([]OwnedLesson, error) {
 			var status, title *string
 			var updated *time.Time
 			var r LatestRevision
-			err := row.Scan(&l.ID, &l.PublicID, &l.TranslationGroupID, &l.Language, &l.SubjectID, &l.SubjectCode,
+			err := row.Scan(&l.ID, &l.PublicID, &l.TranslationGroupID, &l.Language, &l.SubjectID, &l.SubjectCode, &l.SubjectNames.Fr, &l.SubjectNames.Ar,
 				&l.PublishedRevisionID, &l.Archived, &l.CreatedAt,
-				&id, &number, &status, &title, &r.ChapterID, &r.ChapterCode, &version, &updated, &l.FeedbackRevisionID)
+				&id, &number, &status, &title, &r.ChapterID, &r.ChapterCode, &r.ChapterNames.Fr, &r.ChapterNames.Ar, &version, &updated, &l.FeedbackRevisionID)
 			if err != nil {
 				return l, err
 			}

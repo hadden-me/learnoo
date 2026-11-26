@@ -59,8 +59,8 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
 
 async function writeAndSubmit(page, { title, text, language = 'fr' }) {
   await page.getByRole('link', { name: 'Nouvelle leçon' }).click();
-  await page.getByLabel('Matière').selectOption({ label: 'test-math' });
-  await page.getByLabel('Chapitre (facultatif)').selectOption({ label: 'test-chapter' });
+  await page.getByLabel('Matière').selectOption({ label: 'TEST Mathématiques' });
+  await page.getByLabel('Chapitre (facultatif)').selectOption({ label: 'TEST Nombres complexes' });
   if (language === 'ar') await page.getByRole('radio', { name: /Arabe/ }).check();
   await page.getByRole('button', { name: 'Commencer la rédaction' }).click();
   await page.getByLabel('Titre', { exact: true }).fill(title);
@@ -131,7 +131,7 @@ test('full editorial journey: review, change request, second reviewer, publicati
   await openFromQueue(r.page, title);
   await expect(r.page.getByTestId('review-preview').locator('.katex').first()).toBeVisible();
   await expect(r.page.locator('.facts')).toContainText('TEST Autrice Amel');
-  await expect(r.page.locator('.facts')).toContainText('test-math · test-chapter');
+  await expect(r.page.locator('.facts')).toContainText('TEST Mathématiques · TEST Nombres complexes');
   // A change request needs a comment: refused in place, focus on the field.
   await r.page.getByRole('button', { name: 'Demander des modifications…' }).click();
   await expect(r.page.getByText('le commentaire est obligatoire')).toBeVisible();

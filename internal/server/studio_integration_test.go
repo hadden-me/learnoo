@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/rendering"
@@ -67,8 +68,19 @@ func TestCatalogueAuthorizationAndOrdering(t *testing.T) {
 		Scan(&ids[0], &ids[1], &ids[2]); err != nil {
 		t.Fatal(err)
 	}
-	wantSubjects := `{"subjects":[{"id":` + itoa(ids[0]) + `,"code":"test-algebra"},{"id":` + itoa(ids[1]) +
-		`,"code":"test-math"},{"id":` + itoa(ids[2]) + `,"code":"test-zoology"}]}`
+	entry := func(id int64, code, fr, ar string, order int) string {
+		q := func(s string) string {
+			if s == "" {
+				return "null"
+			}
+			b, _ := json.Marshal(s)
+			return string(b)
+		}
+		return `{"id":` + itoa(id) + `,"code":"` + code + `","nameFr":` + q(fr) + `,"nameAr":` + q(ar) + `,"sortOrder":` + itoa(int64(order)) + `}`
+	}
+	// Without names or orders: by code, names null.
+	wantSubjects := `{"subjects":[` + entry(ids[0], "test-algebra", "", "", 0) + `,` + entry(ids[1], "test-math", "", "", 0) + `,` +
+		entry(ids[2], "test-zoology", "", "", 0) + `]}`
 	for name, u := range map[string]apiUser{"author": f.author, "reviewer": f.reviewer, "other reviewer": otherReviewer, "admin author": adminAuthor} {
 		wantBody(t, name+" subjects", f.api(u, http.MethodGet, subjects, nil), wantSubjects)
 	}
@@ -78,9 +90,39 @@ func TestCatalogueAuthorizationAndOrdering(t *testing.T) {
 	}
 	// A reviewer of another subject still reads the whole catalogue.
 	wantBody(t, "chapters", f.api(otherReviewer, http.MethodGet, chapters, nil),
-		`{"subject":{"id":`+itoa(f.subject)+`,"code":"test-math"},"chapters":[{"id":`+itoa(chA)+`,"code":"ch-a"},{"id":`+itoa(chB)+`,"code":"ch-b"}]}`)
+		`{"subject":`+entry(f.subject, "test-math", "", "", 0)+`,"chapters":[`+entry(chA, "ch-a", "", "", 0)+`,`+entry(chB, "ch-b", "", "", 0)+`]}`)
 	wantBody(t, "no chapters", f.api(f.author, http.MethodGet, "/api/catalogue/subjects/test-algebra/chapters", nil),
-		`{"subject":{"id":`+itoa(ids[0])+`,"code":"test-algebra"},"chapters":[]}`)
+		`{"subject":`+entry(ids[0], "test-algebra", "", "", 0)+`,"chapters":[]}`)
+
+	// Names and orders set by the audited operator path (TEST fixtures):
+	// sort order first, then code.
+	ctx := context.Background()
+	cat := catalogue.NewStore(f.db)
+	name := func(s string) *string { return &s }
+	if _, _, err := cat.SetSubjectNames(ctx, testOperator, "test-math", name("TEST Mathématiques"), name("TEST رياضيات")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cat.SetSubjectNames(ctx, testOperator, "test-zoology", nil, name("TEST علم الحيوان")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cat.SetSubjectOrder(ctx, testOperator, "test-zoology", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cat.SetSubjectOrder(ctx, testOperator, "test-algebra", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := cat.SetChapterOrder(ctx, testOperator, "test-math", "ch-a", 5); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := cat.SetChapterNames(ctx, testOperator, "test-math", "ch-b", name("TEST Suites"), nil); err != nil {
+		t.Fatal(err)
+	}
+	wantBody(t, "ordered subjects", f.api(f.author, http.MethodGet, subjects, nil),
+		`{"subjects":[`+entry(ids[1], "test-math", "TEST Mathématiques", "TEST رياضيات", 0)+`,`+
+			entry(ids[2], "test-zoology", "", "TEST علم الحيوان", 1)+`,`+entry(ids[0], "test-algebra", "", "", 2)+`]}`)
+	wantBody(t, "ordered chapters", f.api(f.reviewer, http.MethodGet, chapters, nil),
+		`{"subject":`+entry(f.subject, "test-math", "TEST Mathématiques", "TEST رياضيات", 0)+`,"chapters":[`+
+			entry(chB, "ch-b", "TEST Suites", "", 0)+`,`+entry(chA, "ch-a", "", "", 5)+`]}`)
 	for _, code := range []string{"unknown", "TEST-MATH", "-x", "a%20b", strings.Repeat("a", 64)} {
 		wantStatus(t, "chapters of "+code, f.api(f.author, http.MethodGet, "/api/catalogue/subjects/"+code+"/chapters", nil), http.StatusNotFound, "not_found")
 	}
@@ -92,26 +134,30 @@ func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
 type ownedBody struct {
 	Lessons []struct {
-		ID                  int64  `json:"id"`
-		PublicID            string `json:"publicId"`
-		SubjectID           int64  `json:"subjectId"`
-		SubjectCode         string `json:"subjectCode"`
-		Language            string `json:"language"`
-		TranslationGroupID  string `json:"translationGroupId"`
-		Archived            bool   `json:"archived"`
-		PublishedRevisionID *int64 `json:"publishedRevisionId"`
-		CreatedAt           string `json:"createdAt"`
-		HasFeedback         bool   `json:"hasFeedback"`
-		FeedbackRevisionID  *int64 `json:"feedbackRevisionId"`
+		ID                  int64   `json:"id"`
+		PublicID            string  `json:"publicId"`
+		SubjectID           int64   `json:"subjectId"`
+		SubjectCode         string  `json:"subjectCode"`
+		SubjectNameFr       *string `json:"subjectNameFr"`
+		SubjectNameAr       *string `json:"subjectNameAr"`
+		Language            string  `json:"language"`
+		TranslationGroupID  string  `json:"translationGroupId"`
+		Archived            bool    `json:"archived"`
+		PublishedRevisionID *int64  `json:"publishedRevisionId"`
+		CreatedAt           string  `json:"createdAt"`
+		HasFeedback         bool    `json:"hasFeedback"`
+		FeedbackRevisionID  *int64  `json:"feedbackRevisionId"`
 		LatestRevision      *struct {
-			ID          int64   `json:"id"`
-			Number      int     `json:"number"`
-			Status      string  `json:"status"`
-			Title       string  `json:"title"`
-			ChapterID   *int64  `json:"chapterId"`
-			ChapterCode *string `json:"chapterCode"`
-			Version     int     `json:"version"`
-			UpdatedAt   string  `json:"updatedAt"`
+			ID            int64   `json:"id"`
+			Number        int     `json:"number"`
+			Status        string  `json:"status"`
+			Title         string  `json:"title"`
+			ChapterID     *int64  `json:"chapterId"`
+			ChapterCode   *string `json:"chapterCode"`
+			ChapterNameFr *string `json:"chapterNameFr"`
+			ChapterNameAr *string `json:"chapterNameAr"`
+			Version       int     `json:"version"`
+			UpdatedAt     string  `json:"updatedAt"`
 		} `json:"latestRevision"`
 	} `json:"lessons"`
 }
@@ -211,8 +257,32 @@ func TestOwnedLessonsListOnlyTheCallersLessons(t *testing.T) {
 	}
 	for _, l := range f.owned(f.author).Lessons {
 		if l.ID == pub.lessonID {
-			if lr := l.LatestRevision; lr == nil || lr.Status != "approved" || lr.ChapterCode == nil || *lr.ChapterCode != "ch-1" || lr.ChapterID == nil || *lr.ChapterID != ch {
+			if lr := l.LatestRevision; lr == nil || lr.Status != "approved" || lr.ChapterCode == nil || *lr.ChapterCode != "ch-1" || lr.ChapterID == nil || *lr.ChapterID != ch ||
+				lr.ChapterNameFr != nil || lr.ChapterNameAr != nil {
 				t.Errorf("published latest revision: %+v", lr)
+			}
+			if l.SubjectNameFr != nil || l.SubjectNameAr != nil {
+				t.Errorf("subject names before naming: %+v", l)
+			}
+		}
+	}
+	// Names are display metadata joined at read time: renaming the chapter
+	// of a published revision changes the listing, not the revision.
+	cat := catalogue.NewStore(f.db)
+	fr, ar := "TEST Mathématiques", "TEST فصل"
+	if _, _, err := cat.SetSubjectNames(ctx, testOperator, "test-math", &fr, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := cat.SetChapterNames(ctx, testOperator, "test-math", "ch-1", nil, &ar); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range f.owned(f.author).Lessons {
+		if l.SubjectNameFr == nil || *l.SubjectNameFr != fr || l.SubjectNameAr != nil {
+			t.Errorf("subject names: %+v", l)
+		}
+		if l.ID == pub.lessonID {
+			if lr := l.LatestRevision; lr.ChapterNameAr == nil || *lr.ChapterNameAr != ar || lr.ChapterNameFr != nil || lr.ID != pub.revisionID {
+				t.Errorf("chapter names: %+v", lr)
 			}
 		}
 	}

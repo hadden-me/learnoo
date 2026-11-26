@@ -26,9 +26,12 @@ test('student reader at mobile width with RTL and math', async ({ page, baseURL,
   await expect(page.getByRole('heading', { level: 1 })).toContainText('TEST Élève navigateur');
   expect(await noOverflow(page)).toBe(true);
 
-  // Subject → chapter → mixed French lesson.
-  await page.getByRole('link', { name: 'test-math' }).click();
-  await expect(page.getByRole('heading', { name: 'test-chapter' })).toBeVisible();
+  // Subject → chapter → mixed French lesson, named from the catalogue
+  // (TEST names; the subject's code stays in the URL).
+  await page.getByRole('link', { name: 'TEST Mathématiques' }).click();
+  await expect(page).toHaveURL(/\/learn\/subjects\/test-math$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'TEST Mathématiques' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'TEST Nombres complexes' })).toBeVisible();
   await page.getByRole('link', { name: 'TEST Équations et nombres complexes' }).click();
   await expect(page.locator('.katex').first()).toBeVisible();
   expect(await page.evaluate(() => window.learnooMetrics.errors)).toBe(0);
@@ -91,6 +94,11 @@ test('student reader at mobile width with RTL and math', async ({ page, baseURL,
   expect(await page.evaluate(() => window.learnooMetrics.errors)).toBe(0);
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('h1')).direction)).toBe('rtl');
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('article')).direction)).toBe('rtl');
+  // The breadcrumb names the subject and chapter in the lesson's language,
+  // right to left inside the French interface.
+  const crumbs = page.locator('nav.breadcrumb bdi[lang="ar"]');
+  await expect(crumbs).toHaveText(['TEST رياضيات', 'TEST الأعداد العقدية']);
+  expect(await crumbs.evaluateAll((els) => els.map((e) => getComputedStyle(e).direction))).toEqual(['rtl', 'rtl']);
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('.math')).direction)).toBe('ltr');
   // The unlabelled Arabic paragraph inherits lang="ar" from the article, so
   // p:lang(ar) applies (Arabic line height from site.css).
