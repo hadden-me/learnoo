@@ -47,7 +47,8 @@ const phone = { width: 360, height: 780 };
 /**
  * What a journey must undo even when it fails or times out, released by
  * test.afterEach (which runs with its own timeout): every browser and API
- * context it opened, and the teacher's temporary reviewer grant.
+ * context it opened, and the teacher's temporary reviewer grant (a failed
+ * revoke fails the test).
  */
 const opened = [];
 let temporaryGrant = null;
@@ -58,16 +59,16 @@ test.afterEach(async ({ browser, baseURL }) => {
   const grant = temporaryGrant;
   temporaryGrant = null;
   if (!grant) return;
-  // Revoking is idempotent (an absent grant changes nothing), and a failure here is logged without masking the test's own result.
+  // Revoking is idempotent (an absent grant changes nothing). A failure is thrown after the
+  // contexts are closed, so Playwright reports it alongside any error of the test itself and a
+  // passing journey can never leave the grant behind unnoticed.
+  const cleaner = await apiSession(browser, baseURL, admin);
   try {
-    const cleaner = await apiSession(browser, baseURL, admin);
-    try {
-      await cleaner.call('POST', `/api/admin/users/${grant.userId}/revoke`, { permission: 'reviewer', subjectId: grant.subjectId });
-    } finally {
-      await cleaner.ctx.close();
-    }
+    await cleaner.call('POST', `/api/admin/users/${grant.userId}/revoke`, { permission: 'reviewer', subjectId: grant.subjectId });
   } catch (e) {
-    console.error(`acceptance-lms: could not revoke the teacher's reviewer grant on subject ${grant.subjectId}: ${e}`);
+    throw new Error(`acceptance-lms: could not revoke the teacher's reviewer grant on subject ${grant.subjectId}: ${e.message}`);
+  } finally {
+    await cleaner.ctx.close();
   }
 });
 
