@@ -12,6 +12,9 @@ export type Route =
   | { name: 'lessons' }
   | { name: 'new' }
   | { name: 'edit'; lessonId: number }
+  | { name: 'courses' }
+  | { name: 'newCourse' }
+  | { name: 'course'; courseId: number }
   | EditorialRoute
   | { name: 'notFound' };
 
@@ -21,6 +24,10 @@ export function parseRoute(pathname: string): Route {
   if (path === `${BASE}/lessons/new`) return { name: 'new' };
   const edit = /^\/studio\/lessons\/([1-9][0-9]{0,17})\/edit$/.exec(path);
   if (edit) return { name: 'edit', lessonId: Number(edit[1]) };
+  if (path === `${BASE}/courses`) return { name: 'courses' };
+  if (path === `${BASE}/courses/new`) return { name: 'newCourse' };
+  const course = /^\/studio\/courses\/([1-9][0-9]{0,17})$/.exec(path);
+  if (course) return { name: 'course', courseId: Number(course[1]) };
   return parseEditorialRoute(path) ?? { name: 'notFound' };
 }
 
@@ -32,6 +39,12 @@ export function routePath(route: Route): string {
       return `${BASE}/lessons/new`;
     case 'edit':
       return `${BASE}/lessons/${route.lessonId}/edit`;
+    case 'courses':
+      return `${BASE}/courses`;
+    case 'newCourse':
+      return `${BASE}/courses/new`;
+    case 'course':
+      return `${BASE}/courses/${route.courseId}`;
     default:
       return `${BASE}/`;
   }
