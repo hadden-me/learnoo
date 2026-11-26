@@ -325,8 +325,8 @@ func (e *env) mustSave(rev courses.Revision, d courses.Draft) courses.Revision {
 }
 
 // forceStatus moves a course revision out of draft with every trigger
-// disabled (session_replication_role = replica, superuser test connection):
-// B03 has no submission path, B04 adds it. Test setup only.
+// disabled (session_replication_role = replica, superuser test connection),
+// for B03 tests that need a submitted revision without its audit rows. Test setup only.
 func (e *env) forceStatus(revisionID int64, set string) {
 	e.t.Helper()
 	tx, err := e.db.Begin(e.ctx)

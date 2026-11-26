@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/courses"
-	"github.com/hadden-me/learnoo/internal/review"
 )
 
 // race runs a and b concurrently and returns both results.
@@ -22,14 +21,12 @@ func race(a, b func() error) (error, error) {
 }
 
 // A save pinning another author's eligible revision racing that lesson's
-// withdrawal, and racing its unpublication: the lesson change always
+// withdrawal, its unpublication and its archive (LMS-B04): the lesson change always
 // applies; the save either commits first or, seeing the change, is refused
 // with ErrInvalidStep. Never a deadlock, a retry or a guard error.
 func TestSaveRacesLessonWithdrawalAndUnpublish(t *testing.T) {
 	e := newEnv(t)
-	rv := review.NewStore(e.db)
-	admin := *e.admin.AuditID()
-	for _, kind := range []string{"withdraw", "unpublish"} {
+	for _, kind := range []string{"withdraw", "unpublish", "archive"} {
 		saved, refused := 0, 0
 		for i := 0; i < 8; i++ {
 			foreign := e.publishedLesson(e.other, e.math, "fr", fmt.Sprintf("Foreign %s %d", kind, i))
@@ -38,13 +35,10 @@ func TestSaveRacesLessonWithdrawalAndUnpublish(t *testing.T) {
 			saveErr, lessonErr := race(
 				func() error { _, err := e.save(rev, d); return err },
 				func() error {
-					var err error
-					if kind == "withdraw" {
-						_, err = rv.Withdraw(context.Background(), admin, foreign.ID, "Simulated withdrawal.", &foreign.ID)
-					} else {
-						_, err = rv.Unpublish(context.Background(), admin, foreign.LessonID, "Simulated unpublication.", foreign.ID)
+					if i%2 == 0 { // let the save start first every other round
+						time.Sleep(20 * time.Millisecond)
 					}
-					return err
+					return e.lessonEffect(kind, foreign)
 				})
 			if lessonErr != nil {
 				t.Fatalf("%s: %v", kind, lessonErr)
