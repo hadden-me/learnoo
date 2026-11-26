@@ -64,7 +64,7 @@ func (h *Handlers) registerPublic(mux *http.ServeMux) {
 		panic(err) // a build defect, as in New
 	}
 	page := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, publicHeaders(fn)) }
-	page("GET /{$}", h.home)
+	page("GET /{$}", h.publicHome)
 	page("GET /catalogue", h.catalogueIndex)
 	page("GET /catalogue/{level}/{section}", h.catalogueSection)
 	page("GET /catalogue/{level}/{section}/{subject}", h.catalogueSubject)
@@ -128,14 +128,14 @@ func (h *Handlers) publicInternal(w http.ResponseWriter, r *http.Request, op str
 		Data: struct{ Heading, Message string }{"Erreur interne", "Un problème est survenu. Réessayez plus tard."}})
 }
 
-type homeData struct {
+type publicHomeData struct {
 	Levels []PublicLevel
 	// Studio is the sign-in link that leads teachers to the Studio.
 	Studio string
 }
 
 // Available reports whether any section has a current edition.
-func (d homeData) Available() bool {
+func (d publicHomeData) Available() bool {
 	for _, lv := range d.Levels {
 		for _, s := range lv.Sections {
 			if s.Current != nil {
@@ -146,14 +146,14 @@ func (d homeData) Available() bool {
 	return false
 }
 
-func (h *Handlers) home(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) publicHome(w http.ResponseWriter, r *http.Request) {
 	levels, err := h.Store.Curriculum(r.Context())
 	if err != nil {
 		h.publicInternal(w, r, "curriculum", err)
 		return
 	}
 	h.renderPublic(w, r, http.StatusOK, "public_home", publicView{Title: "Accueil",
-		Data: homeData{Levels: levels, Studio: signInURL("/studio")}})
+		Data: publicHomeData{Levels: levels, Studio: signInURL("/studio")}})
 }
 
 type catalogueData struct {
@@ -238,16 +238,16 @@ func signInURL(target string) string {
 // CourseReadPath is the signed-in course reading route (LMS-B08).
 func CourseReadPath(publicID string) string { return "/learn/courses/" + publicID }
 
-type courseData struct {
+type publicCourseData struct {
 	CourseOverview
 	SignIn string
 }
 
 // CoverURL is the public cover route of the course.
-func (c courseData) CoverURL() string { return "/courses/" + c.PublicID + "/cover" }
+func (c publicCourseData) CoverURL() string { return "/courses/" + c.PublicID + "/cover" }
 
 func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
-	c, err := h.Store.Course(r.Context(), r.PathValue("publicId"))
+	c, err := h.Store.PublicCourse(r.Context(), r.PathValue("publicId"))
 	if errors.Is(err, ErrNotFound) {
 		// The same notice for unknown, never published, suspended,
 		// archived and withdrawn courses; no earlier revision is shown.
@@ -258,7 +258,7 @@ func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "course overview", err)
 		return
 	}
-	v := publicView{Title: c.Title, Data: courseData{CourseOverview: c, SignIn: signInURL(CourseReadPath(c.PublicID))}}
+	v := publicView{Title: c.Title, Data: publicCourseData{CourseOverview: c, SignIn: signInURL(CourseReadPath(c.PublicID))}}
 	if c.Language == "ar" {
 		v.TitleLang = "ar"
 	}
