@@ -63,11 +63,13 @@ export async function setup(browser, baseURL) {
   // Chapters not retired at the time an edition is built (a spec retires test-chapter-retirable).
   const openChapterIds = async () =>
     (await au.call('GET', '/api/catalogue/subjects/test-math/chapters')).chapters.filter((c) => !c.retiredAt).map((c) => c.id);
+  // test-bac may already exist (the Go fixture's public catalogue seeds it with
+  // a test-maths section), so this section has a name of its own.
   const existing = (await ad.call('GET', '/api/catalogue/levels')).levels.find((l) => l.code === 'test-bac');
   const level = existing ?? (await ad.call('POST', `${base}/levels`, { code: 'test-bac', nameFr: 'TEST Baccalauréat', nameAr: 'TEST بكالوريا' }));
   const section =
     existing?.sections.find((x) => x.code === 'test-section-maths') ??
-    (await ad.call('POST', `${base}/levels/${level.id}/sections`, { code: 'test-section-maths', nameFr: 'TEST Section mathématiques', nameAr: 'TEST شعبة الرياضيات' }));
+    (await ad.call('POST', `${base}/levels/${level.id}/sections`, { code: 'test-section-maths', nameFr: 'TEST Section sciences mathématiques', nameAr: 'TEST شعبة العلوم الرياضية' }));
   const editions = (await ad.call('GET', `/api/catalogue/sections/${section.id}/editions`)).editions;
   const edition = async (code, label, expectedCurrentEditionId) => {
     const found = editions.find((x) => x.code === code);
