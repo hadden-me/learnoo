@@ -342,6 +342,8 @@ type stepChangeJSON struct {
 	PreviousPosition       *int             `json:"previousPosition"`
 	PreviousTitle          *string          `json:"previousTitle"`
 	StructureChanged       bool             `json:"structureChanged"`
+	Unavailable            bool             `json:"unavailable"`
+	PreviousUnavailable    bool             `json:"previousUnavailable"`
 	Diff                   *contentDiffJSON `json:"diff"`
 }
 
@@ -361,7 +363,7 @@ func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) 
 			RevisionID: s.RevisionID, RevisionNumber: s.RevisionNumber, Change: s.Change,
 			PreviousRevisionID: s.PreviousRevisionID, PreviousRevisionNumber: s.PreviousRevisionNumber,
 			PreviousModuleKey: s.PreviousModuleKey, PreviousPosition: s.PreviousPosition, PreviousTitle: s.PreviousTitle,
-			StructureChanged: s.StructureChanged}
+			StructureChanged: s.StructureChanged, Unavailable: s.Unavailable, PreviousUnavailable: s.PreviousUnavailable}
 		if d := s.Diff; d != nil {
 			dj := &contentDiffJSON{Fields: []fieldChangeJSON{}, Blocks: []blockChangeJSON{}}
 			for _, f := range d.Fields {
