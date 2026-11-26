@@ -123,41 +123,68 @@ func loadDecision(ctx context.Context, tx pgx.Tx, revisionID int64) (*Decision, 
 // reviewBlocked returns nil when an active reviewer of the subject may
 // decide on the revision, else every active reviewer's disqualifications
 // (course_reviewer_problems).
-func reviewBlocked(ctx context.Context, tx pgx.Tx, revisionID, subjectID int64) (*Blocked, error) {
+func reviewBlocked(ctx context.Context, tx pgx.Tx, revisionID, _ int64) (*Blocked, error) {
+	m, err := reviewBlockedBatch(ctx, tx, []int64{revisionID})
+	return m[revisionID], err
+}
+
+// reviewBlockedBatch computes reviewBlocked for several revisions in one
+// query: the result has an entry only for blocked revisions.
+func reviewBlockedBatch(ctx context.Context, tx pgx.Tx, revisionIDs []int64) (map[int64]*Blocked, error) {
+	out := map[int64]*Blocked{}
+	if len(revisionIDs) == 0 {
+		return out, nil
+	}
 	rows, err := tx.Query(ctx, `
-		SELECT a.user_id, u.display_name, p.reason, p.lesson_id, p.lesson_revision_id
-		  FROM reviewer_assignments a
-		  JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL
-		  LEFT JOIN LATERAL course_reviewer_problems(a.user_id, $1) p ON true
-		 WHERE a.subject_id = $2
-		 ORDER BY a.user_id, p.reason, p.lesson_id`, revisionID, subjectID)
+		SELECT cr.id, a.user_id, u.display_name, p.reason, p.lesson_id, p.lesson_revision_id
+		  FROM unnest($1::bigint[]) AS want(id)
+		  JOIN course_revisions cr ON cr.id = want.id
+		  LEFT JOIN (reviewer_assignments a JOIN users u ON u.id = a.user_id AND u.disabled_at IS NULL)
+		         ON a.subject_id = cr.subject_id
+		  LEFT JOIN LATERAL course_reviewer_problems(a.user_id, cr.id) p ON a.user_id IS NOT NULL
+		 ORDER BY cr.id, a.user_id, p.reason, p.lesson_id`, revisionIDs)
 	if err != nil {
 		return nil, err
 	}
 	type row struct {
-		ReviewerProblem
-		reason *string
+		revision int64
+		reviewer *int64
+		name     *string
+		reason   *string
+		lesson   *int64
+		lrev     *int64
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		err := r.Scan(&x.ReviewerID, &x.ReviewerName, &x.reason, &x.LessonID, &x.LessonRevisionID)
+		err := r.Scan(&x.revision, &x.reviewer, &x.name, &x.reason, &x.lesson, &x.lrev)
 		return x, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	b := &Blocked{Reasons: []ReviewerProblem{}}
+	eligible := map[int64]bool{}
 	for _, x := range list {
-		if x.reason == nil {
-			return nil, nil // an eligible reviewer exists
+		if x.reviewer != nil && x.reason == nil {
+			eligible[x.revision] = true
 		}
-		x.Reason = *x.reason
-		b.Reasons = append(b.Reasons, x.ReviewerProblem)
 	}
-	if len(b.Reasons) == 0 {
-		b.Reasons = append(b.Reasons, ReviewerProblem{Reason: "no_subject_reviewer"})
+	for _, x := range list {
+		if eligible[x.revision] {
+			continue
+		}
+		b := out[x.revision]
+		if b == nil {
+			b = &Blocked{Reasons: []ReviewerProblem{}}
+			out[x.revision] = b
+		}
+		if x.reviewer == nil {
+			b.Reasons = append(b.Reasons, ReviewerProblem{Reason: "no_subject_reviewer"})
+			continue
+		}
+		b.Reasons = append(b.Reasons, ReviewerProblem{ReviewerID: *x.reviewer, ReviewerName: *x.name, Reason: *x.reason,
+			LessonID: x.lesson, LessonRevisionID: x.lrev})
 	}
-	return b, nil
+	return out, nil
 }
 
 // ineligibleSteps lists the steps of a revision whose pinned revision is
@@ -357,6 +384,13 @@ func canSeeNotice(ctx context.Context, tx pgx.Tx, actor, courseID int64) (bool, 
 func (s *Store) NewerRevisions(ctx context.Context, actor, courseID int64) (Notice, error) {
 	n := Notice{CourseID: courseID, Steps: []NewerRevision{}}
 	err := s.tx(ctx, actor, nil, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM courses WHERE id = $1)`, courseID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
 		ok, err := canSeeNotice(ctx, tx, actor, courseID)
 		if err != nil {
 			return err

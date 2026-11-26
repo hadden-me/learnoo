@@ -213,32 +213,45 @@ func (s *Store) ReviewQueue(ctx context.Context, actor, subjectID int64) ([]Revi
 		items, err = reviewItems(ctx, tx, `
 			JOIN reviewer_assignments a ON a.subject_id = r.subject_id AND a.user_id = $1
 			JOIN users ru ON ru.id = a.user_id AND ru.disabled_at IS NULL
-			WHERE ($2 = 0 OR r.subject_id = $2)`, actor, subjectID)
+			WHERE ($2 = 0 OR r.subject_id = $2)`, `r.submitted_at, r.id`, actor, subjectID, MaxQueue)
 		return err
 	})
 	return items, err
 }
 
-// BlockedReviews lists, for administrators, every course revision in
-// review that no active reviewer may decide on, with the reasons.
-func (s *Store) BlockedReviews(ctx context.Context, actor int64) ([]ReviewItem, error) {
+// BlockedPage is the page size of BlockedReviews (a variable for tests).
+var BlockedPage = MaxQueue
+
+// blockedFilter keeps the revisions no active reviewer of their subject may
+// decide on (the SQL form of reviewBlocked).
+const blockedFilter = `NOT EXISTS (SELECT 1 FROM reviewer_assignments ra JOIN users ru ON ru.id = ra.user_id AND ru.disabled_at IS NULL
+		WHERE ra.subject_id = r.subject_id AND course_reviewer_eligible(ra.user_id, r.id))`
+
+// BlockedReviews pages, for administrators, through the course revisions
+// in review that no active reviewer may decide on, with the reasons, by
+// revision ID: after is the last revision ID of the previous page (0 for
+// the first). It returns at most BlockedPage items and the next cursor, or
+// nil.
+func (s *Store) BlockedReviews(ctx context.Context, actor, after int64) ([]ReviewItem, *int64, error) {
 	var out []ReviewItem
 	err := s.tx(ctx, actor, []permissions.Permission{permissions.Administrator}, func(tx pgx.Tx) error {
-		items, err := reviewItems(ctx, tx, `WHERE $2::bigint = 0`, actor, 0)
-		for _, it := range items {
-			if it.Blocked != nil {
-				out = append(out, it)
-			}
-		}
+		var err error
+		out, err = reviewItems(ctx, tx, `WHERE r.id > $2 AND `+blockedFilter, `r.id`, actor, after, BlockedPage+1)
 		return err
 	})
-	if out == nil {
-		out = []ReviewItem{}
+	if err != nil {
+		return nil, nil, err
 	}
-	return out, err
+	var next *int64
+	if len(out) > BlockedPage {
+		out = out[:BlockedPage]
+		id := out[len(out)-1].RevisionID
+		next = &id
+	}
+	return out, next, nil
 }
 
-func reviewItems(ctx context.Context, tx pgx.Tx, filter string, actor, subjectID int64) ([]ReviewItem, error) {
+func reviewItems(ctx context.Context, tx pgx.Tx, filter, order string, actor, arg int64, limit int) ([]ReviewItem, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT r.id, r.course_id, r.revision_number, r.kind, r.title, r.language, r.subject_id, r.author_id, au.display_name,
 		       r.submitted_at, course_reviewer_eligible($1, r.id)
@@ -246,8 +259,8 @@ func reviewItems(ctx context.Context, tx pgx.Tx, filter string, actor, subjectID
 		  JOIN users au ON au.id = r.author_id
 		  `+filter+`
 		   AND r.status = 'in_review' AND r.withdrawn_at IS NULL
-		 ORDER BY r.submitted_at, r.id
-		 LIMIT $3`, actor, subjectID, MaxQueue)
+		 ORDER BY `+order+`
+		 LIMIT $3`, actor, arg, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -260,10 +273,16 @@ func reviewItems(ctx context.Context, tx pgx.Tx, filter string, actor, subjectID
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]int64, len(items))
 	for i := range items {
-		if items[i].Blocked, err = reviewBlocked(ctx, tx, items[i].RevisionID, items[i].SubjectID); err != nil {
-			return nil, err
-		}
+		ids[i] = items[i].RevisionID
+	}
+	blocked, err := reviewBlockedBatch(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Blocked = blocked[items[i].RevisionID]
 	}
 	if items == nil {
 		items = []ReviewItem{}
@@ -274,7 +293,11 @@ func reviewItems(ctx context.Context, tx pgx.Tx, filter string, actor, subjectID
 // StepChange is one step of a revision under review compared with its
 // comparison revision: "unchanged" (same lesson and pinned revision),
 // "replaced" (same lesson, another revision; Previous* and Diff set) or
-// "added" (a lesson the comparison revision does not have).
+// "added" (a lesson the comparison revision does not have), or "moved"
+// (same lesson and pinned revision, but another module, position or title).
+// For a step of a lesson the comparison revision has, Previous* give its
+// module, position and title there and StructureChanged tells whether they
+// differ (also for a replaced step).
 type StepChange struct {
 	ModuleKey              string
 	Position               int
@@ -285,6 +308,10 @@ type StepChange struct {
 	Change                 string
 	PreviousRevisionID     *int64
 	PreviousRevisionNumber *int
+	PreviousModuleKey      *string
+	PreviousPosition       *int
+	PreviousTitle          *string
+	StructureChanged       bool
 	Diff                   *ContentDiff
 }
 
@@ -307,8 +334,9 @@ type ReviewPayload struct {
 	Problems []ReviewerProblem
 	Steps    []StepChange
 	Removed  []RemovedStep
-	// MetadataChanged: overview, cover, placement or module structure
-	// differ from the comparison revision (always true without one).
+	// MetadataChanged: overview, cover, placement, modules or step
+	// structure (lesson, module, position, title of each step) differ from
+	// the comparison revision (always true without one).
 	MetadataChanged bool
 }
 
@@ -362,7 +390,8 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	r := p.Revision
 	rows, err := tx.Query(ctx, `
 		SELECT s.module_key::text, s.position, s.title, s.lesson_id, s.lesson_revision_id, lr.revision_number,
-		       ps.lesson_revision_id, pr.revision_number, lr.content, pr.content
+		       ps.lesson_revision_id, pr.revision_number, lr.content, pr.content,
+		       ps.module_key::text, ps.position, ps.title
 		  FROM course_steps s
 		  JOIN course_modules m ON m.course_revision_id = s.course_revision_id AND m.module_key = s.module_key
 		  JOIN lesson_revisions lr ON lr.id = s.lesson_revision_id
@@ -381,7 +410,8 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	list, err := pgx.CollectRows(rows, func(rw pgx.CollectableRow) (row, error) {
 		var x row
 		err := rw.Scan(&x.ModuleKey, &x.Position, &x.Title, &x.LessonID, &x.RevisionID, &x.RevisionNumber,
-			&x.inComparison, &x.PreviousRevisionNumber, &x.content, &x.prev)
+			&x.inComparison, &x.PreviousRevisionNumber, &x.content, &x.prev,
+			&x.PreviousModuleKey, &x.PreviousPosition, &x.PreviousTitle)
 		return x, err
 	})
 	if err != nil {
@@ -390,9 +420,14 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 	p.Steps = []StepChange{}
 	for _, x := range list {
 		c := x.StepChange
+		c.StructureChanged = x.inComparison != nil &&
+			(*c.PreviousModuleKey != c.ModuleKey || *c.PreviousPosition != c.Position || *c.PreviousTitle != c.Title)
 		switch {
 		case x.inComparison == nil:
 			c.Change = "added"
+			c.PreviousRevisionNumber = nil
+		case *x.inComparison == c.RevisionID && c.StructureChanged:
+			c.Change = "moved"
 			c.PreviousRevisionNumber = nil
 		case *x.inComparison == c.RevisionID:
 			c.Change = "unchanged"
@@ -442,6 +477,11 @@ func loadChanges(ctx context.Context, tx pgx.Tx, p *ReviewPayload) error {
 		               UNION ALL
 		               (SELECT module_key, position, title, chapter_id FROM course_modules WHERE course_revision_id = c.id
 		                EXCEPT SELECT module_key, position, title, chapter_id FROM course_modules WHERE course_revision_id = r.id))
+		    OR EXISTS ((SELECT module_key, position, title, lesson_id FROM course_steps WHERE course_revision_id = r.id
+		                EXCEPT SELECT module_key, position, title, lesson_id FROM course_steps WHERE course_revision_id = c.id)
+		               UNION ALL
+		               (SELECT module_key, position, title, lesson_id FROM course_steps WHERE course_revision_id = c.id
+		                EXCEPT SELECT module_key, position, title, lesson_id FROM course_steps WHERE course_revision_id = r.id))
 		  FROM course_revisions r LEFT JOIN course_revisions c ON c.id = r.compare_revision_id
 		 WHERE r.id = $1`, r.ID).Scan(&p.MetadataChanged)
 }

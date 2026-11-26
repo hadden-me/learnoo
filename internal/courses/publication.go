@@ -135,7 +135,8 @@ func lockForPointer(ctx context.Context, tx pgx.Tx, courseID, revisionID int64, 
 // Publish points the revision's course at the approved revision, as a
 // publisher, with its course_publication_audit row (contract §5
 // "publishable"): approved by a recorded decision, never published, not
-// withdrawn, base IS NOT DISTINCT FROM the pointer (ErrStaleBase), every
+// withdrawn, base IS NOT DISTINCT FROM the pointer and comparison revision
+// still the course's (course_comparison_revision) (ErrStaleBase), every
 // step eligible (*IneligibleError), placement valid in publish mode
 // (ErrPlacementInvalid), course not archived. expected is the pointer the
 // caller saw (ErrStalePointer otherwise). On any failure nothing changes.
@@ -156,11 +157,12 @@ func (s *Store) Publish(ctx context.Context, actor, revisionID int64, expected *
 			return err
 		}
 		var base *int64
-		var closed, withdrawn, approval bool
+		var closed, withdrawn, approval, compared bool
 		if err := tx.QueryRow(ctx, `
 			SELECT r.status, r.base_revision_id, r.candidate_closed_at IS NOT NULL, r.withdrawn_at IS NOT NULL,
-			       EXISTS (SELECT 1 FROM course_review_decisions d WHERE d.revision_id = r.id AND d.action = 'approve')
-			  FROM course_revisions r WHERE r.id = $1 FOR SHARE`, revisionID).Scan(&status, &base, &closed, &withdrawn, &approval); err != nil {
+			       EXISTS (SELECT 1 FROM course_review_decisions d WHERE d.revision_id = r.id AND d.action = 'approve'),
+			       r.compare_revision_id IS NOT DISTINCT FROM course_comparison_revision(r.course_id)
+			  FROM course_revisions r WHERE r.id = $1 FOR SHARE`, revisionID).Scan(&status, &base, &closed, &withdrawn, &approval, &compared); err != nil {
 			return err
 		}
 		switch {
@@ -172,7 +174,9 @@ func (s *Store) Publish(ctx context.Context, actor, revisionID int64, expected *
 			return ErrAlreadyPublished
 		case c.archived:
 			return ErrArchived
-		case !sameID(base, c.published):
+		case !sameID(base, c.published), !compared:
+			// A restore or a withdrawal since the draft was created changed
+			// the comparison revision the review was made against.
 			return ErrStaleBase
 		}
 		bad, err := ineligibleSteps(ctx, tx, revisionID)
@@ -601,10 +605,15 @@ type PublishItem struct {
 	// IneligibleSteps counts steps whose pinned revision is not eligible
 	// now (publication would be refused).
 	IneligibleSteps int
+	// StaleComparison: the course's comparison revision changed since the
+	// draft was created (a restore or withdrawal).
+	StaleComparison bool
 }
 
 // StaleBase reports whether publication would be refused for its base.
-func (p PublishItem) StaleBase() bool { return !sameID(p.BaseRevisionID, p.PublishedRevisionID) }
+func (p PublishItem) StaleBase() bool {
+	return !sameID(p.BaseRevisionID, p.PublishedRevisionID) || p.StaleComparison
+}
 
 // PublishQueue lists approved, never published, non-withdrawn course
 // revisions, oldest approval first (at most MaxQueue), for publishers.
@@ -616,7 +625,8 @@ func (s *Store) PublishQueue(ctx context.Context, actor int64) ([]PublishItem, e
 			       r.author_id, au.display_name, d.reviewer_id, d.decided_at, r.base_revision_id, c.published_revision_id,
 			       c.archived_at IS NOT NULL,
 			       (SELECT count(*) FROM course_steps s WHERE s.course_revision_id = r.id
-			           AND NOT course_step_revision_eligible(s.lesson_id, s.lesson_revision_id))
+			           AND NOT course_step_revision_eligible(s.lesson_id, s.lesson_revision_id)),
+			       r.compare_revision_id IS DISTINCT FROM course_comparison_revision(r.course_id)
 			  FROM course_revisions r
 			  JOIN courses c ON c.id = r.course_id
 			  JOIN users au ON au.id = r.author_id
@@ -631,7 +641,7 @@ func (s *Store) PublishQueue(ctx context.Context, actor int64) ([]PublishItem, e
 			var p PublishItem
 			err := row.Scan(&p.RevisionID, &p.CourseID, &p.CoursePublicID, &p.Number, &p.Kind, &p.Title, &p.Language, &p.SubjectID,
 				&p.AuthorID, &p.AuthorName, &p.ApprovedBy, &p.ApprovedAt, &p.BaseRevisionID, &p.PublishedRevisionID,
-				&p.Archived, &p.IneligibleSteps)
+				&p.Archived, &p.IneligibleSteps, &p.StaleComparison)
 			return p, err
 		})
 		return err

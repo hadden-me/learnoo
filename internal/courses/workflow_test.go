@@ -196,7 +196,7 @@ func TestNoEligibleReviewerBlocks(t *testing.T) {
 		sub.Blocked.Reasons[0].ReviewerID != lone {
 		t.Fatalf("author view: %+v", sub.Blocked)
 	}
-	items, err := e.store.BlockedReviews(e.ctx, e.adminID())
+	items, _, err := e.store.BlockedReviews(e.ctx, e.adminID(), 0)
 	if err != nil || len(items) != 1 || items[0].RevisionID != sub.ID {
 		t.Fatalf("administrators: %+v %v", items, err)
 	}
