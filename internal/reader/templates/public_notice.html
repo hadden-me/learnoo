@@ -1,1 +1,1 @@
-{{define "content"}}{{with .Data}}<h1>{{.Heading}}</h1><p>{{.Message}}</p><p><a href="/catalogue">Parcourir le catalogue</a> · <a href="/">Accueil</a></p>{{end}}{{end}}
+{{define "content"}}{{with .Data}}<h1>{{.Heading}}</h1><p>{{.Message}}</p><p><a href="{{href "/catalogue"}}">{{t "pub.browse"}}</a> · <a href="{{href "/"}}">{{t "nav.publicHome"}}</a></p>{{end}}{{end}}

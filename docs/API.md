@@ -787,6 +787,8 @@ Server-rendered HTML, readable without an account, identical for every visitor (
 | `GET /courses/{publicId}` | Overview of a course in `reader_published_courses`: title, summary, objectives, prerequisites, language, subject, placements with edition labels, module titles and course-authored step titles (with an unavailable notice for unreadable steps), author and course reviewer, cover with its alt text, and a sign-in link to `/login?next=/learn/courses/{publicId}`. |
 | `GET /courses/{publicId}/cover` | The cover image of the published revision of a readable course (`ETag`, the media CSP). Anything else: JSON `404 not_found`. |
 
+**Interface language (LMS-B09).** Every public route also answers `?lang=ar` with the Arabic interface (French is the URL without the parameter); links on the page keep it. Each locale is its own URL with its own `ETag` under the same headers, still without `Vary`. An empty, repeated or unknown `lang` value gets the `no-store` `404` notice. On session pages (`/login`, `/invite/…`, `/learn…`, `/studio…`) a `GET` with `?lang=fr|ar` stores the choice in the `__Host-learnoo_lang` cookie and answers `303` to the same URL without the parameter; those pages then follow the cookie ([DECISIONS.md](DECISIONS.md#interface-localization-and-accessibility-lms-b09)).
+
 Unknown or malformed codes, draft editions, a repeated or empty `edition` parameter, a subject the edition does not assign and a course that is not readable (unknown, never published, suspended, archived) get a `404` notice page; a course has no fallback to an earlier revision. Lesson links lead to the signed-in reader, which redirects to sign-in.
 
 ## Administration (LMS-B10)

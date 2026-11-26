@@ -1,9 +1,9 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <span aria-current="page">Mon niveau</span></nav>
-<h1>Mon niveau et ma section</h1>
-<p>Ce choix est facultatif. Il sert seulement à afficher d’abord les matières et les cours de votre niveau, dans l’édition en vigueur du programme. Aucune autre information n’est demandée.</p>
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="{{t "breadcrumb"}}"><a href="/learn">{{t "nav.home"}}</a> › <span aria-current="page">{{t "prefs.crumb"}}</span></nav>
+<h1>{{t "prefs.title"}}</h1>
+<p>{{t "prefs.intro"}}</p>
 <form method="post" action="/learn/preferences" class="form" novalidate><input type="hidden" name="csrf_token" value="{{$.CSRF}}">
 {{with .Error}}<div class="form-error" role="alert"><p id="choice_error">{{.}}</p></div>{{end}}
-{{if .Levels}}<div class="field"><label for="choice">Niveau et section</label><select id="choice" name="choice"{{if .Error}} aria-describedby="choice_error"{{end}}><option value="">Tout le programme</option>{{$p := .Preference}}{{range .Levels}}<optgroup label="{{.Name}}"><option value="level:{{.ID}}"{{if and (eq $p.LevelID .ID) (eq $p.SectionID 0)}} selected{{end}}>{{.Name}} — toutes les sections</option>{{$l := .}}{{range .Sections}}<option value="section:{{$l.ID}}:{{.ID}}"{{if eq $p.SectionID .ID}} selected{{end}}>{{$l.Name}} › {{.Name}}</option>{{end}}</optgroup>{{end}}</select></div>
-<div class="actions"><button type="submit">Enregistrer</button><button type="submit" name="skip" value="1" class="secondary">Passer et tout parcourir</button></div>
-{{else}}<p>Aucun niveau n’est encore proposé. Vous pouvez parcourir tout le programme.</p><div class="actions"><button type="submit" name="skip" value="1" class="secondary">Tout parcourir</button></div>{{end}}
+{{if .Levels}}<div class="field"><label for="choice">{{t "prefs.label"}}</label><select id="choice" name="choice"{{if .Error}} aria-describedby="choice_error" aria-invalid="true"{{end}}><option value="">{{t "prefs.all"}}</option>{{$p := .Preference}}{{range .Levels}}<optgroup label="{{pick .Name .NameAr}}"><option value="level:{{.ID}}"{{if and (eq $p.LevelID .ID) (eq $p.SectionID 0)}} selected{{end}}>{{t "prefs.allSections" (pick .Name .NameAr)}}</option>{{$l := .}}{{range .Sections}}<option value="section:{{$l.ID}}:{{.ID}}"{{if eq $p.SectionID .ID}} selected{{end}}>{{pick $l.Name $l.NameAr}} › {{pick .Name .NameAr}}</option>{{end}}</optgroup>{{end}}</select></div>
+<div class="actions"><button type="submit">{{t "prefs.save"}}</button><button type="submit" name="skip" value="1" class="secondary">{{t "prefs.skip"}}</button></div>
+{{else}}<p>{{t "prefs.none"}}</p><div class="actions"><button type="submit" name="skip" value="1" class="secondary">{{t "prefs.browseAll"}}</button></div>{{end}}
 </form>{{end}}{{end}}

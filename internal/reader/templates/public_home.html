@@ -1,14 +1,14 @@
-{{define "content"}}{{with .Data}}<section class="intro" aria-labelledby="home-title"><h1 id="home-title">Des cours gratuits, organisés selon le programme et relus avant publication</h1>
-<p>Learnoo est un service d’apprentissage gratuit. Des auteurs rédigent des leçons et les regroupent en cours ; chaque contenu est relu par une autre personne, chargée de la matière, avant d’être publié.</p>
-<p>Learnoo est en phase pilote : les comptes élèves et enseignants sont créés sur invitation. Il n’y a pas encore d’inscription publique.</p>
-<p class="actions"><a class="action primary" href="/catalogue">Parcourir le catalogue</a><a class="action" href="/login">Se connecter</a></p></section>
-<section aria-labelledby="curriculum-heading"><h2 id="curriculum-heading">Programme disponible</h2>
-{{if .Available}}{{range .Levels}}{{$level := .}}{{range .Sections}}{{if .Current}}{{$sec := .}}<div class="section-summary"><h3><a href="{{.Path}}">{{$level.Name}} › {{.Name}}</a></h3><p class="hint">{{.Current.LabelFr}} ({{.Current.StateLabel}})</p>
-{{with .Available}}<ul class="subject-list">{{range .}}<li><a href="{{$sec.Path}}/{{.Code}}">{{template "catname" .Label}}</a> : {{.Courses}} cours, {{.Lessons}} leçon{{if gt .Lessons 1}}s{{end}}</li>{{end}}</ul>{{else}}<p>Aucun cours ni aucune leçon relus ne sont encore publiés dans cette section.</p>{{end}}</div>{{end}}{{end}}{{end}}
-{{else}}<p>Aucune édition du programme n’est encore publiée. Les leçons déjà publiées restent consultables depuis le <a href="/catalogue">catalogue</a>.</p>{{end}}</section>
-<section aria-labelledby="review-heading"><h2 id="review-heading">Comment les contenus sont relus</h2>
-<ol class="steps"><li>Un auteur rédige une leçon ou un cours dans le Studio.</li><li>Un relecteur de la matière, qui n’en est pas l’auteur, relit le contenu puis l’approuve ou demande des corrections.</li><li>Un éditeur publie la version approuvée. Une version publiée ne change plus : une correction passe par une nouvelle relecture.</li><li>Un contenu signalé comme erroné peut être retiré immédiatement.</li></ol>
-<p class="hint">La relecture vérifie le contenu avant publication ; elle ne remplace pas l’avis de votre enseignant.</p></section>
-<section aria-labelledby="contribute-heading"><h2 id="contribute-heading">Contribuer</h2>
-<p>Les enseignants qui souhaitent rédiger ou relire des contenus reçoivent un accès au Studio sur invitation de l’équipe Learnoo pendant le pilote. Les élèves peuvent signaler une erreur depuis chaque leçon.</p>
-<p class="actions"><a class="action" href="{{.Studio}}">Accès enseignants (Studio)</a></p></section>{{end}}{{end}}
+{{define "content"}}{{with .Data}}<section class="intro" aria-labelledby="home-title"><h1 id="home-title">{{t "pub.home.title"}}</h1>
+<p>{{t "pub.home.p1"}}</p>
+<p>{{t "pub.home.p2"}}</p>
+<p class="actions"><a class="action primary" href="{{href "/catalogue"}}">{{t "pub.browse"}}</a><a class="action" href="{{href "/login"}}">{{t "nav.signIn"}}</a></p></section>
+<section aria-labelledby="curriculum-heading"><h2 id="curriculum-heading">{{t "pub.home.curriculum"}}</h2>
+{{if .Available}}{{range .Levels}}{{$level := .}}{{range .Sections}}{{if .Current}}{{$sec := .}}<div class="section-summary"><h3><a href="{{href .Path}}">{{pick $level.Name $level.NameAr}} › {{pick .Name .NameAr}}</a></h3><p class="hint">{{pick .Current.LabelFr .Current.LabelAr}} ({{t .Current.StateKey}})</p>
+{{with .Available}}<ul class="subject-list">{{range .}}<li><a href="{{href $sec.Path "/" .Code}}">{{template "catname" (.Label ui)}}</a>{{t "pub.colon"}}{{t "pub.counts" (tn "count.courses" .Courses) (tn "count.lessons" .Lessons)}}</li>{{end}}</ul>{{else}}<p>{{t "pub.home.sectionEmpty"}}</p>{{end}}</div>{{end}}{{end}}{{end}}
+{{else}}<p>{{t "pub.home.noEdition" (link (href "/catalogue") (t "pub.home.catalogueLink"))}}</p>{{end}}</section>
+<section aria-labelledby="review-heading"><h2 id="review-heading">{{t "pub.home.review"}}</h2>
+<ol class="steps"><li>{{t "pub.home.step1"}}</li><li>{{t "pub.home.step2"}}</li><li>{{t "pub.home.step3"}}</li><li>{{t "pub.home.step4"}}</li></ol>
+<p class="hint">{{t "pub.home.reviewHint"}}</p></section>
+<section aria-labelledby="contribute-heading"><h2 id="contribute-heading">{{t "pub.home.contribute"}}</h2>
+<p>{{t "pub.home.contributeText"}}</p>
+<p class="actions"><a class="action" href="{{href .Studio}}">{{t "pub.home.studio"}}</a></p></section>{{end}}{{end}}

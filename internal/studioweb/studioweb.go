@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/i18n"
 	"github.com/hadden-me/learnoo/internal/permissions"
 )
 
@@ -76,7 +77,8 @@ type Config struct {
 	Perms *permissions.Store
 	// Files is the built bundle; it must contain index.html.
 	Files fs.FS
-	// ErrorPage renders an HTML error page (the reader's).
+	// ErrorPage renders an HTML error page (the reader's); heading and
+	// message are message keys of internal/i18n.
 	ErrorPage func(w http.ResponseWriter, r *http.Request, status int, heading, message string)
 	// Meta is added to index.html as <meta name content> elements before
 	// </head>: the application's fingerprinted asset URLs the Studio loads
@@ -93,7 +95,9 @@ func New(cfg Config) *Handler { return &Handler{Config: cfg} }
 
 // Register mounts GET (and HEAD) /studio and /studio/{path...}.
 func (h *Handler) Register(mux *http.ServeMux) {
-	handler := h.Auth.Middleware(http.HandlerFunc(h.serve))
+	// i18n.Middleware: ?lang= sets the interface locale cookie, which the
+	// Studio reads (web/studio/src/i18n); the shell's <html lang dir> follow it.
+	handler := i18n.Middleware(h.Auth.Middleware(http.HandlerFunc(h.serve)))
 	mux.Handle("GET /studio", handler)
 	mux.Handle("GET /studio/{path...}", handler)
 }
@@ -139,7 +143,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	set, err := h.Perms.Load(r.Context(), sess.User.ID)
 	if err != nil {
 		h.Log.Error("studio: load permissions", "err", err)
-		h.ErrorPage(w, r, http.StatusInternalServerError, "Erreur interne", "Un problème est survenu. Réessayez plus tard.")
+		h.ErrorPage(w, r, http.StatusInternalServerError, "error.internal", "error.internalText")
 		return
 	}
 	if !allowed(set) {
@@ -147,8 +151,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 			notFound(w)
 			return
 		}
-		h.ErrorPage(w, r, http.StatusForbidden, "Accès réservé",
-			"Le Studio est réservé aux enseignants (auteurs et relecteurs) et à l’équipe éditoriale.")
+		h.ErrorPage(w, r, http.StatusForbidden, "studio.restricted", "studio.restrictedText")
 		return
 	}
 	if !asset {
@@ -186,8 +189,8 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 	content, ok := f.(io.ReadSeeker)
-	if name == "index.html" && len(h.Meta) > 0 {
-		ok = false // read into memory to add the meta elements
+	if name == "index.html" {
+		ok = false // read into memory to add the meta elements and the locale
 	}
 	if !ok {
 		data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
@@ -197,7 +200,7 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 			return
 		}
 		if name == "index.html" {
-			data = h.withMeta(data)
+			data = withLocale(h.withMeta(data), i18n.From(r))
 		}
 		content = bytes.NewReader(data)
 	}
@@ -223,6 +226,13 @@ func (h *Handler) withMeta(page []byte) []byte {
 	}
 	b.Write(page[i:])
 	return b.Bytes()
+}
+
+// withLocale sets the shell's <html lang dir> to the interface locale, so
+// the page has the right language and direction before the script runs.
+// Vite emits <html lang="fr">; another start tag is left unchanged.
+func withLocale(page []byte, l i18n.Locale) []byte {
+	return bytes.Replace(page, []byte(`<html lang="fr">`), []byte(`<html lang="`+string(l)+`" dir="`+l.Dir()+`">`), 1)
 }
 
 func notFound(w http.ResponseWriter) {

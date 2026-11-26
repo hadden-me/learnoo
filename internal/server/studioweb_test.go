@@ -143,12 +143,14 @@ func TestStudioDeniesUsersWithoutStaffAccess(t *testing.T) {
 }
 
 // servedStudioIndex is studioIndex as the server sends it: with the
-// fingerprinted KaTeX URLs for the preview (web/studio/src/preview.ts).
+// fingerprinted KaTeX URLs for the preview (web/studio/src/preview.ts) and
+// the French interface's language and direction (no locale cookie).
 func servedStudioIndex(t *testing.T) string {
 	t.Helper()
 	meta := `<meta name="learnoo-katex-css" content="` + mustAssetURL(t, "vendor/katex/katex.min.css") + `">` +
 		`<meta name="learnoo-katex-js" content="` + mustAssetURL(t, "vendor/katex/katex.min.js") + `">`
-	return strings.Replace(studioIndex, "</head>", meta+"</head>", 1)
+	page := strings.Replace(studioIndex, "</head>", meta+"</head>", 1)
+	return strings.Replace(page, `<html lang="fr">`, `<html lang="fr" dir="ltr">`, 1)
 }
 
 func TestStudioServesTheBundleToStaff(t *testing.T) {

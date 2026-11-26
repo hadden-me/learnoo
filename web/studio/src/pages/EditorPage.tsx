@@ -11,6 +11,7 @@ import { setFlash, takeFlash, useStudio } from '../context';
 import { DraftEditor, Feedback } from '../editor/DraftEditor';
 import { emptyData, revisionToData } from '../editor/convert';
 import { CatalogueName } from '../catalogue';
+import { t } from '../i18n';
 import { LANGUAGE_LABELS, STATUS_LABELS, formatDateTime, lessonState, ownedLessonPlace } from '../labels';
 import { disableVideos, loadKatex, typeset } from '../preview';
 import { BASE, navigate } from '../router';
@@ -41,7 +42,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
         const lessons = await api.myLessons();
         const lesson = lessons.find((l) => l.id === lessonId);
         if (!lesson) {
-          setError('Leçon introuvable : elle n’existe pas ou ne vous appartient pas.');
+          setError(t('lessons.page.notFound'));
           return;
         }
         const [chapters, revision, feedback] = await Promise.all([
@@ -67,24 +68,24 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
   if (error)
     return (
       <main className="page" id="main">
-        <h1 tabIndex={-1}>Leçon</h1>
+        <h1 tabIndex={-1}>{t('lessons.page.heading')}</h1>
         <p className="banner error" role="alert">
           {error}
         </p>
         <p>
-          <Link to={`${BASE}/`}>Revenir à mes leçons</Link>
+          <Link to={`${BASE}/`}>{t('lessons.page.back')}</Link>
         </p>
       </main>
     );
   if (!loaded)
     return (
       <main className="page" id="main">
-        <p role="status">Chargement de la leçon…</p>
+        <p role="status">{t('lessons.page.loading')}</p>
       </main>
     );
 
   const { lesson, chapters, revision, feedback } = loaded;
-  const title = revision?.title || lesson.latestRevision?.title || `Leçon n° ${lesson.id}`;
+  const title = revision?.title || lesson.latestRevision?.title || t('lessons.numbered', { id: lesson.id });
   const dir = lesson.language === 'ar' ? 'rtl' : 'ltr';
   const feedbackBlock = feedback ? <Feedback revision={feedback} /> : null;
 
@@ -96,7 +97,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
     } catch (e) {
       body = (
         <p className="banner error" role="alert">
-          Ce brouillon ne peut pas être ouvert dans l’éditeur : {(e as Error).message}
+          {t('lessons.page.cannotOpen', { error: (e as Error).message })}
         </p>
       );
     }
@@ -109,13 +110,13 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           subject={ownedLessonPlace(lesson).subject}
           chapters={chapters}
           initial={initial}
-          revisionLabel={`Brouillon · révision ${revision.number}`}
+          revisionLabel={t('lessons.draftRevision', { number: revision.number })}
           lessonId={lesson.id}
           revisionNumber={revision.number}
           feedback={feedbackBlock}
-          onSubmitted={() => void reload('Cette révision a quitté l’état de brouillon : elle est affichée en lecture seule.')}
+          onSubmitted={() => void reload(t('lessons.page.leftDraft'))}
           onDiscarded={() => {
-            setFlash('Brouillon supprimé.');
+            setFlash(t('lessons.draftDeleted'));
             navigate(`${BASE}/`, { force: true });
           }}
         />
@@ -124,7 +125,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
     body = (
       <>
         <p className="banner" role="note">
-          Cette leçon n’a pas de version en cours (son brouillon a été supprimé). Rédigez un nouveau brouillon ci-dessous.
+          {t('lessons.page.noCurrent')}
         </p>
         <DraftEditor
           key={`empty-${generation}`}
@@ -133,34 +134,34 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           subject={ownedLessonPlace(lesson).subject}
           chapters={chapters}
           initial={emptyData()}
-          revisionLabel="Nouveau brouillon"
+          revisionLabel={t('lessons.page.newDraft')}
           lessonId={lesson.id}
           feedback={feedbackBlock}
           // The editor stays mounted (no reload), so text typed during this first save is kept.
-          onCreated={() => setNotice('Brouillon enregistré.')}
-          onSubmitted={() => void reload('Révision soumise pour relecture. Elle ne peut plus être modifiée.')}
+          onCreated={() => setNotice(t('lessons.page.draftSaved'))}
+          onSubmitted={() => void reload(t('lessons.page.submitted'))}
           onDiscarded={() => {
-            setFlash('Brouillon supprimé.');
+            setFlash(t('lessons.draftDeleted'));
             navigate(`${BASE}/`, { force: true });
           }}
         />
       </>
     );
   } else {
-    body = <SubmittedRevision lesson={lesson} revision={revision} feedback={feedbackBlock} onDraft={() => void reload('Nouvelle version créée : vous pouvez la modifier.')} />;
+    body = <SubmittedRevision lesson={lesson} revision={revision} feedback={feedbackBlock} onDraft={() => void reload(t('lessons.page.versionCreated'))} />;
   }
 
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
-        <Link to={`${BASE}/`}>Mes leçons</Link>
+        <Link to={`${BASE}/`}>{t('shell.myLessons')}</Link>
       </p>
       <h1 tabIndex={-1} lang={lesson.language} dir={dir}>
         {title}
       </h1>
       <p className="lesson-context">
         <CatalogueName label={ownedLessonPlace(lesson).subject} /> · {LANGUAGE_LABELS[lesson.language]} · <span className={`state state-${lessonState(lesson).tone}`}>{lessonState(lesson).label}</span>
-        {lesson.publishedRevisionId !== null && lessonState(lesson).tone !== 'published' && <> · une version antérieure est publiée</>}
+        {lesson.publishedRevisionId !== null && lessonState(lesson).tone !== 'published' && <> · {t('lessons.page.earlierPublished')}</>}
       </p>
       {notice && (
         <p className="banner success" role="status">
@@ -201,12 +202,12 @@ function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: Ow
   const published = lesson.publishedRevisionId === revision.id;
   const explanation =
     revision.status === 'in_review'
-      ? 'Cette révision est en relecture. Elle ne peut plus être modifiée ; un relecteur de la matière va l’approuver ou demander des modifications.'
+      ? t('lessons.page.inReview')
       : revision.status === 'changes_requested'
-        ? 'Le relecteur a demandé des modifications. La révision est conservée telle quelle : vos corrections seront une nouvelle version, à soumettre de nouveau.'
+        ? t('lessons.page.changesRequested')
         : published
-          ? 'Cette révision est publiée. Pour la modifier, créez une nouvelle version, qui sera relue avant publication.'
-          : 'Cette révision est approuvée et attend sa publication. Une nouvelle version ne pourra être créée qu’après sa publication ou son retrait.';
+          ? t('lessons.page.published')
+          : t('lessons.page.approved');
   const canStart = revision.status === 'changes_requested' || (revision.status === 'approved' && published);
 
   const startDraft = async () => {
@@ -218,7 +219,7 @@ function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: Ow
     } catch (e) {
       setError(
         isApiError(e, 'active_candidate_exists')
-          ? 'Impossible de créer une nouvelle version : la leçon a déjà une version en cours (brouillon, révision en relecture, ou révision approuvée en attente de publication). Elle doit d’abord être publiée ou retirée par un administrateur.'
+          ? t('lessons.page.activeCandidate')
           : describeError(e),
       );
     } finally {
@@ -230,15 +231,15 @@ function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: Ow
     <div className="editor-page">
       <section className="status-card" aria-labelledby="status-heading">
         <h2 id="status-heading">
-          Révision {revision.number} · {published ? 'Publiée' : STATUS_LABELS[revision.status]}
+          {t('lessons.page.revisionStatus', { number: revision.number, status: published ? t('shell.state.published') : STATUS_LABELS[revision.status] })}
         </h2>
         <p>{explanation}</p>
-        {revision.submittedAt && <p className="hint">Soumise le {formatDateTime(revision.submittedAt)}.</p>}
-        {revision.review?.action === 'approve' && <p className="hint">Approuvée le {formatDateTime(revision.review.decidedAt)}.</p>}
+        {revision.submittedAt && <p className="hint">{t('lessons.page.submittedOn', { date: formatDateTime(revision.submittedAt) })}</p>}
+        {revision.review?.action === 'approve' && <p className="hint">{t('lessons.page.approvedOn', { date: formatDateTime(revision.review.decidedAt) })}</p>}
         {revision.review?.action === 'approve' && revision.review.comment && <blockquote dir="auto">{revision.review.comment}</blockquote>}
         {canStart && (
           <button type="button" className="primary" onClick={() => void startDraft()} disabled={busy}>
-            {revision.status === 'changes_requested' ? 'Créer la version corrigée' : 'Créer une nouvelle version'}
+            {revision.status === 'changes_requested' ? t('lessons.page.createCorrected') : t('lessons.page.createNew')}
           </button>
         )}
         {error && (
@@ -254,26 +255,26 @@ function SubmittedRevision({ lesson, revision, feedback, onDraft }: { lesson: Ow
         onChanged={() => setCopies(findLessonRecovery(localStorage, session.user.id, lesson.id))}
         note={
           canStart
-            ? 'Cette révision ne peut plus être modifiée : créez la nouvelle version ci-dessus pour restaurer une copie, ou copiez-la.'
-            : 'Cette révision ne peut plus être modifiée : copiez ces modifications pour les reprendre dans la prochaine version de la leçon.'
+            ? t('lessons.page.noteCanStart')
+            : t('lessons.page.noteCannotStart')
         }
       />
       {feedback}
       <section className="panel" aria-labelledby="readonly-heading">
-        <h2 id="readonly-heading">Révision {revision.number} — lecture seule</h2>
+        <h2 id="readonly-heading">{t('lessons.page.readOnly', { number: revision.number })}</h2>
         {revision.mediaIds.length > 0 && (
-          <ul className="media-list" aria-label="Images jointes">
+          <ul className="media-list" aria-label={t('lessons.media.attached')}>
             {revision.mediaIds.map((id) => (
               <li key={id}>
-                <img src={`/api/media/${id}`} alt={`Image jointe n° ${id}`} />
-                <span>Image n° {id}</span>
+                <img src={`/api/media/${id}`} alt={t('lessons.media.alt', { id })} />
+                <span>{t('lessons.media.name', { id })}</span>
               </li>
             ))}
           </ul>
         )}
         {previewError && (
           <p className="banner error" role="alert">
-            Aperçu impossible. {previewError}
+            {t('shell.previewFailed', { error: previewError })}
           </p>
         )}
         <div ref={previewRef} className="lesson-preview" data-testid="revision-preview" />

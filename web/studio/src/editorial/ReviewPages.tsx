@@ -19,6 +19,7 @@ import { navigate } from '../router';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 import { CatalogueName, catalogueLabel, entryLabel, type CatalogueLabel } from '../catalogue';
+import { t, tn } from '../i18n';
 import { CanonicalPreview, ErrorPage, LoadingPage, NoteField, Quote, SubjectName, dirOf, subjectLabel, useEditorial, useLoad, useSubjects } from './common';
 
 /** Queue items grouped by subject, in catalogue order (display order, then code); subjects missing from the catalogue last, by ID. */
@@ -69,38 +70,35 @@ export function ReviewQueuePage() {
 
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Relecture</h1>
-      <p className="hint">
-        Leçons et cours soumis dans les matières dont vous êtes relecteur, les plus anciens d’abord. Vos propres leçons n’y figurent pas. Les cours apparaissent tous, avec ce qui vous empêche
-        éventuellement de les décider : l’auteur du cours et l’auteur d’une leçon ajoutée ou remplacée ne peuvent pas l’approuver.
-      </p>
+      <h1 tabIndex={-1}>{t('shell.space.review')}</h1>
+      <p className="hint">{t('review.queue.hint')}</p>
       {flash && (
         <p className="banner success" role="status">
           {flash}
         </p>
       )}
-      {queue.state === 'loading' && <p role="status">Chargement de la file de relecture…</p>}
+      {queue.state === 'loading' && <p role="status">{t('review.queue.loading')}</p>}
       {queue.state === 'error' && (
         <p className="banner error" role="alert">
           {queue.message}
         </p>
       )}
-      {queue.state === 'ready' && all.length === 0 && <p>Aucune révision n’attend de relecture dans vos matières.</p>}
+      {queue.state === 'ready' && all.length === 0 && <p>{t('review.queue.empty')}</p>}
       {queue.state === 'ready' && all.length > 0 && (
         <>
-          <form className="queue-filters" onSubmit={(e) => e.preventDefault()} aria-label="Filtrer la file de relecture">
+          <form className="queue-filters" onSubmit={(e) => e.preventDefault()} aria-label={t('review.queue.filters')}>
             <div className="fields">
-              <label htmlFor={ids.type}>Type de contenu</label>
+              <label htmlFor={ids.type}>{t('review.queue.type')}</label>
               <select id={ids.type} value={type} onChange={(e) => { setType(e.target.value as QueueType); setPage(0); }}>
-                <option value="all">Leçons et cours</option>
-                <option value="lesson">Leçons</option>
-                <option value="course">Cours</option>
+                <option value="all">{t('review.queue.type.all')}</option>
+                <option value="lesson">{t('review.lessons')}</option>
+                <option value="course">{t('review.courses')}</option>
               </select>
             </div>
             <div className="fields">
-              <label htmlFor={ids.subject}>Matière</label>
+              <label htmlFor={ids.subject}>{t('review.fact.subject')}</label>
               <select id={ids.subject} value={subjectId ?? ''} onChange={(e) => { setSubjectId(e.target.value ? Number(e.target.value) : null); setPage(0); }}>
-                <option value="">Toutes vos matières</option>
+                <option value="">{t('review.queue.allSubjects')}</option>
                 {subjectIds.map((id) => (
                   <option key={id} value={id}>
                     {subjectLabel(subjects, id)}
@@ -109,43 +107,43 @@ export function ReviewQueuePage() {
               </select>
             </div>
             <div className="fields">
-              <label htmlFor={ids.decision}>Décision</label>
+              <label htmlFor={ids.decision}>{t('review.queue.decision')}</label>
               <select id={ids.decision} value={decision} onChange={(e) => { setDecision(e.target.value as QueueDecision); setPage(0); }}>
-                <option value="all">Tout</option>
-                <option value="mine">Je peux décider</option>
-                <option value="other">Un autre relecteur doit décider</option>
-                <option value="blocked">Bloqués : aucun relecteur éligible</option>
+                <option value="all">{t('review.queue.decision.all')}</option>
+                <option value="mine">{t('review.queue.decision.mine')}</option>
+                <option value="other">{t('review.queue.decision.other')}</option>
+                <option value="blocked">{t('review.queue.decision.blocked')}</option>
               </select>
             </div>
           </form>
           <p id={ids.results} role="status">
             {filtered.length === 0
-              ? 'Aucun élément ne correspond à ces filtres.'
-              : `${filtered.length} élément${filtered.length > 1 ? 's' : ''}${shown.pages > 1 ? `, page ${shown.page + 1} sur ${shown.pages}` : ''}.`}
+              ? t('review.queue.noMatch')
+              : shown.pages > 1
+                ? tn('review.queue.resultsPaged', filtered.length, { page: shown.page + 1, pages: shown.pages })
+                : tn('review.queue.results', filtered.length)}
           </p>
           <h2 className="visually-hidden" tabIndex={-1} ref={listTop}>
-            Résultats
+            {t('review.queue.resultsHeading')}
           </h2>
           {groupBySubject(shown.items, subjects).map((group) => (
             <section key={group.subjectId} aria-labelledby={`subject-${group.subjectId}`}>
               <h2 id={`subject-${group.subjectId}`}>
                 <SubjectName subjects={subjects} id={group.subjectId} /> ({group.items.length})
               </h2>
-              <ul className="lesson-list" aria-label={`À relire en ${subjectLabel(subjects, group.subjectId)}`}>
+              <ul className="lesson-list" aria-label={t('review.queue.subjectList', { subject: subjectLabel(subjects, group.subjectId) })}>
                 {group.items.map((entry) => (entry.type === 'lesson' ? <QueueCard key={entry.id} item={entry.item} /> : <CourseQueueCard key={entry.id} item={entry.item} />))}
               </ul>
             </section>
           ))}
           {shown.pages > 1 && (
-            <nav className="pager" aria-label="Pages de la file de relecture">
+            <nav className="pager" aria-label={t('review.queue.pages')}>
               <button type="button" onClick={() => goTo(shown.page - 1)} disabled={shown.page === 0}>
-                Page précédente
+                {t('review.queue.previous')}
               </button>
-              <span>
-                Page {shown.page + 1} sur {shown.pages}
-              </span>
+              <span>{t('review.queue.page', { page: shown.page + 1, pages: shown.pages })}</span>
               <button type="button" onClick={() => goTo(shown.page + 1)} disabled={shown.page >= shown.pages - 1}>
-                Page suivante
+                {t('review.queue.next')}
               </button>
             </nav>
           )}
@@ -159,14 +157,20 @@ function QueueCard({ item }: { item: ReviewQueueItem }) {
   return (
     <li className="lesson-card">
       <h3 lang={item.language} dir={dirOf(item.language)}>
-        <Link to={paths.reviewRevision(item.revisionId)}>{item.title || `Révision n° ${item.revisionId}`}</Link>
+        <Link to={paths.reviewRevision(item.revisionId)}>{item.title || t('review.revisionNo', { id: item.revisionId })}</Link>
       </h3>
       <p className="lesson-meta">
-        <span className="state kind-label">Leçon</span>
-        <span className="state state-review">En relecture</span>
+        <span className="state kind-label">{t('review.kind.lesson')}</span>
+        <span className="state state-review">{t('shell.status.in_review')}</span>
       </p>
       <p className="lesson-context">
-        Révision {item.number} · {LANGUAGE_LABELS[item.language]} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)} ({submissionAge(item.submittedAt)})
+        {t('review.queue.lessonContext', {
+          number: item.number,
+          language: LANGUAGE_LABELS[item.language],
+          author: item.authorName,
+          date: formatDateTime(item.submittedAt),
+          age: submissionAge(item.submittedAt),
+        })}
       </p>
     </li>
   );
@@ -177,21 +181,27 @@ function CourseQueueCard({ item }: { item: CourseReviewItem }) {
   return (
     <li className="lesson-card">
       <h3 lang={item.language} dir={dirOf(item.language)}>
-        <Link to={paths.reviewCourse(item.revisionId)}>{item.title || `Cours n° ${item.courseId}`}</Link>
+        <Link to={paths.reviewCourse(item.revisionId)}>{item.title || t('review.courseNo', { id: item.courseId })}</Link>
       </h3>
       <p className="lesson-meta">
-        <span className="state kind-label">{item.kind === 'amendment' ? 'Cours · amendement' : 'Cours'}</span>
-        <span className="state state-review">En relecture</span>
+        <span className="state kind-label">{item.kind === 'amendment' ? t('review.kind.amendment') : t('review.kind.course')}</span>
+        <span className="state state-review">{t('shell.status.in_review')}</span>
         {blocked ? (
-          <span className="state state-changes">Bloqué : aucun relecteur éligible</span>
+          <span className="state state-changes">{t('review.queue.blocked')}</span>
         ) : item.eligible ? (
-          <span className="state state-approved">Vous pouvez décider</span>
+          <span className="state state-approved">{t('review.queue.canDecide')}</span>
         ) : (
-          <span className="state">Un autre relecteur doit décider</span>
+          <span className="state">{t('review.queue.decision.other')}</span>
         )}
       </p>
       <p className="lesson-context">
-        Version {item.number} · {LANGUAGE_LABELS[item.language]} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)} ({submissionAge(item.submittedAt)})
+        {t('review.queue.courseContext', {
+          number: item.number,
+          language: LANGUAGE_LABELS[item.language],
+          author: item.authorName,
+          date: formatDateTime(item.submittedAt),
+          age: submissionAge(item.submittedAt),
+        })}
       </p>
       {blocked && (
         <div className="lesson-context">
@@ -236,17 +246,17 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
     return { revision, authorName: queue.find((q) => q.revisionId === revisionId)?.authorName ?? null, subject, chapter };
   }, [ed, api, revisionId]);
 
-  if (loaded.state === 'loading') return <LoadingPage label="Chargement de la révision…" />;
+  if (loaded.state === 'loading') return <LoadingPage label={t('review.loadingRevision')} />;
   if (loaded.state === 'error')
     return (
       <ErrorPage
-        title="Révision indisponible"
+        title={t('review.revisionUnavailable')}
         message={
           loaded.notFound
-            ? 'Cette révision n’est pas en relecture dans l’une de vos matières : elle n’existe pas, a déjà été décidée, ou relève d’une matière que vous ne relisez pas.'
+            ? t('review.revision.notFound')
             : loaded.message
         }
-        back={{ to: paths.reviewQueue, label: 'Revenir à la file de relecture' }}
+        back={{ to: paths.reviewQueue, label: t('review.backToQueue') }}
       />
     );
   const { revision, authorName, subject, chapter } = loaded.data;
@@ -255,45 +265,46 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
-        <Link to={paths.reviewQueue}>Relecture</Link>
+        <Link to={paths.reviewQueue}>{t('shell.space.review')}</Link>
       </p>
       <h1 tabIndex={-1} lang={revision.language} dir={dir}>
         {revision.title}
       </h1>
       <p className="lesson-meta">
-        <span className="state state-review">En relecture</span>
+        <span className="state state-review">{t('shell.status.in_review')}</span>
       </p>
       <dl className="facts">
         <div>
-          <dt>Auteur</dt>
-          <dd>{own ? 'Vous' : (authorName ?? `compte n° ${revision.authorId}`)}</dd>
+          <dt>{t('review.fact.author')}</dt>
+          <dd>{own ? t('review.you') : (authorName ?? t('review.accountNo', { id: revision.authorId }))}</dd>
         </div>
         <div>
-          <dt>Matière</dt>
+          <dt>{t('review.fact.subject')}</dt>
           <dd>
-            {subject ? <CatalogueName label={subject} /> : `matière n° ${revision.subjectId}`}
+            {subject ? <CatalogueName label={subject} /> : t('shell.subjectNumber', { id: revision.subjectId })}
             {revision.chapterId !== null && (
               <>
                 {' · '}
-                {chapter ? <CatalogueName label={chapter} /> : `chapitre n° ${revision.chapterId}`}
+                {chapter ? <CatalogueName label={chapter} /> : t('review.chapterNo', { id: revision.chapterId })}
               </>
             )}
           </dd>
         </div>
         <div>
-          <dt>Langue</dt>
+          <dt>{t('review.fact.language')}</dt>
           <dd>{LANGUAGE_LABELS[revision.language]}</dd>
         </div>
         <div>
-          <dt>Révision</dt>
+          <dt>{t('review.fact.revision')}</dt>
           <dd>
-            n° {revision.number}
-            {revision.submittedAt && `, soumise le ${formatDateTime(revision.submittedAt)}`}
+            {revision.submittedAt
+              ? t('review.numberSubmitted', { number: revision.number, date: formatDateTime(revision.submittedAt) })
+              : t('review.numberOnly', { number: revision.number })}
           </dd>
         </div>
         {revision.prerequisites && (
           <div>
-            <dt>Prérequis</dt>
+            <dt>{t('review.fact.prerequisites')}</dt>
             <dd lang={revision.language} dir={dir} className="pre-line">
               {revision.prerequisites}
             </dd>
@@ -302,27 +313,27 @@ export function ReviewRevisionPage({ revisionId }: { revisionId: number }) {
       </dl>
       {own ? (
         <section className="status-card" aria-labelledby="own-heading">
-          <h2 id="own-heading">Vous êtes l’auteur de cette révision</h2>
-          <p>Vous pouvez la lire, mais pas la relire : le serveur refuse qu’un auteur approuve ou renvoie sa propre révision. Un autre relecteur de la matière doit s’en charger.</p>
+          <h2 id="own-heading">{t('review.revision.ownHeading')}</h2>
+          <p>{t('review.revision.ownText')}</p>
         </section>
       ) : (
         <DecisionForm revision={revision} />
       )}
       {revision.mediaIds.length > 0 && (
         <section className="panel" aria-labelledby="media-heading">
-          <h2 id="media-heading">Images jointes ({revision.mediaIds.length})</h2>
-          <ul className="media-list" aria-label="Images jointes">
+          <h2 id="media-heading">{t('review.media.heading', { count: revision.mediaIds.length })}</h2>
+          <ul className="media-list" aria-label={t('review.media.list')}>
             {revision.mediaIds.map((id) => (
               <li key={id}>
-                <img src={`/api/review/media/${id}`} alt={`Image jointe n° ${id}`} />
-                <span>Image n° {id}</span>
+                <img src={`/api/review/media/${id}`} alt={t('review.media.alt', { id })} />
+                <span>{t('review.media.caption', { id })}</span>
               </li>
             ))}
           </ul>
         </section>
       )}
       <section className="panel" aria-labelledby="preview-heading">
-        <h2 id="preview-heading">Leçon telle que l’élève la lira</h2>
+        <h2 id="preview-heading">{t('review.previewHeading')}</h2>
         <CanonicalPreview content={revision.content} testId="review-preview" mediaRoute="review" />
       </section>
     </main>
@@ -341,7 +352,7 @@ function DecisionForm({ revision }: { revision: Revision }) {
   const ask = (decision: Decision) => {
     setError(null);
     if (decision === 'request_changes' && !comment.trim()) {
-      setFieldError('Expliquez les modifications demandées : le commentaire est obligatoire pour renvoyer la révision.');
+      setFieldError(t('review.decision.commentRequired'));
       field.current?.focus();
       return;
     }
@@ -356,8 +367,8 @@ function DecisionForm({ revision }: { revision: Revision }) {
       else await ed.requestChanges(revision.id, comment);
       setFlash(
         decision === 'approve'
-          ? `Révision approuvée : « ${revision.title} ». Elle attend maintenant sa publication.`
-          : `Modifications demandées pour « ${revision.title} ». L’auteur verra votre commentaire.`,
+          ? t('review.decision.approved', { title: revision.title })
+          : t('review.decision.changesRequested', { title: revision.title }),
       );
       navigate(paths.reviewQueue, { force: true });
     } catch (e) {
@@ -371,11 +382,11 @@ function DecisionForm({ revision }: { revision: Revision }) {
 
   return (
     <section className="status-card decision" aria-labelledby="decision-heading">
-      <h2 id="decision-heading">Votre décision</h2>
+      <h2 id="decision-heading">{t('review.decision.heading')}</h2>
       <NoteField
         id="review-comment"
-        label="Commentaire pour l’auteur"
-        hint="Facultatif pour approuver, obligatoire pour demander des modifications (5 000 caractères au maximum)."
+        label={t('review.decision.commentLabel')}
+        hint={t('review.decision.commentHint')}
         value={comment}
         onChange={(v) => {
           setComment(v);
@@ -386,28 +397,28 @@ function DecisionForm({ revision }: { revision: Revision }) {
       />
       <div className="actions">
         <button type="button" className="primary" onClick={() => ask('approve')} disabled={busy}>
-          Approuver…
+          {t('review.decision.approveButton')}
         </button>
         <button type="button" onClick={() => ask('request_changes')} disabled={busy}>
-          Demander des modifications…
+          {t('review.decision.requestButton')}
         </button>
       </div>
       {error && (
         <div className="banner error" role="alert">
           <p>{error}</p>
           <p>
-            <Link to={paths.reviewQueue}>Revenir à la file de relecture</Link>
+            <Link to={paths.reviewQueue}>{t('review.backToQueue')}</Link>
           </p>
         </div>
       )}
       {asking && (
         <Dialog
-          title={asking === 'approve' ? `Approuver la révision ${revision.number} ?` : `Demander des modifications ?`}
+          title={asking === 'approve' ? t('review.decision.approveTitle', { number: revision.number }) : t('review.decision.requestTitle')}
           onCancel={() => setAsking(null)}
-          cancelLabel="Revenir à la relecture"
+          cancelLabel={t('review.backToReview')}
           actions={[
             {
-              label: asking === 'approve' ? 'Approuver' : 'Envoyer la demande',
+              label: asking === 'approve' ? t('review.decision.approve') : t('review.decision.send'),
               kind: 'primary',
               disabled: busy,
               onClick: () => void decide(asking),
@@ -415,17 +426,15 @@ function DecisionForm({ revision }: { revision: Revision }) {
           ]}
         >
           <p>
-            {asking === 'approve'
-              ? 'La révision sera proposée aux éditeurs pour publication. La décision est définitive : elle ne pourra plus être relue.'
-              : 'La révision sera renvoyée à son auteur avec votre commentaire ; il rédigera une version corrigée. La décision est définitive.'}
+            {asking === 'approve' ? t('review.decision.approveText') : t('review.decision.requestText')}
           </p>
           {comment.trim() ? (
             <>
-              <p>Commentaire :</p>
+              <p>{t('review.decision.comment')}</p>
               <Quote>{comment.trim()}</Quote>
             </>
           ) : (
-            <p>Sans commentaire.</p>
+            <p>{t('review.decision.noComment')}</p>
           )}
         </Dialog>
       )}

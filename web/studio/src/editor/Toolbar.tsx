@@ -2,6 +2,7 @@
 // map one-to-one to the schema v1 node types (schema/extensions.ts).
 import { useEditorState, type Editor } from '@tiptap/react';
 import { NodeSelection } from '@tiptap/pm/state';
+import { t } from '../i18n';
 import { ALLOWED_IMAGES, YOUTUBE_ID, mediaId } from '../schema/lesson';
 
 export function Toolbar({ editor }: { editor: Editor }) {
@@ -35,31 +36,31 @@ export function Toolbar({ editor }: { editor: Editor }) {
   };
 
   return (
-    <div className="toolbar" role="toolbar" aria-label="Mise en forme">
-      <div role="group" aria-label="Texte">
-        <B label="Titre de section" pressed={state.heading} onClick={() => editor.chain().focus().toggleNode('heading', 'paragraph').run()} />
-        <B label="Gras" pressed={state.bold} onClick={() => editor.chain().focus().toggleBold().run()} />
-        <B label="Liste" pressed={state.list} onClick={() => editor.chain().focus().toggleBulletList().run()} />
+    <div className="toolbar" role="toolbar" aria-label={t('lessons.toolbar.label')}>
+      <div role="group" aria-label={t('lessons.toolbar.text')}>
+        <B label={t('lessons.node.heading')} pressed={state.heading} onClick={() => editor.chain().focus().toggleNode('heading', 'paragraph').run()} />
+        <B label={t('lessons.toolbar.bold')} pressed={state.bold} onClick={() => editor.chain().focus().toggleBold().run()} />
+        <B label={t('lessons.node.list')} pressed={state.list} onClick={() => editor.chain().focus().toggleBulletList().run()} />
       </div>
-      <div role="group" aria-label="Mathématiques">
-        <B label="Formule en ligne" onClick={inlineMath} />
-        <B label="Formule centrée" onClick={() => insertAtom({ type: 'displayMath', attrs: { latex: '' } })} />
+      <div role="group" aria-label={t('lessons.toolbar.math')}>
+        <B label={t('lessons.node.inlineMath')} onClick={inlineMath} />
+        <B label={t('lessons.node.displayMath')} onClick={() => insertAtom({ type: 'displayMath', attrs: { latex: '' } })} />
       </div>
-      <div role="group" aria-label="Blocs">
-        <B label="Encadré" onClick={() => editor.chain().focus().wrapIn('callout').run()} />
-        <B label="Exercice" onClick={() => editor.chain().focus().wrapIn('exercise').run()} />
-        <B label="Solution" disabled={!state.canSolution} onClick={() => editor.chain().focus().wrapIn('solution').run()} />
-        <B label="Image de démonstration" onClick={() => insertAtom({ type: 'image', attrs: { src: ALLOWED_IMAGES[0], alt: '' } })} />
-        <B label="Vidéo YouTube" onClick={() => insertAtom({ type: 'youtube', attrs: { title: '', videoId: '' } })} />
+      <div role="group" aria-label={t('lessons.toolbar.blocks')}>
+        <B label={t('lessons.node.callout')} onClick={() => editor.chain().focus().wrapIn('callout').run()} />
+        <B label={t('lessons.node.exercise')} onClick={() => editor.chain().focus().wrapIn('exercise').run()} />
+        <B label={t('lessons.node.solution')} disabled={!state.canSolution} onClick={() => editor.chain().focus().wrapIn('solution').run()} />
+        <B label={t('lessons.toolbar.demoImage')} onClick={() => insertAtom({ type: 'image', attrs: { src: ALLOWED_IMAGES[0], alt: '' } })} />
+        <B label={t('lessons.node.youtube')} onClick={() => insertAtom({ type: 'youtube', attrs: { title: '', videoId: '' } })} />
       </div>
-      <div role="group" aria-label="Langue du texte sélectionné">
-        <B label="Texte en arabe" pressed={state.arText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'ar', dir: 'rtl' }).run()} />
-        <B label="Texte en français" pressed={state.frText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'fr', dir: 'ltr' }).run()} />
-        <B label="Langue du document" onClick={() => editor.chain().focus().unsetMark('lang').run()} />
+      <div role="group" aria-label={t('lessons.toolbar.selectionLanguage')}>
+        <B label={t('lessons.toolbar.arabicText')} pressed={state.arText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'ar', dir: 'rtl' }).run()} />
+        <B label={t('lessons.toolbar.frenchText')} pressed={state.frText} onClick={() => editor.chain().focus().setMark('lang', { lang: 'fr', dir: 'ltr' }).run()} />
+        <B label={t('lessons.toolbar.documentLanguage')} onClick={() => editor.chain().focus().unsetMark('lang').run()} />
       </div>
-      <div role="group" aria-label="Historique">
-        <B label="Annuler" disabled={!state.canUndo} onClick={() => editor.chain().focus().undo().run()} />
-        <B label="Rétablir" disabled={!state.canRedo} onClick={() => editor.chain().focus().redo().run()} />
+      <div role="group" aria-label={t('lessons.toolbar.history')}>
+        <B label={t('lessons.toolbar.undo')} disabled={!state.canUndo} onClick={() => editor.chain().focus().undo().run()} />
+        <B label={t('lessons.toolbar.redo')} disabled={!state.canRedo} onClick={() => editor.chain().focus().redo().run()} />
       </div>
     </div>
   );
@@ -107,10 +108,10 @@ export function Inspector({ editor }: { editor: Editor }) {
 
   return (
     <fieldset className="inspector">
-      <legend>Propriétés de la sélection</legend>
+      <legend>{t('lessons.inspector.legend')}</legend>
       {atom && (atom.type === 'inlineMath' || atom.type === 'displayMath') && (
         <label>
-          {atom.type === 'inlineMath' ? 'Formule en ligne (TeX)' : 'Formule centrée (TeX)'}
+          {atom.type === 'inlineMath' ? t('lessons.inspector.inlineTex') : t('lessons.inspector.displayTex')}
           <textarea className="tex" dir="ltr" rows={2} maxLength={2000} value={String(atom.attrs.latex)} onChange={(e) => set(atom.pos, 'latex', e.target.value)} />
         </label>
       )}
@@ -118,7 +119,7 @@ export function Inspector({ editor }: { editor: Editor }) {
         <>
           {mediaId(String(atom.attrs.src)) === null ? (
             <label>
-              Ressource locale autorisée
+              {t('lessons.inspector.localResource')}
               <select value={String(atom.attrs.src)} onChange={(e) => set(atom.pos, 'src', e.target.value)}>
                 {ALLOWED_IMAGES.map((src) => (
                   <option key={src}>{src}</option>
@@ -126,14 +127,14 @@ export function Inspector({ editor }: { editor: Editor }) {
               </select>
             </label>
           ) : (
-            <p className="hint">Image téléversée n° {mediaId(String(atom.attrs.src))} (référence immuable).</p>
+            <p className="hint">{t('lessons.inspector.uploaded', { id: String(mediaId(String(atom.attrs.src))) })}</p>
           )}
           <label>
-            Texte alternatif (obligatoire)
+            {t('lessons.altRequired')}
             <input dir="auto" maxLength={1000} value={String(atom.attrs.alt)} aria-invalid={String(atom.attrs.alt).trim() === ''} onChange={(e) => set(atom.pos, 'alt', e.target.value)} />
           </label>
           <label>
-            Légende (facultative)
+            {t('lessons.inspector.caption')}
             <input dir="auto" maxLength={1000} value={String(atom.attrs.caption ?? '')} onChange={(e) => set(atom.pos, 'caption', e.target.value)} />
           </label>
         </>
@@ -141,25 +142,25 @@ export function Inspector({ editor }: { editor: Editor }) {
       {atom?.type === 'youtube' && (
         <>
           <label>
-            Titre de la vidéo
+            {t('lessons.inspector.videoTitle')}
             <input dir="auto" maxLength={240} value={String(atom.attrs.title)} onChange={(e) => set(atom.pos, 'title', e.target.value)} />
           </label>
           <label>
-            Identifiant YouTube (11 caractères, pas d’URL ; vide = à sélectionner)
+            {t('lessons.inspector.videoId')}
             <input dir="ltr" maxLength={11} value={videoId} aria-invalid={videoId !== '' && !YOUTUBE_ID.test(videoId)} onChange={(e) => set(atom.pos, 'videoId', e.target.value.trim())} />
           </label>
         </>
       )}
       {container && (
         <label>
-          {container.type === 'callout' ? 'Titre de l’encadré' : 'Titre de l’exercice'}
+          {container.type === 'callout' ? t('lessons.inspector.calloutTitle') : t('lessons.inspector.exerciseTitle')}
           <input dir="auto" maxLength={240} value={container.title} onChange={(e) => set(container.pos, 'title', e.target.value)} />
         </label>
       )}
       {block && (
         <div className="row">
           <label>
-            Langue du paragraphe
+            {t('lessons.inspector.paragraphLanguage')}
             <select
               value={block.lang}
               onChange={(e) => {
@@ -170,23 +171,23 @@ export function Inspector({ editor }: { editor: Editor }) {
                 editor.view.dispatch(tr);
               }}
             >
-              <option value="">Celle du document</option>
-              <option value="fr">Français</option>
-              <option value="ar">Arabe</option>
+              <option value="">{t('lessons.inspector.documentLanguage')}</option>
+              <option value="fr">{t('shell.language.fr')}</option>
+              <option value="ar">{t('shell.language.ar')}</option>
             </select>
           </label>
           <label>
-            Direction
+            {t('lessons.inspector.direction')}
             <select value={block.dir} onChange={(e) => set(block.pos, 'dir', e.target.value || null)}>
-              <option value="">Héritée</option>
-              <option value="ltr">Gauche à droite</option>
-              <option value="rtl">Droite à gauche</option>
-              <option value="auto">Automatique</option>
+              <option value="">{t('lessons.inspector.inherited')}</option>
+              <option value="ltr">{t('lessons.inspector.ltr')}</option>
+              <option value="rtl">{t('lessons.inspector.rtl')}</option>
+              <option value="auto">{t('lessons.inspector.auto')}</option>
             </select>
           </label>
         </div>
       )}
-      {!atom && !container && !block && <p className="hint">Sélectionnez une formule, un média ou un paragraphe.</p>}
+      {!atom && !container && !block && <p className="hint">{t('lessons.inspector.empty')}</p>}
     </fieldset>
   );
 }

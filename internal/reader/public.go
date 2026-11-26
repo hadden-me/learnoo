@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/i18n"
 	"github.com/hadden-me/learnoo/internal/media"
 )
 
@@ -24,6 +25,11 @@ import (
 // ETag, so a suspension, withdrawal or unpublication shows on the next
 // request.
 
+// The interface locale of a public page is part of its URL (?lang=ar;
+// French without the parameter), never the cookie, so each locale is its
+// own cache entry with its own ETag and the pages still vary on nothing
+// (LMS-B09, internal/i18n).
+
 // PublicCacheControl is sent on public pages and course covers.
 const PublicCacheControl = "public, no-cache"
 
@@ -33,27 +39,23 @@ type publicView struct {
 	Title     string
 	TitleLang string
 	Data      any
+	// SwitchURL is this page's URL in the other locale (renderPublic).
+	SwitchURL string
 }
 
-var publicTemplates = sync.OnceValues(func() (map[string]*template.Template, error) {
+var publicTemplates = sync.OnceValues(func() (map[string]map[i18n.Locale]*template.Template, error) {
 	assets, err := embeddedAssets()
 	if err != nil {
 		return nil, err
 	}
-	base, err := template.New("").Funcs(template.FuncMap{"dir": Dir, "asset": assets.url}).
-		ParseFS(files, "templates/layout.html", "templates/public_layout.html")
-	if err != nil {
-		return nil, err
-	}
-	pages := map[string]*template.Template{}
+	funcs := template.FuncMap{"dir": Dir, "asset": assets.url}
+	pages := map[string]map[i18n.Locale]*template.Template{}
 	for _, name := range []string{"public_home", "public_catalogue", "public_catalogue_section", "public_catalogue_subject", "public_course", "public_notice"} {
-		clone, err := base.Clone()
+		set, err := localized(funcs, true, []string{"templates/layout.html", "templates/public_layout.html"}, name)
 		if err != nil {
 			return nil, err
 		}
-		if pages[name], err = clone.ParseFS(files, "templates/"+name+".html"); err != nil {
-			return nil, err
-		}
+		pages[name] = set
 	}
 	return pages, nil
 })
@@ -63,7 +65,7 @@ func (h *Handlers) registerPublic(mux *http.ServeMux) {
 	if _, err := publicTemplates(); err != nil {
 		panic(err) // a build defect, as in New
 	}
-	page := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, publicHeaders(fn)) }
+	page := func(pattern string, fn http.HandlerFunc) { mux.Handle(pattern, publicHeaders(h.publicLocale(fn))) }
 	page("GET /{$}", h.publicHome)
 	page("GET /catalogue", h.catalogueIndex)
 	page("GET /catalogue/{level}/{section}", h.catalogueSection)
@@ -84,17 +86,35 @@ func publicHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// publicLocale takes the page's locale from its URL; an empty, repeated or
+// unknown ?lang= is a malformed link and gets the 404 notice.
+func (h *Handlers) publicLocale(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		l, ok := i18n.PublicLocale(r)
+		r = r.WithContext(i18n.With(r.Context(), l))
+		if !ok {
+			w.Header().Set("Cache-Control", "no-store")
+			h.renderPublic(w, r, http.StatusNotFound, "public_notice", publicView{Title: msg(r, "pub.notFound"),
+				Data: struct{ Heading, Message string }{msg(r, "pub.notFound"), msg(r, "pub.badLanguage")}})
+			return
+		}
+		next(w, r)
+	}
+}
+
 // renderPublic renders a public page with a strong ETag of its bytes; a 200
 // answers If-None-Match with 304 (http.ServeContent).
 func (h *Handlers) renderPublic(w http.ResponseWriter, r *http.Request, status int, name string, v publicView) {
 	pages, _ := publicTemplates() // checked in registerPublic
+	loc := locale(r)
+	v.SwitchURL = i18n.PublicURL(loc.Other(), r.URL.RequestURI())
 	var buf bytes.Buffer
-	if err := pages[name].ExecuteTemplate(&buf, "public", v); err != nil {
+	if err := pages[name][loc].ExecuteTemplate(&buf, "public", v); err != nil {
 		h.Log.Error("public template", "page", name, "err", err)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("Erreur interne.\n"))
+		_, _ = w.Write([]byte(i18n.T(loc, "error.internalPlain") + "\n"))
 		return
 	}
 	sum := sha256.Sum256(buf.Bytes())
@@ -114,18 +134,19 @@ func (h *Handlers) renderPublic(w http.ResponseWriter, r *http.Request, status i
 
 // publicNotFound renders the 404 notice. A negative answer is never stored
 // (no-store, no ETag), so a course that becomes readable shows at once.
+// heading and message are message keys.
 func (h *Handlers) publicNotFound(w http.ResponseWriter, r *http.Request, heading, message string) {
 	w.Header().Set("Cache-Control", "no-store")
-	h.renderPublic(w, r, http.StatusNotFound, "public_notice", publicView{Title: heading,
-		Data: struct{ Heading, Message string }{heading, message}})
+	h.renderPublic(w, r, http.StatusNotFound, "public_notice", publicView{Title: msg(r, heading),
+		Data: struct{ Heading, Message string }{msg(r, heading), msg(r, message)}})
 }
 
 // publicInternal answers a failure without storing it anywhere.
 func (h *Handlers) publicInternal(w http.ResponseWriter, r *http.Request, op string, err error) {
 	h.Log.Error("public page failure", "op", op, "err", err)
 	w.Header().Set("Cache-Control", "no-store")
-	h.renderPublic(w, r, http.StatusInternalServerError, "public_notice", publicView{Title: "Erreur interne",
-		Data: struct{ Heading, Message string }{"Erreur interne", "Un problème est survenu. Réessayez plus tard."}})
+	h.renderPublic(w, r, http.StatusInternalServerError, "public_notice", publicView{Title: msg(r, "error.internal"),
+		Data: struct{ Heading, Message string }{msg(r, "error.internal"), msg(r, "error.internalText")}})
 }
 
 type publicHomeData struct {
@@ -152,7 +173,7 @@ func (h *Handlers) publicHome(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "curriculum", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "public_home", publicView{Title: "Accueil",
+	h.renderPublic(w, r, http.StatusOK, "public_home", publicView{Title: msg(r, "nav.publicHome"),
 		Data: publicHomeData{Levels: levels, Studio: signInURL("/studio")}})
 }
 
@@ -167,7 +188,7 @@ func (h *Handlers) catalogueIndex(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "catalogue index", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "public_catalogue", publicView{Title: "Catalogue",
+	h.renderPublic(w, r, http.StatusOK, "public_catalogue", publicView{Title: msg(r, "nav.catalogue"),
 		Data: catalogueData{Levels: levels, Unplaced: unplaced}})
 }
 
@@ -185,7 +206,7 @@ func editionParam(r *http.Request) (string, bool) {
 }
 
 func (h *Handlers) catalogueNotFound(w http.ResponseWriter, r *http.Request) {
-	h.publicNotFound(w, r, "Page introuvable", "Cette partie du catalogue n’existe pas ou n’est pas publiée.")
+	h.publicNotFound(w, r, "pub.notFound", "pub.notFoundText")
 }
 
 func (h *Handlers) catalogueSection(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +224,11 @@ func (h *Handlers) catalogueSection(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "section", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "public_catalogue_section", publicView{Title: p.Name, Data: p})
+	title := p.Name
+	if locale(r) == i18n.AR && p.NameAr != "" {
+		title = p.NameAr
+	}
+	h.renderPublic(w, r, http.StatusOK, "public_catalogue_section", publicView{Title: title, Data: p})
 }
 
 func (h *Handlers) catalogueSubject(w http.ResponseWriter, r *http.Request) {
@@ -221,11 +246,8 @@ func (h *Handlers) catalogueSubject(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "subject", err)
 		return
 	}
-	label := p.Label()
-	v := publicView{Title: label.Text, Data: p}
-	if label.Lang == "ar" {
-		v.TitleLang = "ar"
-	}
+	label := p.Label(string(locale(r)))
+	v := publicView{Title: label.Text, TitleLang: label.Lang, Data: p}
 	h.renderPublic(w, r, http.StatusOK, "public_catalogue_subject", v)
 }
 
@@ -251,17 +273,14 @@ func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrNotFound) {
 		// The same notice for unknown, never published, suspended,
 		// archived and withdrawn courses; no earlier revision is shown.
-		h.publicNotFound(w, r, "Cours indisponible", "Ce cours n’existe pas ou n’est pas disponible pour le moment.")
+		h.publicNotFound(w, r, "error.courseUnavailable", "pub.courseUnavailableText")
 		return
 	}
 	if err != nil {
 		h.publicInternal(w, r, "course overview", err)
 		return
 	}
-	v := publicView{Title: c.Title, Data: publicCourseData{CourseOverview: c, SignIn: signInURL(CourseReadPath(c.PublicID))}}
-	if c.Language == "ar" {
-		v.TitleLang = "ar"
-	}
+	v := publicView{Title: c.Title, TitleLang: c.Language, Data: publicCourseData{CourseOverview: c, SignIn: signInURL(CourseReadPath(c.PublicID))}}
 	h.renderPublic(w, r, http.StatusOK, "public_course", v)
 }
 

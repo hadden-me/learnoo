@@ -6,6 +6,7 @@
 // and a polite live region says where it went.
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { labelAttrs, type CatalogueLabel, type Lang } from '../catalogue';
+import { t, tn } from '../i18n';
 import { Dialog } from '../ui/Dialog';
 import { LIMITS, findStep, stepMoves, type CourseDraft, type DraftModule, type DraftStep } from './outline';
 
@@ -32,7 +33,7 @@ export interface OutlineActions {
 }
 
 const stepState = (s: DraftStep) =>
-  s.eligible === null ? null : s.eligible ? 'Révision publiable dans un cours' : 'Révision pas encore publiable : elle devra être approuvée et publiée avant la soumission du cours';
+  s.eligible === null ? null : s.eligible ? t('courses.step.eligible') : t('courses.step.notEligible');
 
 export function OutlineSection({
   draft,
@@ -44,6 +45,7 @@ export function OutlineSection({
   focusRequest,
   refusedChapters,
   chaptersComplete,
+  errorIds = () => undefined,
 }: {
   draft: CourseDraft;
   language: Lang;
@@ -60,6 +62,8 @@ export function OutlineSection({
   chaptersComplete: boolean;
   /** Element ID to focus after the next render (a moved item's button, a new module's title). */
   focusRequest: { id: string; fallback?: string; n: number } | null;
+  /** IDs of the problem messages about a target, for aria-describedby. */
+  errorIds?: (target: string) => string | undefined;
 }) {
   const heading = useId();
   const newModuleField = 'course-outline-new';
@@ -85,14 +89,18 @@ export function OutlineSection({
 
   return (
     <section className="panel course-section" aria-labelledby={heading}>
-      <h2 id={heading}>Plan du cours</h2>
+      <h2 id={heading}>{t('courses.outline.heading')}</h2>
       <p className="hint">
-        Un module regroupe des étapes ; chaque étape épingle une révision précise d’une leçon. Les titres des modules et des étapes appartiennent au cours et sont relus avec lui. {draft.modules.length} module{draft.modules.length > 1 ? 's' : ''} sur {LIMITS.modules}, {totalSteps} étape{totalSteps > 1 ? 's' : ''} sur {LIMITS.steps}.
+        {t('courses.outline.intro')}{' '}
+        {t('courses.outline.counts', {
+          modules: tn('courses.outline.modulesCount', draft.modules.length, { max: LIMITS.modules }),
+          steps: tn('courses.outline.stepsCount', totalSteps, { max: LIMITS.steps }),
+        })}
       </p>
       <div className="visually-hidden" role="status" aria-live="polite">
         {announcement.text && <p key={announcement.n}>{announcement.text}</p>}
       </div>
-      {draft.modules.length === 0 && <p>Le cours n’a pas encore de module. Ajoutez-en un ci-dessous.</p>}
+      {draft.modules.length === 0 && <p>{t('courses.outline.empty')}</p>}
       <ol className="module-list">
         {draft.modules.map((m, i) => (
           <ModuleItem
@@ -108,27 +116,28 @@ export function OutlineSection({
             invalidTargets={invalidTargets}
             chapterRefused={refusedChapters.has(m.localId)}
             chaptersComplete={chaptersComplete}
+            errorIds={errorIds}
             onRemove={() => (m.steps.length > 0 ? setConfirmRemove(m) : actions.removeModule(m.localId))}
           />
         ))}
       </ol>
       <form className="add-module" onSubmit={add}>
         <div className="fields">
-          <label htmlFor={newModuleField}>Titre du nouveau module</label>
+          <label htmlFor={newModuleField}>{t('courses.outline.newModule')}</label>
           <input id={newModuleField} value={newTitle} maxLength={LIMITS.moduleTitle} lang={language} dir={dir} onChange={(e) => setNewTitle(e.target.value)} />
         </div>
         <button type="submit" disabled={newTitle.trim() === '' || draft.modules.length >= LIMITS.modules}>
-          Ajouter le module
+          {t('courses.outline.addModule')}
         </button>
       </form>
       {confirmRemove && (
         <Dialog
-          title={`Supprimer le module « ${confirmRemove.title || 'sans titre'} » ?`}
+          title={t('courses.outline.removeTitle', { title: confirmRemove.title || t('courses.untitled') })}
           onCancel={() => setConfirmRemove(null)}
-          cancelLabel="Garder le module"
+          cancelLabel={t('courses.outline.keepModule')}
           actions={[
             {
-              label: 'Supprimer le module et ses étapes',
+              label: t('courses.outline.removeAction'),
               kind: 'danger',
               onClick: () => {
                 actions.removeModule(confirmRemove.localId);
@@ -137,9 +146,7 @@ export function OutlineSection({
             },
           ]}
         >
-          <p>
-            Ses {confirmRemove.steps.length} étape{confirmRemove.steps.length > 1 ? 's' : ''} seront retirées du plan. Les leçons elles-mêmes ne sont pas supprimées. Rien n’est modifié sur le serveur avant l’enregistrement.
-          </p>
+          <p>{tn('courses.outline.removeText', confirmRemove.steps.length)}</p>
         </Dialog>
       )}
     </section>
@@ -158,6 +165,7 @@ function ModuleItem({
   invalidTargets,
   chapterRefused,
   chaptersComplete,
+  errorIds,
   onRemove,
 }: {
   module: DraftModule;
@@ -171,12 +179,14 @@ function ModuleItem({
   invalidTargets: Set<string>;
   chapterRefused: boolean;
   chaptersComplete: boolean;
+  errorIds: (target: string) => string | undefined;
   onRemove: () => void;
 }) {
   const titleId = `module-title-${m.localId}`;
   const chapterId = useId();
+  const chapterError = useId();
   const n = index + 1;
-  const name = m.title.trim() || 'sans titre';
+  const name = m.title.trim() || t('courses.untitled');
   // Retired chapters are offered only when the module already has them.
   const options = chapters.filter((c) => !c.retired || c.id === m.chapterId);
   const missingChapter = m.chapterId !== null && !chapters.some((c) => c.id === m.chapterId);
@@ -185,10 +195,17 @@ function ModuleItem({
   return (
     <li className="module" aria-labelledby={`module-heading-${m.localId}`}>
       <h3 id={`module-heading-${m.localId}`}>
-        Module {n} : <span lang={language} dir={dir}>{name}</span>
+        {t('courses.outline.moduleHeading', { index: n })}{' '}
+        {m.title.trim() ? (
+          <span lang={language} dir={dir}>
+            {name}
+          </span>
+        ) : (
+          name
+        )}
       </h3>
       <div className="fields">
-        <label htmlFor={titleId}>Titre du module {n}</label>
+        <label htmlFor={titleId}>{t('courses.outline.moduleTitle', { index: n })}</label>
         <input
           id={titleId}
           value={m.title}
@@ -196,52 +213,68 @@ function ModuleItem({
           lang={language}
           dir={dir}
           aria-invalid={invalidTargets.has(`module:${m.localId}`) || undefined}
+          aria-describedby={errorIds(`module:${m.localId}`)}
           onChange={(e) => actions.renameModule(m.localId, e.target.value)}
         />
-        <label htmlFor={chapterId}>Chapitre officiel (facultatif)</label>
-        <select id={chapterId} value={m.chapterId ?? ''} onChange={(e) => actions.setChapter(m.localId, e.target.value ? Number(e.target.value) : null)}>
-          <option value="">Aucun chapitre officiel</option>
-          {missingChapter && <option value={m.chapterId!}>Chapitre n° {m.chapterId}{unknownChapter ? ' (hors des classements choisis)' : ''}</option>}
+        <label htmlFor={chapterId}>{t('courses.outline.chapter')}</label>
+        <select
+          id={chapterId}
+          aria-invalid={unknownChapter || chapterRefused || undefined}
+          aria-describedby={unknownChapter || chapterRefused ? chapterError : undefined}
+          value={m.chapterId ?? ''} onChange={(e) => actions.setChapter(m.localId, e.target.value ? Number(e.target.value) : null)}>
+          <option value="">{t('courses.outline.noChapter')}</option>
+          {missingChapter && (
+            <option value={m.chapterId!}>
+              {t('courses.outline.chapterNumber', { id: m.chapterId! })}
+              {unknownChapter ? t('courses.outline.outsidePlacements') : ''}
+            </option>
+          )}
           {options.map((c) => (
             <option key={c.id} value={c.id} {...labelAttrs(c.label)}>
               {c.label.text}
-              {c.retired ? ' (retiré)' : ''}
+              {c.retired ? t('courses.outline.retired') : ''}
             </option>
           ))}
         </select>
-        {chapters.length === 0 && <p className="hint">Les chapitres officiels proposés sont ceux des classements choisis : ajoutez d’abord un classement.</p>}
-        {unknownChapter && <p className="field-error">Le prochain enregistrement sera refusé : ce chapitre n’appartient à aucun classement choisi. Choisissez-en un autre ou aucun.</p>}
+        {chapters.length === 0 && <p className="hint">{t('courses.outline.chaptersHint')}</p>}
+        {unknownChapter && (
+          <p id={chapterError} className="field-error">
+            {t('courses.outline.unknownChapter')}
+          </p>
+        )}
         {chapterRefused && !unknownChapter && (
           <div className="field-error-block">
-            <p className="field-error">Le prochain enregistrement sera refusé : ce chapitre officiel a été retiré du programme et ne peut plus être choisi.</p>
-            <button type="button" onClick={() => actions.clearChapter(m.localId)} aria-label={`Retirer le chapitre officiel du module ${n} : ${name}`}>
-              Retirer le chapitre
+            <p id={chapterError} className="field-error">
+              {t('courses.outline.chapterRefused')}
+            </p>
+            <button type="button" onClick={() => actions.clearChapter(m.localId)} aria-label={t('courses.outline.clearChapterLabel', { index: n, name })}>
+              {t('courses.outline.clearChapter')}
             </button>
           </div>
         )}
       </div>
-      <div className="actions" role="group" aria-label={`Ordre et suppression du module ${n}`}>
-        <button id={`module-up-${m.localId}`} type="button" disabled={index === 0} onClick={() => actions.moveModule(index, -1)} aria-label={`Monter le module ${n} : ${name}`}>
-          Monter
+      <div className="actions" role="group" aria-label={t('courses.outline.moduleActions', { index: n })}>
+        <button id={`module-up-${m.localId}`} type="button" disabled={index === 0} onClick={() => actions.moveModule(index, -1)} aria-label={t('courses.outline.moveModuleUp', { index: n, name })}>
+          {t('courses.outline.up')}
         </button>
-        <button id={`module-down-${m.localId}`} type="button" disabled={index === count - 1} onClick={() => actions.moveModule(index, 1)} aria-label={`Descendre le module ${n} : ${name}`}>
-          Descendre
+        <button id={`module-down-${m.localId}`} type="button" disabled={index === count - 1} onClick={() => actions.moveModule(index, 1)} aria-label={t('courses.outline.moveModuleDown', { index: n, name })}>
+          {t('courses.outline.down')}
         </button>
-        <button type="button" className="danger" onClick={onRemove} aria-label={`Supprimer le module ${n} : ${name}`}>
-          Supprimer le module
+        <button type="button" className="danger" onClick={onRemove} aria-label={t('courses.outline.removeModuleLabel', { index: n, name })}>
+          {t('courses.outline.removeModule')}
         </button>
       </div>
       {m.steps.length === 0 ? (
-        <p className="hint">Aucune étape dans ce module.</p>
+        <p className="hint">{t('courses.outline.noSteps')}</p>
       ) : (
-        <ol className="step-list" aria-label={`Étapes du module ${n}`}>
+        <ol className="step-list" aria-label={t('courses.outline.steps', { index: n })}>
           {m.steps.map((s, j) => (
-            <StepItem key={s.localId} step={s} index={j} moduleIndex={index} draft={draft} language={language} dir={dir} actions={actions} invalid={invalidTargets.has(`step:${s.localId}`)} />
+            <StepItem key={s.localId} step={s} index={j} moduleIndex={index} draft={draft} language={language} dir={dir} actions={actions} invalid={invalidTargets.has(`step:${s.localId}`)} describedBy={errorIds(`step:${s.localId}`)} />
           ))}
         </ol>
       )}
-      <button type="button" onClick={() => actions.pickLesson(m.localId)} aria-label={`Ajouter une leçon au module ${n} : ${name}`}>
-        Ajouter une leçon
+      <button type="button" onClick={() => actions.pickLesson(m.localId)} aria-label={t('courses.outline.addLessonLabel', { index: n, name })}>
+        {t('courses.outline.addLesson')}
       </button>
     </li>
   );
@@ -256,6 +289,7 @@ function StepItem({
   dir,
   actions,
   invalid,
+  describedBy,
 }: {
   step: DraftStep;
   index: number;
@@ -265,45 +299,49 @@ function StepItem({
   dir: 'rtl' | 'ltr';
   actions: OutlineActions;
   invalid: boolean;
+  describedBy?: string;
 }) {
   const titleId = `step-title-${s.localId}`;
   const moveId = useId();
   const moves = stepMoves(draft, s.localId);
   const at = findStep(draft, s.localId);
-  const label = `étape ${index + 1} du module ${moduleIndex + 1}`;
-  const name = s.title.trim() || 'sans titre';
+  const where = { step: index + 1, module: moduleIndex + 1 };
+  const name = s.title.trim() || t('courses.untitled');
   const others = draft.modules.filter((_, i) => i !== at?.module);
   const state = stepState(s);
   return (
     <li className="step">
       <div className="fields">
-        <label htmlFor={titleId}>Titre de l’{label}</label>
-        <input id={titleId} value={s.title} maxLength={LIMITS.stepTitle} lang={language} dir={dir} aria-invalid={invalid || undefined} onChange={(e) => actions.renameStep(s.localId, e.target.value)} />
+        <label htmlFor={titleId}>{t('courses.outline.stepTitle', where)}</label>
+        <input id={titleId} value={s.title} maxLength={LIMITS.stepTitle} lang={language} dir={dir} aria-invalid={invalid || undefined} aria-describedby={describedBy} onChange={(e) => actions.renameStep(s.localId, e.target.value)} />
       </div>
       <p className="lesson-context">
-        Leçon{' '}
         {s.lessonTitle ? (
           <>
-            « <span lang={language} dir={dir}>{s.lessonTitle}</span> »
+            {t('courses.outline.lesson')} {t('courses.quoteOpen')}
+            <span lang={language} dir={dir}>
+              {s.lessonTitle}
+            </span>
+            {t('courses.quoteClose')}
           </>
         ) : (
-          `n° ${s.lessonId}`
+          t('courses.lessonNumber', { id: s.lessonId })
         )}
-        {s.revisionNumber !== null ? ` · révision ${s.revisionNumber}` : ''}
-        {s.ownLesson === null ? '' : s.ownLesson ? ' · votre leçon' : ' · leçon d’un autre auteur'}
+        {s.revisionNumber !== null ? ` · ${t('courses.outline.revision', { number: s.revisionNumber })}` : ''}
+        {s.ownLesson === null ? '' : ` · ${s.ownLesson ? t('courses.yourLesson') : t('courses.outline.otherAuthor')}`}
       </p>
       {state && <p className={s.eligible ? 'hint' : 'step-warning'}>{state}</p>}
-      <div className="actions" role="group" aria-label={`Actions de l’${label} : ${name}`}>
-        <button id={`step-up-${s.localId}`} type="button" disabled={!moves.up} onClick={() => actions.moveStep(s.localId, -1)} aria-label={`Monter l’${label} : ${name}`}>
-          Monter
+      <div className="actions" role="group" aria-label={t('courses.outline.stepActions', { ...where, name })}>
+        <button id={`step-up-${s.localId}`} type="button" disabled={!moves.up} onClick={() => actions.moveStep(s.localId, -1)} aria-label={t('courses.outline.moveStepUp', { ...where, name })}>
+          {t('courses.outline.up')}
         </button>
-        <button id={`step-down-${s.localId}`} type="button" disabled={!moves.down} onClick={() => actions.moveStep(s.localId, 1)} aria-label={`Descendre l’${label} : ${name}`}>
-          Descendre
+        <button id={`step-down-${s.localId}`} type="button" disabled={!moves.down} onClick={() => actions.moveStep(s.localId, 1)} aria-label={t('courses.outline.moveStepDown', { ...where, name })}>
+          {t('courses.outline.down')}
         </button>
         {others.length > 0 && (
           <span className="move-to">
             <label htmlFor={moveId} className="visually-hidden">
-              Déplacer l’{label} vers le module
+              {t('courses.outline.moveStepTo', where)}
             </label>
             <select
               id={moveId}
@@ -312,22 +350,22 @@ function StepItem({
                 if (e.target.value) actions.moveStepTo(s.localId, e.target.value);
               }}
             >
-              <option value="">Déplacer vers…</option>
+              <option value="">{t('courses.outline.moveTo')}</option>
               {draft.modules.map((m, i) =>
                 i === at?.module ? null : (
                   <option key={m.localId} value={m.localId}>
-                    Module {i + 1} : {m.title.trim() || 'sans titre'}
+                    {t('courses.outline.moduleOption', { index: i + 1, title: m.title.trim() || t('courses.untitled') })}
                   </option>
                 ),
               )}
             </select>
           </span>
         )}
-        <button type="button" onClick={() => actions.pickLesson(draft.modules[moduleIndex].localId, s)} aria-label={`Changer la révision de l’${label} : ${name}`}>
-          Changer la révision
+        <button type="button" onClick={() => actions.pickLesson(draft.modules[moduleIndex].localId, s)} aria-label={t('courses.outline.changeRevisionLabel', { ...where, name })}>
+          {t('courses.outline.changeRevision')}
         </button>
-        <button type="button" className="danger" onClick={() => actions.removeStep(s.localId)} aria-label={`Retirer l’${label} : ${name}`}>
-          Retirer
+        <button type="button" className="danger" onClick={() => actions.removeStep(s.localId)} aria-label={t('courses.outline.removeStepLabel', { ...where, name })}>
+          {t('courses.outline.removeStep')}
         </button>
       </div>
     </li>

@@ -15,6 +15,7 @@ import { describeCourseWorkflowError } from '../api/courseReviewMessages';
 import { describeError, isHeif } from '../api/messages';
 import { CatalogueName, catalogueLabel, entryLabel } from '../catalogue';
 import { isUnloadAllowed, useStudio } from '../context';
+import { intlLocale, t, tn } from '../i18n';
 import { LANGUAGE_LABELS, formatDateTime, formatTime } from '../labels';
 import { addNavigationGuard } from '../router';
 import { newInstance } from '../recovery';
@@ -71,7 +72,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const dir = language === 'ar' ? 'rtl' : 'ltr';
   const userId = session.user.id;
   const instance = useMemo(newInstance, []);
-  const ids = { title: useId(), summary: useId(), objectives: useId(), prerequisites: useId(), cover: useId(), coverAlt: useId(), save: useId(), overview: useId() };
+  const ids = { title: useId(), summary: useId(), objectives: useId(), prerequisites: useId(), cover: useId(), coverAlt: useId(), save: useId(), overview: useId(), problems: useId() };
 
   const [server, setServer] = useState({ id: props.revision.id, version: props.revision.version, number: props.revision.number });
   /** The kind the server derived at the last save (an amendment edited beyond replacements becomes ordinary, and back). */
@@ -250,13 +251,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     if (expired) {
       // Nothing is sent until the author resumes with their own account (banner at the top).
       writeCourseRecovery(localStorage, recoveryTarget(), sent);
-      setMessage({ text: `Rien n’a été envoyé : ${accountChanged ? 'un autre compte est connecté dans ce navigateur' : 'la session a expiré'}. Vos modifications restent ici et dans la copie de secours ; reconnectez-vous puis choisissez « Reprendre ici ».`, error: true });
+      setMessage({ text: t('courses.editor.notSentKept', { reason: accountChanged ? t('courses.editor.reason.otherAccount') : t('courses.editor.reason.expired') }), error: true });
       return;
     }
     const found = checkDraft(sent);
     setProblems(found);
     if (found.length > 0) {
-      setMessage({ text: 'Le brouillon contient des points à corriger ; rien n’a été enregistré.', error: true });
+      setMessage({ text: t('courses.editor.problemsNotSaved'), error: true });
       requestAnimationFrame(() => problemsRef.current?.focus());
       return;
     }
@@ -290,7 +291,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         if (snapshot(draftRef.current) !== snapshot(sent)) writeCourseRecovery(localStorage, recoveryTarget(next), draftRef.current);
         setLastSaved(new Date());
         setPlacementInvalid(false);
-        setMessage({ text: 'Brouillon du cours enregistré sur le serveur.' });
+        setMessage({ text: t('courses.editor.saved') });
         refreshEntries(next);
         props.onSaved?.(revision);
         return;
@@ -298,7 +299,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       case 'conflict':
         writeCourseRecovery(localStorage, before, sent, 'conflict');
         setConflict(true);
-        setMessage({ text: 'Enregistrement refusé : conflit de version. Vos modifications sont conservées.', error: true });
+        setMessage({ text: t('courses.editor.conflictRefused'), error: true });
         return;
       case 'not_draft':
         writeCourseRecovery(localStorage, before, sent, 'conflict');
@@ -306,12 +307,12 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         return;
       case 'expired':
         writeCourseRecovery(localStorage, before, sent);
-        setMessage({ text: 'Session expirée : rien n’a été enregistré. Vos modifications restent ici et dans la copie de secours. Reconnectez-vous puis enregistrez à nouveau.', error: true });
+        setMessage({ text: t('courses.editor.expiredNotSaved'), error: true });
         return;
       case 'failed':
         writeCourseRecovery(localStorage, before, sent);
         setPlacementInvalid(outcome.error instanceof ApiError && outcome.error.code === 'placement_invalid');
-        setMessage({ text: `Enregistrement impossible. ${describeCourseError(outcome.error)} Vos modifications restent dans l’éditeur.`, error: true });
+        setMessage({ text: t('courses.editor.saveFailed', { error: describeCourseError(outcome.error) }), error: true });
         return;
     }
   }, [saving, expired, accountChanged, recoveryTarget, courses, server, restoredKey, refreshEntries, props]);
@@ -346,9 +347,9 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       setProblems([]);
       setConflict(false);
       refreshEntries(next);
-      setMessage({ text: `Version ${revision.version} du serveur chargée. Votre copie locale est conservée ci-dessous : vous pouvez la restaurer.` });
+      setMessage({ text: t('courses.editor.serverLoaded', { version: revision.version }) });
     } catch (error) {
-      setMessage({ text: `Rechargement impossible. ${describeCourseError(error)} Vos modifications sont toujours dans l’éditeur.`, error: true });
+      setMessage({ text: t('courses.editor.reloadFailed', { error: describeCourseError(error) }), error: true });
     }
   };
 
@@ -356,7 +357,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   /** Nothing is sent while the session is expired or another account is signed in. */
   const refuseExpired = () =>
-    setMessage({ text: `Rien n’a été envoyé : ${accountChanged ? 'un autre compte est connecté dans ce navigateur' : 'la session a expiré'}. Reconnectez-vous puis choisissez « Reprendre ici ».`, error: true });
+    setMessage({ text: t('courses.editor.notSent', { reason: accountChanged ? t('courses.editor.reason.otherAccount') : t('courses.editor.reason.expired') }), error: true });
 
   const discard = async () => {
     setDialog(null);
@@ -370,8 +371,8 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     } catch (error) {
       if (error instanceof ApiError && error.code === 'version_conflict') {
         setConflict(true);
-        setMessage({ text: 'Suppression refusée : le brouillon a changé ailleurs. Rechargez la version du serveur avant de le supprimer.', error: true });
-      } else setMessage({ text: `Suppression impossible. ${describeCourseError(error)}`, error: true });
+        setMessage({ text: t('courses.editor.discardConflict'), error: true });
+      } else setMessage({ text: t('courses.editor.discardFailed', { error: describeCourseError(error) }), error: true });
     }
   };
 
@@ -385,7 +386,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       dirtyRef.current = false;
       props.onDeleted();
     } catch (error) {
-      setMessage({ text: `Suppression du cours impossible. ${describeCourseError(error)}`, error: true });
+      setMessage({ text: t('courses.editor.deleteFailed', { error: describeCourseError(error) }), error: true });
     }
   };
 
@@ -395,13 +396,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const askSubmit = () => {
     if (expired) return refuseExpired();
     if (dirtyRef.current) {
-      setMessage({ text: 'Enregistrez d’abord vos modifications : la soumission porte sur la version enregistrée sur le serveur.', error: true });
+      setMessage({ text: t('courses.editor.saveFirst'), error: true });
       return;
     }
     const found = checkDraft(draftRef.current);
     setProblems(found);
     if (found.length > 0) {
-      setMessage({ text: 'Le brouillon contient des points à corriger ; rien n’a été soumis.', error: true });
+      setMessage({ text: t('courses.editor.problemsNotSubmitted'), error: true });
       requestAnimationFrame(() => problemsRef.current?.focus());
       return;
     }
@@ -430,7 +431,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         setNotDraft(true);
         return;
       }
-      setMessage({ text: `Soumission impossible. ${describeCourseWorkflowError(error)}`, error: true });
+      setMessage({ text: t('courses.editor.submitFailed', { error: describeCourseWorkflowError(error) }), error: true });
     } finally {
       setSubmitting(false);
     }
@@ -445,12 +446,12 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const next = outline.addModule(draft, title);
       setDraft(next);
       const added = next.modules[next.modules.length - 1];
-      announce(`Module ${next.modules.length} « ${title} » ajouté.`);
+      announce(t('courses.editor.moduleAdded', { index: next.modules.length, title }));
       focusLater(`module-title-${added.localId}`);
     },
     clearChapter: (id) => {
       setDraft((d) => outline.updateModule(d, id, { chapterId: null }));
-      announce('Chapitre officiel retiré du module.');
+      announce(t('courses.editor.chapterCleared'));
       focusLater(`module-title-${id}`);
     },
     renameModule: (id, title) => setDraft((d) => outline.updateModule(d, id, { title })),
@@ -460,7 +461,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const next = outline.moveModule(draft, index, delta);
       if (next === draft) return;
       setDraft(next);
-      announce(`Module « ${moved.title.trim() || 'sans titre'} » déplacé en position ${index + delta + 1} sur ${next.modules.length}.`);
+      announce(t('courses.editor.moduleMoved', { title: moved.title.trim() || t('courses.untitled'), position: index + delta + 1, total: next.modules.length }));
       const [here, other] = delta < 0 ? ['up', 'down'] : ['down', 'up'];
       focusLater(`module-${here}-${moved.localId}`, `module-${other}-${moved.localId}`);
     },
@@ -468,7 +469,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const index = draft.modules.findIndex((m) => m.localId === id);
       const removed = draft.modules[index];
       setDraft(outline.removeModule(draft, id));
-      announce(`Module « ${removed?.title.trim() || 'sans titre'} » supprimé du plan.`);
+      announce(t('courses.editor.moduleRemoved', { title: removed?.title.trim() || t('courses.untitled') }));
       const neighbour = draft.modules[index + 1] ?? draft.modules[index - 1];
       focusLater(neighbour ? `module-title-${neighbour.localId}` : 'course-outline-new');
     },
@@ -479,7 +480,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       setDraft(next);
       const at = outline.findStep(next, id)!;
       const step = next.modules[at.module].steps[at.step];
-      announce(`Étape « ${step.title.trim() || 'sans titre'} » déplacée : module ${at.module + 1}, position ${at.step + 1}.`);
+      announce(t('courses.editor.stepMoved', { title: step.title.trim() || t('courses.untitled'), module: at.module + 1, position: at.step + 1 }));
       const [here, other] = delta < 0 ? ['up', 'down'] : ['down', 'up'];
       focusLater(`step-${here}-${id}`, `step-${other}-${id}`);
     },
@@ -488,7 +489,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       if (next === draft) return;
       setDraft(next);
       const at = outline.findStep(next, id)!;
-      announce(`Étape déplacée à la fin du module ${at.module + 1}, position ${at.step + 1}.`);
+      announce(t('courses.editor.stepMovedTo', { module: at.module + 1, position: at.step + 1 }));
       focusLater(`step-up-${id}`, `step-title-${id}`);
     },
     removeStep: (id) => {
@@ -497,7 +498,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const module = draft.modules[at.module];
       const step = module.steps[at.step];
       setDraft(outline.removeStep(draft, id));
-      announce(`Étape « ${step.title.trim() || 'sans titre'} » retirée du plan. La leçon n’est pas supprimée.`);
+      announce(t('courses.editor.stepRemoved', { title: step.title.trim() || t('courses.untitled') }));
       const neighbour = module.steps[at.step + 1] ?? module.steps[at.step - 1];
       focusLater(neighbour ? `step-title-${neighbour.localId}` : `module-title-${module.localId}`);
     },
@@ -508,13 +509,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     if (!picker) return;
     if (picker.step) {
       setDraft(outline.updateStep(draft, picker.step.localId, { revisionId: picked.revisionId, revisionNumber: picked.revisionNumber, eligible: picked.eligible }));
-      announce(`Révision ${picked.revisionNumber} épinglée.`);
+      announce(t('courses.editor.revisionPinned', { number: String(picked.revisionNumber) }));
     } else {
       const next = outline.addStep(draft, picker.moduleId, picked);
       setDraft(next);
       const module = next.modules.find((m) => m.localId === picker.moduleId)!;
       const added = module.steps[module.steps.length - 1];
-      announce(`Étape « ${picked.title} » ajoutée au module.`);
+      announce(t('courses.editor.stepAdded', { title: picked.title }));
       focusLater(`step-title-${added.localId}`);
     }
     setPicker(null);
@@ -532,15 +533,15 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       return;
     }
     if (isHeif(file)) return setUploadError(describeError(new ApiError(415, 'unsupported_heic', '')));
-    if (!IMAGE_TYPES.includes(file.type)) return setUploadError('Format refusé : seules les images PNG, JPEG et WebP sont acceptées (pas de SVG ni de GIF).');
-    if (file.size > MAX_IMAGE_BYTES) return setUploadError('Image trop lourde : 5 Mio au maximum. Réduisez-la ou ré-exportez-la.');
+    if (!IMAGE_TYPES.includes(file.type)) return setUploadError(t('shell.error.unsupported_media_type'));
+    if (file.size > MAX_IMAGE_BYTES) return setUploadError(t('courses.editor.imageTooLarge'));
     setUploading(true);
     try {
       const media = await api.uploadMedia(file);
       setDraft((d) => ({ ...d, coverMediaId: media.id }));
-      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Rédigez son texte alternatif, puis enregistrez le brouillon.` });
+      setMessage({ text: t('courses.editor.imageUploaded', { name: file.name, width: media.width, height: media.height }) });
     } catch (error) {
-      setUploadError(`Téléversement refusé. ${describeError(error)}`);
+      setUploadError(t('courses.editor.uploadRefused', { error: describeError(error) }));
     } finally {
       setUploading(false);
     }
@@ -550,32 +551,39 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   const invalidTargets = new Set(problems.map((p) => p.target));
   const text = (key: 'title' | 'summary' | 'objectives' | 'prerequisites', value: string) => setDraft((d) => ({ ...d, [key]: value }));
-  const count = (value: string, max: number) => `${[...value.trim()].length.toLocaleString('fr-FR')} / ${max.toLocaleString('fr-FR')} caractères`;
+  const count = (value: string, max: number) => t('courses.chars', { count: [...value.trim()].length.toLocaleString(intlLocale()), max: max.toLocaleString(intlLocale()) });
+  /** IDs of the problem messages about a target (aria-describedby). */
+  const errorIds = (target: string) => {
+    const found = problems.flatMap((p, i) => (p.target === target ? [`${ids.problems}-${i}`] : []));
+    return found.length > 0 ? found.join(' ') : undefined;
+  };
+  const describedBy = (...list: Array<string | undefined>) => list.filter(Boolean).join(' ') || undefined;
   const saveState = saving
-    ? 'Enregistrement en cours…'
+    ? t('courses.editor.saving')
     : expired && dirty
-      ? 'Session expirée : modifications non enregistrées, conservées sur cet appareil.'
+      ? t('courses.editor.expiredDirty')
       : dirty
-        ? 'Modifications non enregistrées sur le serveur.'
+        ? t('courses.editor.dirty')
         : lastSaved
-          ? `Enregistré sur le serveur à ${formatTime(lastSaved)} (version ${server.version}).`
-          : `À jour avec le serveur (version ${server.version}).`;
+          ? t('courses.editor.savedAt', { time: formatTime(lastSaved), version: server.version })
+          : t('courses.editor.upToDate', { version: server.version });
 
   return (
     <div className="editor-page course-editor">
       <div className="editor-bar">
         <p className="revision-label">
-          Brouillon · version {server.number} du cours{kind === 'amendment' ? ' · amendement (remplacement de révisions de leçons)' : ''}
+          {t('courses.editor.revisionLabel', { number: server.number })}
+          {kind === 'amendment' ? ` · ${t('courses.editor.amendment')}` : ''}
         </p>
         <p id={ids.save} className={dirty ? 'save-state dirty' : 'save-state'} role="status" aria-live="polite">
           {saveState}
         </p>
         <div className="actions">
           <button type="button" className="primary" onClick={() => void save()} disabled={saving || submitting} aria-describedby={ids.save}>
-            Enregistrer
+            {t('courses.editor.save')}
           </button>
           <button type="button" onClick={askSubmit} disabled={saving || submitting} aria-describedby={ids.save}>
-            {submitting ? 'Soumission en cours…' : 'Soumettre pour relecture…'}
+            {submitting ? t('courses.editor.submitting') : t('courses.editor.submit')}
           </button>
         </div>
       </div>
@@ -587,9 +595,11 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       )}
       {problems.length > 0 && (
         <div tabIndex={-1} ref={problemsRef} className="problems">
-          <ul className="errors" aria-label="Points à corriger">
+          <ul className="errors" aria-label={t('courses.editor.problems')}>
             {problems.map((p, i) => (
-              <li key={`${p.target}-${i}`}>{p.message}</li>
+              <li key={`${p.target}-${i}`} id={`${ids.problems}-${i}`}>
+                {p.message}
+              </li>
             ))}
           </ul>
         </div>
@@ -598,29 +608,31 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       {conflict && (
         <section className="conflict" aria-labelledby="course-conflict-heading">
           <h2 id="course-conflict-heading" tabIndex={-1} ref={conflictRef}>
-            Conflit : ce brouillon de cours a été enregistré ailleurs
+            {t('courses.editor.conflictHeading')}
           </h2>
           <p>
-            Une autre fenêtre ou un autre appareil a enregistré ce brouillon après son ouverture ici. Le serveur a refusé d’écraser cette version. <strong>Vos modifications ne sont pas perdues</strong> : elles sont toujours dans l’éditeur, et une copie de secours a été faite sur cet appareil.
+            {t('courses.editor.conflictText')} <strong>{t('courses.editor.notLost')}</strong>
+            {t('courses.editor.conflictKept')}
           </p>
           <div className="actions">
             <button type="button" className="primary" onClick={() => void reloadServer()}>
-              Charger la version du serveur
+              {t('courses.editor.loadServer')}
             </button>
             <button type="button" onClick={() => setConflict(false)}>
-              Continuer à éditer
+              {t('courses.editor.keepEditing')}
             </button>
           </div>
-          <p className="hint">Charger la version du serveur remplace le contenu de l’éditeur ; votre version locale reste proposée ci-dessous comme copie de secours, à restaurer puis enregistrer.</p>
+          <p className="hint">{t('courses.editor.conflictHint')}</p>
         </section>
       )}
       {notDraft && (
         <section className="conflict" aria-labelledby="course-notdraft-heading">
           <h2 id="course-notdraft-heading" tabIndex={-1} ref={notDraftRef}>
-            Ce brouillon a quitté l’état de brouillon
+            {t('courses.editor.notDraftHeading')}
           </h2>
           <p>
-            Il a été soumis ou supprimé depuis un autre onglet ou appareil : il ne peut plus être modifié. <strong>Vos modifications ne sont pas perdues</strong> : une copie de secours a été faite sur cet appareil ; elle vous sera proposée sur le prochain brouillon de ce cours.
+            {t('courses.editor.notDraftText')} <strong>{t('courses.editor.notLost')}</strong>
+            {t('courses.editor.notDraftKept')}
           </p>
           <button
             type="button"
@@ -630,22 +642,26 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
               props.onLeftDraft();
             }}
           >
-            Recharger le cours
+            {t('courses.editor.reloadCourse')}
           </button>
         </section>
       )}
 
       {offered.length > 0 && (
         <section className="recovery" aria-labelledby="course-recovery-heading">
-          <h2 id="course-recovery-heading">Copies de secours locales (non enregistrées)</h2>
-          <p className="hint">Ces modifications n’ont jamais été enregistrées sur le serveur. Elles ne sont conservées que dans ce navigateur, pour votre compte (14 jours au plus, effacées à la déconnexion).</p>
+          <h2 id="course-recovery-heading">{t('courses.editor.recoveryHeading')}</h2>
+          <p className="hint">{t('courses.editor.recoveryHint')}</p>
           <ul>
             {offered.map((e) => (
               <li key={e.key}>
                 <p>
-                  Copie du {formatDateTime(e.savedAt)}
-                  {e.revisionId !== server.id ? `, faite sur la version ${e.revisionNumber} du cours` : `, faite à partir de la version ${e.baseVersion} du serveur`}
-                  {e.reason === 'conflict' ? ' (gardée lors d’un conflit)' : ''} : « {e.data.title || 'sans titre'} », {e.data.modules.length} module{e.data.modules.length > 1 ? 's' : ''}
+                  {t('courses.editor.recoveryCopy', {
+                    date: formatDateTime(e.savedAt),
+                    origin: e.revisionId !== server.id ? t('courses.editor.recoveryOtherRevision', { number: e.revisionNumber }) : t('courses.editor.recoverySameRevision', { version: e.baseVersion }),
+                    conflict: e.reason === 'conflict' ? t('courses.editor.recoveryConflict') : '',
+                    title: e.data.title || t('courses.untitled'),
+                    modules: tn('courses.editor.modules', e.data.modules.length),
+                  })}
                 </p>
                 <div className="actions">
                   <button
@@ -654,10 +670,10 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
                       setDraft(withTitles({ ...e.data, modules: e.data.modules.map((m) => ({ ...m, steps: m.steps.map((s) => ({ ...s })) })) }, props.lessonTitles));
                       setRestoredKey(e.key);
                       setProblems([]);
-                      setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
+                      setMessage({ text: t('courses.editor.restored') });
                     }}
                   >
-                    Restaurer dans l’éditeur
+                    {t('courses.editor.restore')}
                   </button>
                   <button
                     type="button"
@@ -666,7 +682,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
                       refreshEntries();
                     }}
                   >
-                    Supprimer cette copie
+                    {t('courses.editor.deleteCopy')}
                   </button>
                 </div>
               </li>
@@ -678,57 +694,64 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       {props.notice}
 
       <section className="panel course-section" aria-labelledby={ids.overview}>
-        <h2 id={ids.overview}>Présentation du cours</h2>
+        <h2 id={ids.overview}>{t('courses.editor.overview')}</h2>
         <p className="hint">
-          Matière :{' '}
+          {t('courses.editor.subjectLabel')}{' '}
           <strong>
             <CatalogueName label={entryLabel(subject, language)} />
           </strong>{' '}
-          · Langue : <strong>{LANGUAGE_LABELS[language]}</strong> (fixées à la création). Les champs peuvent rester vides dans un brouillon ; ils seront exigés à la soumission.
+          · {t('courses.editor.languageLabel')} <strong>{LANGUAGE_LABELS[language]}</strong>
+          {t('courses.editor.fixedNote')}
         </p>
         <div className="fields">
-          <label htmlFor={ids.title}>Titre du cours</label>
-          <input id={ids.title} value={draft.title} maxLength={LIMITS.title} lang={language} dir={dir} aria-invalid={invalidTargets.has('title') || undefined} aria-describedby={`${ids.title}-count`} onChange={(e) => text('title', e.target.value)} />
+          <label htmlFor={ids.title}>{t('courses.field.title')}</label>
+          <input id={ids.title} value={draft.title} maxLength={LIMITS.title} lang={language} dir={dir} aria-invalid={invalidTargets.has('title') || undefined} aria-describedby={describedBy(`${ids.title}-count`, errorIds('title'))} onChange={(e) => text('title', e.target.value)} />
           <p id={`${ids.title}-count`} className="hint">
             {count(draft.title, LIMITS.title)}
           </p>
-          <label htmlFor={ids.summary}>Description courte (publique)</label>
-          <textarea id={ids.summary} rows={3} value={draft.summary} lang={language} dir={dir} aria-invalid={invalidTargets.has('summary') || undefined} aria-describedby={`${ids.summary}-count`} onChange={(e) => text('summary', e.target.value)} />
+          <label htmlFor={ids.summary}>{t('courses.editor.summaryLabel')}</label>
+          <textarea id={ids.summary} rows={3} value={draft.summary} lang={language} dir={dir} aria-invalid={invalidTargets.has('summary') || undefined} aria-describedby={describedBy(`${ids.summary}-count`, errorIds('summary'))} onChange={(e) => text('summary', e.target.value)} />
           <p id={`${ids.summary}-count`} className="hint">
-            {count(draft.summary, LIMITS.summary)} · Texte simple ; ne recopiez pas le contenu des leçons.
+            {count(draft.summary, LIMITS.summary)} · {t('courses.editor.summaryHint')}
           </p>
-          <label htmlFor={ids.objectives}>Objectifs d’apprentissage</label>
-          <textarea id={ids.objectives} rows={3} value={draft.objectives} lang={language} dir={dir} aria-invalid={invalidTargets.has('objectives') || undefined} aria-describedby={`${ids.objectives}-count`} onChange={(e) => text('objectives', e.target.value)} />
+          <label htmlFor={ids.objectives}>{t('courses.editor.objectivesLabel')}</label>
+          <textarea id={ids.objectives} rows={3} value={draft.objectives} lang={language} dir={dir} aria-invalid={invalidTargets.has('objectives') || undefined} aria-describedby={describedBy(`${ids.objectives}-count`, errorIds('objectives'))} onChange={(e) => text('objectives', e.target.value)} />
           <p id={`${ids.objectives}-count`} className="hint">
             {count(draft.objectives, LIMITS.objectives)}
           </p>
-          <label htmlFor={ids.prerequisites}>Prérequis</label>
-          <textarea id={ids.prerequisites} rows={2} value={draft.prerequisites} lang={language} dir={dir} aria-invalid={invalidTargets.has('prerequisites') || undefined} aria-describedby={`${ids.prerequisites}-count`} onChange={(e) => text('prerequisites', e.target.value)} />
+          <label htmlFor={ids.prerequisites}>{t('courses.field.prerequisites')}</label>
+          <textarea id={ids.prerequisites} rows={2} value={draft.prerequisites} lang={language} dir={dir} aria-invalid={invalidTargets.has('prerequisites') || undefined} aria-describedby={describedBy(`${ids.prerequisites}-count`, errorIds('prerequisites'))} onChange={(e) => text('prerequisites', e.target.value)} />
           <p id={`${ids.prerequisites}-count`} className="hint">
             {count(draft.prerequisites, LIMITS.prerequisites)}
           </p>
         </div>
 
         <fieldset className="media cover">
-          <legend>Image de couverture (facultative)</legend>
+          <legend>{t('courses.editor.cover')}</legend>
           {draft.coverMediaId !== null ? (
             <>
               <img className="placing-preview" src={`/api/media/${draft.coverMediaId}`} alt="" />
-              <label htmlFor={ids.coverAlt}>Texte alternatif de la couverture (obligatoire avec une image)</label>
-              <input id={ids.coverAlt} value={draft.coverAlt} maxLength={LIMITS.coverAlt} lang={language} dir="auto" required aria-invalid={invalidTargets.has('coverAlt') || undefined} onChange={(e) => setDraft((d) => ({ ...d, coverAlt: e.target.value }))} />
-              <p className="hint">Décrivez l’image pour les élèves qui ne la voient pas. {count(draft.coverAlt, LIMITS.coverAlt)}</p>
+              <label htmlFor={ids.coverAlt}>{t('courses.editor.coverAltLabel')}</label>
+              <input id={ids.coverAlt} value={draft.coverAlt} maxLength={LIMITS.coverAlt} lang={language} dir="auto" required aria-invalid={invalidTargets.has('coverAlt') || undefined} aria-describedby={describedBy(`${ids.coverAlt}-hint`, errorIds('coverAlt'))} onChange={(e) => setDraft((d) => ({ ...d, coverAlt: e.target.value }))} />
+              <p id={`${ids.coverAlt}-hint`} className="hint">
+                {t('courses.editor.coverAltHint')} {count(draft.coverAlt, LIMITS.coverAlt)}
+              </p>
               <button type="button" onClick={() => setDraft((d) => ({ ...d, coverMediaId: null, coverAlt: '' }))}>
-                Retirer la couverture
+                {t('courses.editor.removeCover')}
               </button>
             </>
           ) : (
-            <p>Aucune image de couverture.</p>
+            <p>{t('courses.editor.noCover')}</p>
           )}
-          <label htmlFor={ids.cover}>{draft.coverMediaId !== null ? 'Remplacer l’image' : 'Téléverser une image'} (PNG, JPEG ou WebP, 5 Mio au maximum)</label>
-          <input id={ids.cover} type="file" accept={IMAGE_TYPES.join(',')} onChange={(e) => void uploadCover(e)} disabled={uploading} />
-          {uploading && <p role="status">Téléversement en cours…</p>}
+          <label htmlFor={ids.cover}>{draft.coverMediaId !== null ? t('courses.editor.replaceImage') : t('courses.editor.uploadImage')}</label>
+          <input
+            id={ids.cover}
+            aria-invalid={uploadError ? true : undefined}
+            aria-describedby={uploadError ? `${ids.cover}-error` : undefined}
+            type="file" accept={IMAGE_TYPES.join(',')} onChange={(e) => void uploadCover(e)} disabled={uploading} />
+          {uploading && <p role="status">{t('courses.editor.uploading')}</p>}
           {uploadError && (
-            <p className="banner error" role="alert">
+            <p id={`${ids.cover}-error`} className="banner error" role="alert">
               {uploadError}
             </p>
           )}
@@ -752,42 +775,42 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
           setPlacements((p) => ({ ...p, [info.assignmentId]: info }));
           setEditions((e) => ({ ...e, [edition.id]: edition }));
           setDraft((d) => (d.assignmentIds.includes(info.assignmentId) ? d : { ...d, assignmentIds: [...d.assignmentIds, info.assignmentId] }));
-          announce('Classement ajouté.');
+          announce(t('courses.editor.placementAdded'));
         }}
         onRemove={(id) => {
           setDraft((d) => outline.removeAssignment(d, id, (a) => chaptersOf(a)?.map((c) => c.chapterId) ?? null));
-          announce('Classement retiré. Les modules dont le chapitre officiel n’appartient plus à aucun classement n’ont plus de chapitre.');
+          announce(t('courses.editor.placementRemoved'));
         }}
       />
 
       {comparisonError && (
         <div className="banner error" role="alert">
-          <p>La version publiée de référence du cours n’a pas pu être lue : les classements et chapitres que le prochain enregistrement refusera ne peuvent pas être signalés.</p>
+          <p>{t('courses.editor.comparisonFailed')}</p>
           <button type="button" onClick={loadComparison}>
-            Réessayer
+            {t('shell.retry')}
           </button>
         </div>
       )}
       <OutlineSection
         refusedChapters={refusedChapters}
         chaptersComplete={draft.assignmentIds.every((id) => chaptersOf(id) !== null)}
-        draft={draft} language={language} chapters={chapterOptions} actions={actions} invalidTargets={invalidTargets} announcement={announcement} focusRequest={focusRequest} />
+        draft={draft} language={language} chapters={chapterOptions} actions={actions} invalidTargets={invalidTargets} announcement={announcement} focusRequest={focusRequest} errorIds={errorIds} />
 
       <div className="danger-zone">
         <div className="actions">
           <button type="button" className="danger" onClick={() => setDialog('discard')} disabled={saving || expired} aria-describedby={expired ? 'course-danger-expired' : undefined}>
-            Supprimer ce brouillon
+            {t('courses.editor.discardDraft')}
           </button>
           <button type="button" className="danger" onClick={() => setDialog('delete')} disabled={saving || expired} aria-describedby={expired ? 'course-danger-expired' : undefined}>
-            Supprimer le cours
+            {t('courses.editor.deleteCourse')}
           </button>
         </div>
         {expired && (
           <p id="course-danger-expired" className="field-error">
-            Suppression impossible tant que vous n’êtes pas reconnecté : rien ne serait envoyé.
+            {t('courses.editor.dangerExpired')}
           </p>
         )}
-        <p className="hint">Supprimer le cours n’est possible que s’il n’a jamais été soumis. Les leçons et les images ne sont jamais supprimées avec un cours.</p>
+        <p className="hint">{t('courses.editor.dangerHint')}</p>
       </div>
 
       {picker && (
@@ -803,29 +826,24 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         />
       )}
       {dialog === 'discard' && (
-        <Dialog title="Supprimer ce brouillon ?" onCancel={() => setDialog(null)} cancelLabel="Garder le brouillon" actions={[{ label: 'Supprimer le brouillon', kind: 'danger', onClick: () => void discard() }]}>
-          <p>Le brouillon (présentation, classement et plan) sera supprimé du serveur. Cette action est définitive. Le cours lui-même, ses versions déjà soumises, les leçons et les images ne sont pas touchés.</p>
+        <Dialog title={t('courses.editor.discardTitle')} onCancel={() => setDialog(null)} cancelLabel={t('courses.editor.keepDraft')} actions={[{ label: t('courses.editor.discardAction'), kind: 'danger', onClick: () => void discard() }]}>
+          <p>{t('courses.editor.discardText')}</p>
         </Dialog>
       )}
       {dialog === 'submit' && (
         <Dialog
-          title={`Soumettre la version ${server.number} du cours pour relecture ?`}
+          title={t('courses.editor.submitTitle', { number: server.number })}
           onCancel={() => setDialog(null)}
-          cancelLabel="Continuer la rédaction"
-          actions={[{ label: 'Soumettre', kind: 'primary', disabled: submitting, onClick: () => void submit() }]}
+          cancelLabel={t('courses.editor.keepWriting')}
+          actions={[{ label: t('courses.editor.submitAction'), kind: 'primary', disabled: submitting, onClick: () => void submit() }]}
         >
-          <p>
-            La version enregistrée sur le serveur sera envoyée à un relecteur de la matière, indépendant de vous et des auteurs des leçons ajoutées ou remplacées. Elle ne pourra plus être
-            modifiée : une correction passera par une nouvelle version.
-          </p>
-          <p>Chaque leçon du cours doit déjà être approuvée et publiée : la relecture du cours porte sur sa présentation, son plan et son classement, pas sur le contenu des leçons.</p>
+          <p>{t('courses.editor.submitText')}</p>
+          <p>{t('courses.editor.submitLessons')}</p>
         </Dialog>
       )}
       {dialog === 'delete' && (
-        <Dialog title="Supprimer définitivement le cours ?" onCancel={() => setDialog(null)} cancelLabel="Garder le cours" actions={[{ label: 'Supprimer le cours', kind: 'danger', onClick: () => void deleteCourse() }]}>
-          <p>
-            Le cours et son brouillon seront supprimés du serveur, ainsi que les copies de secours de ce cours sur cet appareil. Cette action est définitive. Les leçons rattachées et les images ne sont pas supprimées. Un cours déjà soumis ne peut pas être supprimé.
-          </p>
+        <Dialog title={t('courses.editor.deleteTitle')} onCancel={() => setDialog(null)} cancelLabel={t('courses.editor.keepCourse')} actions={[{ label: t('courses.editor.deleteCourse'), kind: 'danger', onClick: () => void deleteCourse() }]}>
+          <p>{t('courses.editor.deleteText')}</p>
         </Dialog>
       )}
     </div>

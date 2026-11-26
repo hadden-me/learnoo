@@ -13,42 +13,49 @@ import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 import { CanonicalPreview, ErrorPage, LoadingPage, dirOf, useEditorial, useLoad } from './common';
 import { CoursePublishQueue } from './CourseReviewPages';
+import { t, tn } from '../i18n';
 
-export const STALE_BASE_EXPLANATION =
-  'La version publiée de la leçon a changé depuis la rédaction de cette révision (dépublication ou restauration) : le serveur refusera de la publier. Une révision réconciliée doit être rédigée et relue ; un administrateur peut retirer celle-ci pour débloquer la leçon.';
+export const STALE_BASE_EXPLANATION = t('review.publish.staleBase');
 
 export function PublishQueuePage() {
   const ed = useEditorial();
   const [queue] = useLoad(() => ed.publishQueue(), [ed]);
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Publication</h1>
-      <p className="hint">Leçons et cours approuvés par un relecteur et jamais publiés, les plus anciens d’abord. La publication remplace la version que lisent les élèves.</p>
-      <h2>Leçons</h2>
-      {queue.state === 'loading' && <p role="status">Chargement des révisions à publier…</p>}
+      <h1 tabIndex={-1}>{t('shell.space.publish')}</h1>
+      <p className="hint">{t('review.publish.hint')}</p>
+      <h2>{t('review.lessons')}</h2>
+      {queue.state === 'loading' && <p role="status">{t('review.publish.loading')}</p>}
       {queue.state === 'error' && (
         <p className="banner error" role="alert">
           {queue.message}
         </p>
       )}
-      {queue.state === 'ready' && queue.data.length === 0 && <p>Aucune révision approuvée n’attend de publication.</p>}
+      {queue.state === 'ready' && queue.data.length === 0 && <p>{t('review.publish.empty')}</p>}
       {queue.state === 'ready' && queue.data.length > 0 && (
-        <ul className="lesson-list" aria-label="Révisions approuvées à publier">
+        <ul className="lesson-list" aria-label={t('review.publish.list')}>
           {queue.data.map((item) => (
             <li key={item.revisionId} className="lesson-card">
               <h3 lang={item.language} dir={dirOf(item.language)}>
                 <Link to={paths.publishRevision(item.revisionId)}>{item.title}</Link>
               </h3>
               <p className="lesson-meta">
-                <span className="state state-approved">Approuvée</span>
-                {item.staleBase && <span className="state state-changes">Base périmée : publication impossible</span>}
-                <span className="state">{item.publishedRevisionId === null ? 'Première publication' : 'Remplacera la version publiée'}</span>
+                <span className="state state-approved">{t('shell.status.approved')}</span>
+                {item.staleBase && <span className="state state-changes">{t('review.publish.staleBadge')}</span>}
+                <span className="state">{item.publishedRevisionId === null ? t('review.publish.first') : t('review.replacesPublished')}</span>
               </p>
               <p className="lesson-context">
-                {item.subjectCode} · {LANGUAGE_LABELS[item.language]} · révision {item.number} · par {item.authorName} · approuvée par {item.approverName} le {formatDateTime(item.approvedAt)}
+                {t('review.publish.context', {
+                  subject: item.subjectCode,
+                  language: LANGUAGE_LABELS[item.language],
+                  number: item.number,
+                  author: item.authorName,
+                  approver: item.approverName,
+                  date: formatDateTime(item.approvedAt),
+                })}
               </p>
               <p className="lesson-context">
-                <Link to={paths.publication(item.lessonPublicId)}>Historique de publication de la leçon</Link>
+                <Link to={paths.publication(item.lessonPublicId)}>{t('review.lessonPublicationHistory')}</Link>
               </p>
             </li>
           ))}
@@ -68,13 +75,13 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [published, setPublished] = useState<Publication | null>(null);
 
-  if (loaded.state === 'loading') return <LoadingPage label="Chargement de la révision…" />;
+  if (loaded.state === 'loading') return <LoadingPage label={t('review.loadingRevision')} />;
   if (loaded.state === 'error')
     return (
       <ErrorPage
-        title="Révision indisponible"
-        message={loaded.notFound ? 'Cette révision n’attend pas de publication : elle n’existe pas, n’est pas approuvée, a déjà été publiée ou a été retirée.' : loaded.message}
-        back={{ to: paths.publishQueue, label: 'Revenir aux révisions à publier' }}
+        title={t('review.revisionUnavailable')}
+        message={loaded.notFound ? t('review.publish.notFound') : loaded.message}
+        back={{ to: paths.publishQueue, label: t('review.backToPublishQueue') }}
       />
     );
   const { revision, item } = loaded.data;
@@ -98,73 +105,73 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
-        <Link to={paths.publishQueue}>Publication</Link>
+        <Link to={paths.publishQueue}>{t('shell.space.publish')}</Link>
       </p>
       <h1 tabIndex={-1} lang={revision.language} dir={dirOf(revision.language)}>
         {revision.title}
       </h1>
       <p className="lesson-meta">
-        <span className={`state ${published ? 'state-published' : 'state-approved'}`}>{published ? 'Publiée' : 'Approuvée, en attente de publication'}</span>
+        <span className={`state ${published ? 'state-published' : 'state-approved'}`}>{published ? t('shell.state.published') : t('shell.state.awaitingPublication')}</span>
       </p>
       {(
         <dl className="facts">
           <div>
-            <dt>Matière</dt>
+            <dt>{t('review.fact.subject')}</dt>
             <dd>{item.subjectCode}</dd>
           </div>
           <div>
-            <dt>Langue</dt>
+            <dt>{t('review.fact.language')}</dt>
             <dd>{LANGUAGE_LABELS[item.language]}</dd>
           </div>
           <div>
-            <dt>Auteur</dt>
+            <dt>{t('review.fact.author')}</dt>
             <dd>{item.authorName}</dd>
           </div>
           <div>
-            <dt>Approuvée par</dt>
+            <dt>{t('review.publish.approvedBy')}</dt>
             <dd>
-              {item.approverName}, le {formatDateTime(item.approvedAt)}
+              {t('review.fact.byOn', { name: item.approverName, date: formatDateTime(item.approvedAt) })}
             </dd>
           </div>
           <div>
-            <dt>Effet</dt>
-            <dd>{firstPublication ? 'Première publication de la leçon.' : 'Remplacera la version publiée actuelle.'}</dd>
+            <dt>{t('review.fact.effect')}</dt>
+            <dd>{firstPublication ? t('review.publish.firstEffect') : t('review.publish.replaceEffect')}</dd>
           </div>
         </dl>
       )}
       {revision.review?.comment && (
-        <section className="feedback" aria-label="Commentaire du relecteur">
-          <p>Commentaire du relecteur :</p>
+        <section className="feedback" aria-label={t('review.reviewerComment')}>
+          <p>{t('review.reviewerCommentLabel')}</p>
           <blockquote dir="auto">{revision.review.comment}</blockquote>
         </section>
       )}
       {published ? (
         <section className="status-card" aria-labelledby="published-heading" role="status">
-          <h2 id="published-heading">Révision publiée</h2>
-          <p>Les élèves lisent maintenant cette version (publiée le {formatDateTime(published.publishedAt)}).</p>
+          <h2 id="published-heading">{t('review.publish.done')}</h2>
+          <p>{t('review.publish.doneText', { date: formatDateTime(published.publishedAt) })}</p>
           <ul className="link-list">
             <li>
-              <a href={paths.readerLesson(item.lessonPublicId)}>Voir la leçon publiée</a>
+              <a href={paths.readerLesson(item.lessonPublicId)}>{t('review.publish.viewLesson')}</a>
             </li>
             <li>
-              <Link to={paths.publication(item.lessonPublicId)}>Historique de publication</Link>
+              <Link to={paths.publication(item.lessonPublicId)}>{t('review.publicationHistory')}</Link>
             </li>
             <li>
-              <Link to={paths.publishQueue}>Revenir aux révisions à publier</Link>
+              <Link to={paths.publishQueue}>{t('review.backToPublishQueue')}</Link>
             </li>
           </ul>
         </section>
       ) : stale ? (
         <section className="status-card warning" aria-labelledby="stale-heading">
-          <h2 id="stale-heading">Publication impossible</h2>
+          <h2 id="stale-heading">{t('review.publishImpossible')}</h2>
           <p>{STALE_BASE_EXPLANATION}</p>
         </section>
       ) : (
         <section className="status-card" aria-labelledby="publish-heading">
-          <h2 id="publish-heading">Publier</h2>
-          <p>Relisez la leçon ci-dessous. La publication est immédiate pour les élèves ; une version antérieure pourra être restaurée en cas de problème.</p>
+          <h2 id="publish-heading">{t('review.publish')}</h2>
+          <p>{t('review.publish.text')}</p>
           <button type="button" className="primary" onClick={() => setAsking(true)} disabled={busy}>
-            Publier cette révision…
+            {t('review.publish.button')}
           </button>
         </section>
       )}
@@ -174,26 +181,21 @@ export function PublishRevisionPage({ revisionId }: { revisionId: number }) {
         </p>
       )}
       {revision.mediaIds.length > 0 && (
-        <p className="hint">
-          {revision.mediaIds.length === 1 ? '1 image jointe' : `${revision.mediaIds.length} images jointes`}, relues par le relecteur. Les images placées dans le texte apparaissent dans la leçon ci-dessous
-          et seront montrées aux élèves ; une image jointe mais non placée ne leur est pas montrée.
-        </p>
+        <p className="hint">{tn('review.publish.media', revision.mediaIds.length)}</p>
       )}
       <section className="panel" aria-labelledby="preview-heading">
-        <h2 id="preview-heading">Leçon telle que l’élève la lira</h2>
+        <h2 id="preview-heading">{t('review.previewHeading')}</h2>
         <CanonicalPreview content={revision.content} testId="publish-preview" mediaRoute="publish" />
       </section>
       {asking && (
         <Dialog
-          title={`Publier « ${revision.title} » ?`}
+          title={t('review.publish.dialogTitle', { title: revision.title })}
           onCancel={() => setAsking(false)}
-          cancelLabel="Ne pas publier"
-          actions={[{ label: 'Publier', kind: 'primary', disabled: busy, onClick: () => void publish() }]}
+          cancelLabel={t('review.dontPublish')}
+          actions={[{ label: t('review.publish'), kind: 'primary', disabled: busy, onClick: () => void publish() }]}
         >
           <p>
-            {firstPublication
-              ? 'C’est la première publication de cette leçon : les élèves invités pourront la lire immédiatement.'
-              : 'Cette révision remplacera immédiatement la version que lisent les élèves.'}
+            {firstPublication ? t('review.publish.firstText') : t('review.publish.replaceText')}
           </p>
         </Dialog>
       )}

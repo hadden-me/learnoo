@@ -4,6 +4,7 @@
 // headings and lists are dropped. Everything else maps one-to-one.
 import type { JSONContent } from '@tiptap/core';
 import type { Schema } from '@tiptap/pm/model';
+import { t } from '../i18n';
 import { LessonError, validateLesson, type Dir, type Lang, type LessonDocument, type LessonNode } from './lesson';
 
 export type Metadata = Pick<LessonDocument, 'title' | 'language' | 'objective'>;
@@ -29,14 +30,14 @@ export function lessonToEditorChecked(schema: Schema, blocks: LessonNode[]): JSO
   try {
     schema.nodeFromJSON(json).check();
   } catch (error) {
-    throw new LessonError(`Structure non représentable dans l’éditeur : ${(error as Error).message}`);
+    throw new LessonError(t('lessons.check.notRepresentable', { error: (error as Error).message }));
   }
   return json;
 }
 
 function checkAttributes(n: LessonNode, path: string) {
-  if ((n.lang || n.dir) && !LANG_TYPES.has(n.type)) throw new LessonError(`${path} : lang/dir non affichés sur ${n.type} ; placez-les sur le paragraphe ou le texte.`);
-  if (n.title && !TITLE_TYPES.has(n.type)) throw new LessonError(`${path} : titre non affiché sur ${n.type}.`);
+  if ((n.lang || n.dir) && !LANG_TYPES.has(n.type)) throw new LessonError(t('lessons.check.langDirPlacement', { path, type: n.type }));
+  if (n.title && !TITLE_TYPES.has(n.type)) throw new LessonError(t('lessons.check.titlePlacement', { path, type: n.type }));
 }
 
 const langAttrs = (n: LessonNode) => ({ lang: n.lang ?? null, dir: n.dir ?? null });
@@ -64,7 +65,7 @@ function blockToEditor(n: LessonNode, path: string): JSONContent {
     case 'youtube':
       return { type: 'youtube', attrs: { title: n.title ?? '', videoId: n.videoId ?? '' } };
     default:
-      throw new LessonError(`${path} : type ${n.type} non pris en charge ici.`);
+      throw new LessonError(t('lessons.check.typeHere', { path, type: n.type }));
   }
 }
 
@@ -81,7 +82,7 @@ function inlineToEditor(nodes: LessonNode[], marks: Mark[], path: string): JSONC
       const all = n.lang || n.dir ? [...marks, { type: 'lang', attrs: langAttrs(n) }] : marks;
       return [{ type: 'text', text: n.text ?? '', ...(all.length ? { marks: all } : {}) }];
     }
-    throw new LessonError(`${at} : ${n.type} interdit dans un paragraphe.`);
+    throw new LessonError(t('lessons.check.inParagraph', { path: at, type: n.type }));
   });
 }
 
@@ -95,13 +96,18 @@ export interface ExportResult {
 
 export function editorToLesson(doc: JSONContent, meta: Metadata): ExportResult {
   const errors: string[] = [];
-  const blocks = blocksFromEditor(doc.content ?? [], errors, 'document');
+  const blocks = blocksFromEditor(doc.content ?? [], errors, t('lessons.check.document'));
   const document: LessonDocument = { schemaVersion: 1, title: meta.title.trim(), language: meta.language, status: 'unreviewed', objective: meta.objective.trim(), blocks };
   if (errors.length === 0) errors.push(...validateLesson(document));
   return { document, errors };
 }
 
-const LABELS: Record<string, string> = { callout: 'Encadré', exercise: 'Exercice', solution: 'Solution', listItem: 'Élément de liste' };
+const LABELS: Record<string, () => string> = {
+  callout: () => t('lessons.node.callout'),
+  exercise: () => t('lessons.node.exercise'),
+  solution: () => t('lessons.node.solution'),
+  listItem: () => t('lessons.node.listItem'),
+};
 
 function blocksFromEditor(nodes: JSONContent[], errors: string[], where: string): LessonNode[] {
   const out: LessonNode[] = [];
@@ -115,12 +121,12 @@ function blocksFromEditor(nodes: JSONContent[], errors: string[], where: string)
 function blockFromEditor(node: JSONContent, errors: string[], where: string): LessonNode | null {
   const attrs = node.attrs ?? {};
   const container = (type: string, extra: Partial<LessonNode> = {}): LessonNode | null => {
-    const label = LABELS[node.type ?? ''] ?? node.type;
+    const label = LABELS[node.type ?? '']?.() ?? node.type;
     const children = blocksFromEditor(node.content ?? [], errors, label ?? where);
     if (children.length === 0) {
       // Empty lists and list items carry no content and are dropped; titled containers would lose their title.
       if (node.type === 'listItem' || node.type === 'bulletList') return null;
-      errors.push(`${label}${extra.title ? ` « ${extra.title} »` : ''} : ajoutez du contenu ou supprimez le bloc.`);
+      errors.push(extra.title ? t('lessons.check.emptyTitledContainer', { label: String(label), title: extra.title }) : t('lessons.check.emptyContainer', { label: String(label) }));
       return null;
     }
     return { type, ...extra, children };
@@ -144,7 +150,7 @@ function blockFromEditor(node: JSONContent, errors: string[], where: string): Le
     case 'displayMath': {
       const latex = String(attrs.latex ?? '').trim();
       if (!latex) {
-        errors.push(`${where} : formule centrée vide.`);
+        errors.push(t('lessons.check.emptyDisplayMath', { where }));
         return null;
       }
       return { type: 'displayMath', text: latex };
@@ -162,7 +168,7 @@ function blockFromEditor(node: JSONContent, errors: string[], where: string): Le
       return out;
     }
     default:
-      errors.push(`${where} : bloc ${node.type} non pris en charge.`);
+      errors.push(t('lessons.check.unsupportedBlock', { where, type: String(node.type) }));
       return null;
   }
 }
@@ -193,10 +199,10 @@ function inlineFromEditor(nodes: JSONContent[], errors: string[], where: string)
       else items.push({ bold, node });
     } else if (n.type === 'inlineMath') {
       const latex = String(n.attrs?.latex ?? '').trim();
-      if (!latex) errors.push(`${where} : formule en ligne vide.`);
+      if (!latex) errors.push(t('lessons.check.emptyInlineMath', { where }));
       else items.push({ bold, node: { type: 'math', text: latex } });
     } else {
-      errors.push(`${where} : contenu en ligne ${n.type} non pris en charge.`);
+      errors.push(t('lessons.check.unsupportedInline', { where, type: String(n.type) }));
     }
   }
   const out: LessonNode[] = [];

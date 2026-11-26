@@ -9,6 +9,7 @@ import { CatalogueName, entryLabel } from '../catalogue';
 import { takeFlash, useStudio } from '../context';
 import { COURSE_FILTERS, courseState, courseTitle, type CourseStateFilter } from '../courses/courseLabels';
 import { fold } from '../courses/outline';
+import { t, tn } from '../i18n';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { BASE } from '../router';
 import { Link } from '../ui/Link';
@@ -64,12 +65,12 @@ export function CourseList() {
   return (
     <main className="page" id="main">
       <div className="page-head">
-        <h1 tabIndex={-1}>Mes cours</h1>
+        <h1 tabIndex={-1}>{t('shell.myCourses')}</h1>
         <Link to={`${BASE}/courses/new`} className="button primary">
-          Nouveau cours
+          {t('courses.list.new')}
         </Link>
       </div>
-      <p className="hint">Un cours regroupe vos modules et les leçons qui les composent, rattachés à une ou plusieurs éditions du programme officiel.</p>
+      <p className="hint">{t('courses.list.intro')}</p>
       {flash && (
         <p className="banner success" role="status">
           {flash}
@@ -79,21 +80,21 @@ export function CourseList() {
         <div className="banner error" role="alert">
           <p>{error}</p>
           <button type="button" onClick={() => void load(items === null ? null : next)}>
-            Réessayer
+            {t('shell.retry')}
           </button>
         </div>
       )}
-      {items === null && !error && <p role="status">Chargement des cours…</p>}
-      {items && items.length === 0 && <p>Vous n’avez pas encore de cours. Créez-en un pour commencer.</p>}
+      {items === null && !error && <p role="status">{t('courses.list.loading')}</p>}
+      {items && items.length === 0 && <p>{t('courses.list.empty')}</p>}
       {items && items.length > 0 && (
         <>
-          <div className="find-lesson" role="search" aria-label="Filtrer mes cours">
+          <div className="find-lesson" role="search" aria-label={t('courses.list.filters')}>
             <div className="fields">
-              <label htmlFor={ids.search}>Rechercher un titre</label>
+              <label htmlFor={ids.search}>{t('courses.list.search')}</label>
               <input id={ids.search} type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
             </div>
             <div className="fields">
-              <label htmlFor={ids.filter}>État</label>
+              <label htmlFor={ids.filter}>{t('courses.list.state')}</label>
               <select id={ids.filter} className="inline-select" value={filter} onChange={(e) => setFilter(e.target.value as CourseStateFilter)}>
                 {COURSE_FILTERS.map(([value, label]) => (
                   <option key={value} value={value}>
@@ -104,12 +105,12 @@ export function CourseList() {
             </div>
           </div>
           <p role="status" className="hint">
-            {filtered ? `${shown.length} cours sur ${items.length} chargés correspondent.` : `${items.length} cours chargés.`}
-            {next !== null ? ' D’autres cours peuvent être chargés en bas de la liste.' : ''}
+            {filtered ? tn('courses.list.countFiltered', items.length, { shown: shown.length }) : tn('courses.list.count', items.length)}
+            {next !== null ? ` ${t('courses.list.more')}` : ''}
           </p>
           {shown.length === 0 ? (
             <div>
-              <p>Aucun cours chargé ne correspond à cette recherche.</p>
+              <p>{t('courses.list.noMatch')}</p>
               <button
                 type="button"
                 onClick={() => {
@@ -117,11 +118,11 @@ export function CourseList() {
                   setFilter('all');
                 }}
               >
-                Effacer les filtres
+                {t('courses.list.clearFilters')}
               </button>
             </div>
           ) : (
-            <ul className="lesson-list" aria-label="Cours dont vous êtes le propriétaire">
+            <ul className="lesson-list" aria-label={t('courses.list.label')}>
               {shown.map((course) => {
                 const state = courseState(course);
                 const subject = subjectOf(course.subjectId);
@@ -133,15 +134,15 @@ export function CourseList() {
                     </h2>
                     <p className="lesson-meta">
                       <span className={`state state-${state.tone}`}>{state.label}</span>
-                      {course.publishedRevisionId !== null && state.tone !== 'published' && <span className="state state-published">Une version est publiée</span>}
-                      {course.archived && <span className="state">Archivé</span>}
+                      {course.publishedRevisionId !== null && state.tone !== 'published' && <span className="state state-published">{t('courses.list.onePublished')}</span>}
+                      {course.archived && <span className="state">{t('courses.state.archived')}</span>}
                     </p>
                     <p className="lesson-context">
-                      {subject ? <CatalogueName label={entryLabel(subject, course.language)} /> : `Matière n° ${course.subjectId}`} · {LANGUAGE_LABELS[course.language]}
+                      {subject ? <CatalogueName label={entryLabel(subject, course.language)} /> : t('courses.subjectNumber', { id: course.subjectId })} · {LANGUAGE_LABELS[course.language]}
                       {latest && (
                         <>
                           {' '}
-                          · version {latest.number} du cours · modifié le {formatDateTime(latest.updatedAt)}
+                          · {t('courses.list.versionMeta', { number: latest.number, date: formatDateTime(latest.updatedAt) })}
                         </>
                       )}
                     </p>
@@ -152,7 +153,7 @@ export function CourseList() {
           )}
           {next !== null && (
             <button type="button" onClick={() => void load(next)} disabled={loading}>
-              {loading ? 'Chargement…' : 'Afficher plus de cours'}
+              {loading ? t('shell.loadingPage') : t('courses.list.showMore')}
             </button>
           )}
         </>

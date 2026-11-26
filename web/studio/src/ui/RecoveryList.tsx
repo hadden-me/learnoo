@@ -2,6 +2,7 @@
 // restore (only where a draft is open), copy and delete.
 import { useState } from 'react';
 import { recoveryText } from '../drafts';
+import { t } from '../i18n';
 import { formatDateTime } from '../labels';
 import { removeRecovery, type RecoveryEntry } from '../recovery';
 import type { Lang } from '../schema/lesson';
@@ -38,29 +39,32 @@ export function RecoveryList({
   };
   return (
     <section className="recovery" aria-labelledby="recovery-heading">
-      <h2 id="recovery-heading">Copies de secours locales (non enregistrées)</h2>
-      <p className="hint">Ces modifications n’ont jamais été enregistrées sur le serveur. Elles ne sont conservées que dans ce navigateur (14 jours au plus, effacées à la déconnexion), pour éviter de les perdre.</p>
+      <h2 id="recovery-heading">{t('lessons.recovery.title')}</h2>
+      <p className="hint">{t('lessons.recovery.hint')}</p>
       {note && <p>{note}</p>}
       <ul>
         {entries.map((e) => (
           <li key={e.key}>
             <p>
-              Copie du {formatDateTime(e.savedAt)}
+              {t('lessons.recovery.copyOf', { date: formatDateTime(e.savedAt) })}
               {e.revisionId !== null && e.revisionId !== currentRevisionId
-                ? `, faite sur ${e.revisionNumber ? `la révision ${e.revisionNumber}` : 'une autre révision'} (version ${e.baseVersion})`
+                ? e.revisionNumber
+                  ? t('lessons.recovery.onRevision', { number: e.revisionNumber, version: String(e.baseVersion) })
+                  : t('lessons.recovery.onOtherRevision', { version: String(e.baseVersion) })
                 : e.baseVersion !== null
-                  ? `, faite à partir de la version ${e.baseVersion}`
+                  ? t('lessons.recovery.fromVersion', { version: e.baseVersion })
                   : ''}
-              {e.reason === 'conflict' ? ' (gardée lors d’un conflit)' : ''} : « {e.data.title || 'sans titre'} »
+              {e.reason === 'conflict' ? t('lessons.recovery.keptInConflict') : ''}
+              {t('lessons.recovery.titled', { title: e.data.title || t('lessons.untitled') })}
             </p>
             <div className="actions">
               {onRestore && (
                 <button type="button" onClick={() => onRestore(e)}>
-                  Restaurer dans l’éditeur
+                  {t('lessons.recovery.restore')}
                 </button>
               )}
               <button type="button" onClick={() => void copy(e)}>
-                Copier
+                {t('lessons.recovery.copy')}
               </button>
               <button
                 type="button"
@@ -69,21 +73,21 @@ export function RecoveryList({
                   onChanged();
                 }}
               >
-                Supprimer cette copie
+                {t('lessons.recovery.delete')}
               </button>
             </div>
-            {copied === e.key && <p role="status">Copie placée dans le presse-papiers.</p>}
+            {copied === e.key && <p role="status">{t('lessons.recovery.copied')}</p>}
           </li>
         ))}
       </ul>
       {fallback !== null && (
         <div className="copy-fallback">
           <p className="hint" id="recovery-copy-hint">
-            Le navigateur refuse l’accès au presse-papiers. Sélectionnez le texte ci-dessous puis copiez-le.
+            {t('lessons.clipboardRefused')}
           </p>
-          <textarea readOnly dir="ltr" rows={8} value={fallback} aria-describedby="recovery-copy-hint" aria-label="Texte de la copie de secours" onFocus={(ev) => ev.currentTarget.select()} />
+          <textarea readOnly dir="ltr" rows={8} value={fallback} aria-describedby="recovery-copy-hint" aria-label={t('lessons.recovery.textLabel')} onFocus={(ev) => ev.currentTarget.select()} />
           <button type="button" onClick={() => setFallback(null)}>
-            Fermer
+            {t('lessons.close')}
           </button>
         </div>
       )}

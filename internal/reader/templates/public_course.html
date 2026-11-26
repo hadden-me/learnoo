@@ -1,14 +1,14 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span aria-current="page">Cours</span></nav>
-<article class="course-overview" aria-labelledby="course-title"><p class="eyebrow">Cours · {{template "catname" .SubjectLabel}}</p>
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="{{t "breadcrumb"}}"><a href="{{href "/"}}">{{t "nav.publicHome"}}</a> › <a href="{{href "/catalogue"}}">{{t "nav.catalogue"}}</a> › <span aria-current="page">{{t "kind.course"}}</span></nav>
+<article class="course-overview" aria-labelledby="course-title"><p class="eyebrow">{{t "kind.course"}} · {{template "catname" (.SubjectLabel ui)}}</p>
 <h1 id="course-title" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</h1>
 {{if .HasCover}}<figure class="course-cover"><img src="{{.CoverURL}}" alt="{{.CoverAlt}}" lang="{{.Language}}" dir="{{dir .Language}}"></figure>{{end}}
 {{with .Summary}}<p class="lead multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p>{{end}}
-<p class="credit">Conçu par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Structure relue et approuvée par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}. Chaque leçon du cours a été relue séparément.</p>
-<dl class="course-facts"><div><dt>Langue</dt><dd>{{.LanguageName}}</dd></div><div><dt>Matière</dt><dd>{{template "catname" .SubjectLabel}}</dd></div>
-{{range .Placements}}<div><dt>Programme</dt><dd><a href="/catalogue/{{.LevelCode}}/{{.SectionCode}}/{{$.Data.SubjectCode}}{{if not .Current}}?edition={{.EditionCode}}{{end}}">{{.LevelName}} › {{.SectionName}}</a> · {{.EditionLabel}} ({{.StateLabel}})</dd></div>{{end}}</dl>
-<p class="actions"><a class="action primary" href="{{.SignIn}}">Se connecter pour lire le cours</a></p>
-<p class="hint">La lecture des leçons est réservée aux comptes du pilote, créés sur invitation.</p>
-{{with .Objectives}}<section aria-labelledby="objectives-heading"><h2 id="objectives-heading">Objectifs</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
-{{with .Prerequisites}}<section aria-labelledby="prerequisites-heading"><h2 id="prerequisites-heading">Prérequis</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
-<section aria-labelledby="outline-heading"><h2 id="outline-heading">Plan du cours</h2>
-<ol class="outline">{{range .Modules}}<li><h3 lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</h3>{{with .Steps}}<ol class="outline-steps">{{range .}}<li><span lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="unavailable">Leçon temporairement indisponible</span>{{end}}</li>{{end}}</ol>{{end}}</li>{{end}}</ol></section></article>{{end}}{{end}}
+<p class="credit">{{t "pub.course.by" (bdi .AuthorName "author")}}{{if .ReviewerName}} · {{t "pub.course.structureBy" (bdi .ReviewerName "reviewer")}}{{end}}. {{t "pub.course.eachLesson"}}</p>
+<dl class="course-facts"><div><dt>{{t "pub.course.language"}}</dt><dd>{{t .LanguageKey}}</dd></div><div><dt>{{t "pub.course.subject"}}</dt><dd>{{template "catname" (.SubjectLabel ui)}}</dd></div>
+{{range .Placements}}<div><dt>{{t "pub.course.curriculum"}}</dt><dd><a href="{{href "/catalogue/" .LevelCode "/" .SectionCode "/" $.Data.SubjectCode (.EditionQuery)}}">{{pick .LevelName .LevelNameAr}} › {{pick .SectionName .SectionNameAr}}</a> · {{pick .EditionLabel .EditionLabelAr}} ({{t .StateKey}})</dd></div>{{end}}</dl>
+<p class="actions"><a class="action primary" href="{{href .SignIn}}">{{t "pub.course.signIn"}}</a></p>
+<p class="hint">{{t "pub.course.signInHint"}}</p>
+{{with .Objectives}}<section aria-labelledby="objectives-heading"><h2 id="objectives-heading">{{t "course.objectives"}}</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
+{{with .Prerequisites}}<section aria-labelledby="prerequisites-heading"><h2 id="prerequisites-heading">{{t "course.prerequisites"}}</h2><p class="multiline" lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.}}</p></section>{{end}}
+<section aria-labelledby="outline-heading"><h2 id="outline-heading">{{t "course.outline"}}</h2>
+<ol class="outline">{{range .Modules}}<li><h3 lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</h3>{{with .Steps}}<ol class="outline-steps">{{range .}}<li><span lang="{{$.Data.Language}}" dir="{{dir $.Data.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="unavailable">{{t "pub.course.stepUnavailable"}}</span>{{end}}</li>{{end}}</ol>{{end}}</li>{{end}}</ol></section></article>{{end}}{{end}}

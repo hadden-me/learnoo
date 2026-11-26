@@ -16,6 +16,7 @@ import { fold } from '../courses/outline';
 import { adminCourseActions, describeBlocked, lifecycleLabel, pointerLabel } from '../courses/workflow';
 import { COURSE_STATUS_LABELS } from '../courses/courseLabels';
 import { paths } from '../editorialRoutes';
+import { t, tn } from '../i18n';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
@@ -60,20 +61,20 @@ export function AdminCoursesPage() {
   return (
     <main className="page" id="main">
       <AdminNav />
-      <h1 tabIndex={-1}>Administration des cours</h1>
-      <p className="hint">Suspension, archivage, restauration, retrait d’une version, suppression d’un brouillon et transfert de propriété. Chaque action est enregistrée avec son motif. Aucune action n’approuve un cours à la place d’un relecteur.</p>
+      <h1 tabIndex={-1}>{t('admin.courses.title')}</h1>
+      <p className="hint">{t('admin.courses.intro')}</p>
 
       <section aria-labelledby="blocked-reviews-heading">
-        <h2 id="blocked-reviews-heading">Relectures bloquées</h2>
-        {blocked.state === 'loading' && <p role="status">Chargement…</p>}
+        <h2 id="blocked-reviews-heading">{t('admin.courses.blocked')}</h2>
+        {blocked.state === 'loading' && <p role="status">{t('shell.loadingPage')}</p>}
         {blocked.state === 'error' && (
           <p className="banner error" role="alert">
             {blocked.message}
           </p>
         )}
-        {blocked.state === 'ready' && blocked.data.revisions.length === 0 && <p>Aucune version de cours en relecture n’est bloquée.</p>}
+        {blocked.state === 'ready' && blocked.data.revisions.length === 0 && <p>{t('admin.courses.noBlocked')}</p>}
         {blocked.state === 'ready' && blocked.data.revisions.length > 0 && (
-          <ul className="lesson-list" aria-label="Versions de cours sans relecteur éligible">
+          <ul className="lesson-list" aria-label={t('admin.courses.blockedList')}>
             {blocked.data.revisions.map((item) => {
               const b = item.blocked ? describeBlocked(item.blocked) : null;
               return (
@@ -82,10 +83,11 @@ export function AdminCoursesPage() {
                     <Link to={paths.adminCourse(item.courseId)}>{courseTitle(item.title, item.courseId)}</Link>
                   </h3>
                   <p className="lesson-meta">
-                    <span className="state state-changes">Bloqué : aucun relecteur éligible</span>
+                    <span className="state state-changes">{t('admin.courses.blockedTag')}</span>
                   </p>
                   <p className="lesson-context">
-                    Version {item.number} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)}
+                    {t('admin.course.version', { number: item.number })} · {t('admin.course.by', { name: item.authorName })} ·{' '}
+                    {t('admin.course.submittedOn', { date: formatDateTime(item.submittedAt) })}
                   </p>
                   {b && (
                     <div className="lesson-context">
@@ -107,23 +109,23 @@ export function AdminCoursesPage() {
       </section>
 
       <section aria-labelledby="archive-requests-heading">
-        <h2 id="archive-requests-heading">Demandes d’archivage</h2>
-        {requests.state === 'loading' && <p role="status">Chargement…</p>}
+        <h2 id="archive-requests-heading">{t('admin.courses.archiveRequests')}</h2>
+        {requests.state === 'loading' && <p role="status">{t('shell.loadingPage')}</p>}
         {requests.state === 'error' && (
           <p className="banner error" role="alert">
             {requests.message}
           </p>
         )}
-        {requests.state === 'ready' && requests.data.length === 0 && <p>Aucune demande d’archivage.</p>}
+        {requests.state === 'ready' && requests.data.length === 0 && <p>{t('admin.courses.noArchiveRequest')}</p>}
         {requests.state === 'ready' && requests.data.length > 0 && (
-          <ul className="lesson-list" aria-label="Demandes d’archivage">
+          <ul className="lesson-list" aria-label={t('admin.courses.archiveRequests')}>
             {requests.data.map((r) => (
               <li key={r.id} className="lesson-card">
                 <h3>
                   <Link to={paths.adminCourse(r.courseId)}>{courseTitle(r.title, r.courseId)}</Link>
                 </h3>
-                <p className="lesson-meta">{r.archived ? <span className="state">Déjà archivé</span> : <span className="state state-review">À traiter</span>}</p>
-                <p className="lesson-context">Demandée le {formatDateTime(r.occurredAt)} :</p>
+                <p className="lesson-meta">{r.archived ? <span className="state">{t('admin.courses.alreadyArchived')}</span> : <span className="state state-review">{t('admin.courses.toHandle')}</span>}</p>
+                <p className="lesson-context">{t('admin.courses.requestedOn', { date: formatDateTime(r.occurredAt) })}</p>
                 <Quote>{r.reason}</Quote>
               </li>
             ))}
@@ -132,19 +134,19 @@ export function AdminCoursesPage() {
       </section>
 
       <section aria-labelledby="all-courses-heading">
-        <h2 id="all-courses-heading">Tous les cours</h2>
+        <h2 id="all-courses-heading">{t('admin.courses.all')}</h2>
         {listError && (
           <div className="banner error" role="alert">
             <p>{listError}</p>
             <button type="button" onClick={() => void load(null)}>
-              Réessayer
+              {t('shell.retry')}
             </button>
           </div>
         )}
-        {list === null && !listError && <p role="status">Chargement des cours…</p>}
-        {list !== null && list.length === 0 && <p>Aucun cours.</p>}
+        {list === null && !listError && <p role="status">{t('admin.courses.loading')}</p>}
+        {list !== null && list.length === 0 && <p>{t('admin.courses.empty')}</p>}
         {list !== null && list.length > 0 && (
-          <ul className="lesson-list" aria-label="Tous les cours">
+          <ul className="lesson-list" aria-label={t('admin.courses.all')}>
             {list.map((c) => (
               <li key={c.id} className="lesson-card">
                 <h3 lang={c.language} dir={dirOf(c.language)}>
@@ -152,10 +154,10 @@ export function AdminCoursesPage() {
                 </h3>
                 <p className="lesson-meta">
                   <CourseStateTag course={c} />
-                  {c.publishedRevisionId !== null && <span className="state state-published">Lisible par les élèves</span>}
+                  {c.publishedRevisionId !== null && <span className="state state-published">{t('admin.courses.readable')}</span>}
                 </p>
                 <p className="lesson-context">
-                  {LANGUAGE_LABELS[c.language]} · propriétaire : {c.ownerName}
+                  {LANGUAGE_LABELS[c.language]} · {t('admin.courses.owner', { name: c.ownerName })}
                 </p>
               </li>
             ))}
@@ -163,7 +165,7 @@ export function AdminCoursesPage() {
         )}
         {next && (
           <button type="button" onClick={() => void load(next)} disabled={loadingMore}>
-            Afficher plus de cours
+            {t('admin.courses.more')}
           </button>
         )}
       </section>
@@ -179,30 +181,30 @@ interface Pending {
 }
 
 const ACTION_TITLES: Record<ActionKind, string> = {
-  suspend: 'Suspendre le cours',
-  restore: 'Restaurer une version',
-  archive: 'Archiver le cours',
-  unarchive: 'Désarchiver le cours',
-  withdraw: 'Retirer une version',
-  discard: 'Supprimer le brouillon',
-  transfer: 'Transférer le cours',
+  suspend: t('admin.course.title.suspend'),
+  restore: t('admin.course.title.restore'),
+  archive: t('admin.course.title.archive'),
+  unarchive: t('admin.course.title.unarchive'),
+  withdraw: t('admin.course.title.withdraw'),
+  discard: t('admin.course.title.discard'),
+  transfer: t('admin.course.title.transfer'),
 };
 
 const ACTION_EFFECTS: Record<ActionKind, string> = {
-  suspend: 'Le cours disparaît immédiatement du catalogue et de la lecture. Son historique et les favoris sont conservés. Pour lever la suspension, restaurez une version publiée auparavant : chaque leçon est alors vérifiée de nouveau.',
-  restore: 'Cette version redevient celle que lisent les élèves, si toutes ses leçons sont encore publiables ; sinon le serveur refuse et rien ne change.',
-  archive: 'Le cours est retiré du catalogue et de la lecture ; son historique est conservé. Le désarchivage ne le republiera pas automatiquement.',
-  unarchive: 'Le cours n’est plus archivé, mais il reste illisible : il faudra une restauration ou une nouvelle publication.',
-  withdraw: 'Cette version ne pourra plus jamais être relue, publiée ni restaurée. Le cours peut alors recevoir une nouvelle version.',
-  discard: 'Le brouillon ouvert est supprimé définitivement, sans toucher aux leçons ni aux versions soumises. À utiliser quand le propriétaire ne peut pas le faire.',
-  transfer: 'Le nouveau propriétaire rédigera les prochaines versions. L’historique garde ses auteurs ; les leçons de l’ancien propriétaire ne deviennent pas modifiables par le nouveau.',
+  suspend: t('admin.course.effect.suspend'),
+  restore: t('admin.course.effect.restore'),
+  archive: t('admin.course.effect.archive'),
+  unarchive: t('admin.course.effect.unarchive'),
+  withdraw: t('admin.course.effect.withdraw'),
+  discard: t('admin.course.effect.discard'),
+  transfer: t('admin.course.effect.transfer'),
 };
 
 function revisionState(d: AdminCourseDetail, r: AdminCourseRevision): string {
-  if (r.withdrawnAt) return 'Retirée';
-  if (d.course.publishedRevisionId === r.id) return 'Publiée (lue par les élèves)';
-  if (r.status === 'approved' && r.everPublished) return 'Approuvée, publiée auparavant';
-  if (r.status === 'approved') return 'Approuvée, en attente de publication';
+  if (r.withdrawnAt) return t('admin.course.state.withdrawn');
+  if (d.course.publishedRevisionId === r.id) return t('admin.course.state.published');
+  if (r.status === 'approved' && r.everPublished) return t('admin.course.state.publishedBefore');
+  if (r.status === 'approved') return t('shell.state.awaitingPublication');
   return COURSE_STATUS_LABELS[r.status];
 }
 
@@ -241,14 +243,20 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
     if (done || error) resultRef.current?.focus();
   }, [done, error]);
 
-  if (loaded.state === 'loading') return <LoadingPage label="Chargement du cours…" />;
+  if (loaded.state === 'loading') return <LoadingPage label={t('admin.course.loading')} />;
   if (loaded.state === 'error')
-    return <ErrorPage title="Cours introuvable" message={loaded.notFound ? 'Aucun cours ne correspond à ce numéro.' : loaded.message} back={{ to: paths.adminCourses, label: 'Revenir à l’administration des cours' }} />;
+    return (
+      <ErrorPage
+        title={t('admin.course.notFoundTitle')}
+        message={loaded.notFound ? t('admin.course.notFound') : loaded.message}
+        back={{ to: paths.adminCourses, label: t('admin.courses.backTo') }}
+      />
+    );
   const { detail, newer, newerFailed } = loaded.data;
   const c = detail.course;
   const actions = adminCourseActions(detail);
   const byId = new Map(detail.revisions.map((r) => [r.id, r]));
-  const numberOf = (id: number | null) => (id === null ? '—' : byId.has(id) ? `version ${byId.get(id)!.number}` : `version n° ${id}`);
+  const numberOf = (id: number | null) => (id === null ? '—' : byId.has(id) ? t('admin.course.versionRef', { number: byId.get(id)!.number }) : t('admin.course.versionId', { id }));
   const needsReason = (k: ActionKind) => k !== 'restore';
   const q = fold(authorQuery.trim());
   const matchingAuthors = detail.authors.filter((a) => q === '' || fold(a.displayName).includes(q) || String(a.id) === target);
@@ -268,11 +276,11 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
     if (!pending) return;
     let ok = true;
     if (pending.kind === 'transfer' && !target) {
-      setTargetError('Choisissez le nouveau propriétaire.');
+      setTargetError(t('admin.course.chooseOwner'));
       ok = false;
     }
     if (needsReason(pending.kind) && !reason.trim()) {
-      setReasonError('Indiquez un motif : il est obligatoire et sera conservé dans l’historique.');
+      setReasonError(t('admin.reasonRequired'));
       reasonRef.current?.focus();
       ok = false;
     }
@@ -289,32 +297,32 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       switch (pending.kind) {
         case 'suspend':
           await cr.suspend(c.id, text, expected);
-          message = 'Cours suspendu : il n’est plus lisible par les élèves.';
+          message = t('admin.course.suspended');
           break;
         case 'restore':
           await cr.restore(c.id, pending.revision!.id, expected);
-          message = `Version ${pending.revision!.number} restaurée : les élèves la lisent de nouveau.`;
+          message = t('admin.course.restored', { number: pending.revision!.number });
           break;
         case 'archive':
           await cr.archive(c.id, text, expected);
-          message = 'Cours archivé.';
+          message = t('admin.course.archived');
           break;
         case 'unarchive':
           await cr.unarchive(c.id, text);
-          message = 'Cours désarchivé. Il reste illisible jusqu’à une restauration ou une nouvelle publication.';
+          message = t('admin.course.unarchived');
           break;
         case 'withdraw':
           await cr.withdraw(pending.revision!.id, text);
-          message = `Version ${pending.revision!.number} retirée.`;
+          message = t('admin.course.withdrawn', { number: pending.revision!.number });
           break;
         case 'discard':
           await cr.discardDraft(pending.revision!.id, text);
-          message = `Brouillon (version ${pending.revision!.number}) supprimé.`;
+          message = t('admin.course.discarded', { number: pending.revision!.number });
           break;
         case 'transfer': {
           const to = detail.authors.find((a) => a.id === Number(target));
           await cr.transfer(c.id, Number(target), text);
-          message = `Cours transféré à ${to?.displayName ?? `compte n° ${target}`}.`;
+          message = t('admin.course.transferred', { name: to?.displayName ?? t('admin.course.accountId', { id: target }) });
           break;
         }
       }
@@ -324,7 +332,13 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       await reload();
     } catch (e) {
       setConfirming(false);
-      setError({ text: describeCourseWorkflowError(e), stale: isApiError(e, 'stale_pointer') });
+      setError({
+        text:
+          pending.kind === 'transfer' && isApiError(e, 'active_candidate_exists')
+            ? t('admin.course.transferRefusedOpen')
+            : describeCourseWorkflowError(e),
+        stale: isApiError(e, 'stale_pointer') || isApiError(e, 'active_candidate_exists'),
+      });
     } finally {
       setBusy(false);
     }
@@ -334,29 +348,33 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
     <div className="actions">
       {actions.restore.includes(r) && (
         <button type="button" onClick={() => open({ kind: 'restore', revision: r })}>
-          Restaurer la version {r.number}…
+          {t('admin.course.restoreVersion', { number: r.number })}
         </button>
       )}
       {actions.withdraw.includes(r) && (
         <button type="button" className="danger" onClick={() => open({ kind: 'withdraw', revision: r })}>
-          Retirer la version {r.number}…
+          {t('admin.course.withdrawVersion', { number: r.number })}
         </button>
       )}
       {actions.discard.includes(r) && (
         <button type="button" className="danger" onClick={() => open({ kind: 'discard', revision: r })}>
-          Supprimer le brouillon {r.number}…
+          {t('admin.course.discardDraft', { number: r.number })}
         </button>
       )}
     </div>
   );
 
-  const pendingTitle = pending ? `${ACTION_TITLES[pending.kind]}${pending.revision ? ` (version ${pending.revision.number})` : ''}` : '';
+  const pendingTitle = pending
+    ? pending.revision
+      ? t('admin.course.titleWithVersion', { title: ACTION_TITLES[pending.kind], number: pending.revision.number })
+      : ACTION_TITLES[pending.kind]
+    : '';
 
   return (
     <main className="page" id="main">
       <AdminNav />
       <p className="breadcrumb">
-        <Link to={paths.adminCourses}>Administration des cours</Link>
+        <Link to={paths.adminCourses}>{t('admin.courses.title')}</Link>
       </p>
       <h1 tabIndex={-1} lang={c.language} dir={dirOf(c.language)}>
         {courseTitle(c.title, c.id)}
@@ -366,19 +384,19 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       </p>
       <dl className="facts">
         <div>
-          <dt>Propriétaire</dt>
+          <dt>{t('admin.course.owner')}</dt>
           <dd>{c.ownerName}</dd>
         </div>
         <div>
-          <dt>Langue</dt>
+          <dt>{t('admin.course.language')}</dt>
           <dd>{LANGUAGE_LABELS[c.language]}</dd>
         </div>
         <div>
-          <dt>Version lue par les élèves</dt>
-          <dd>{c.publishedRevisionId === null ? 'aucune' : numberOf(c.publishedRevisionId)}</dd>
+          <dt>{t('admin.course.readVersion')}</dt>
+          <dd>{c.publishedRevisionId === null ? t('admin.course.none') : numberOf(c.publishedRevisionId)}</dd>
         </div>
         <div>
-          <dt>État chargé à</dt>
+          <dt>{t('admin.course.loadedAt')}</dt>
           <dd>{formatDateTime(loadedAt.toISOString())}</dd>
         </div>
       </dl>
@@ -394,7 +412,7 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
             <p>{error.text}</p>
             {error.stale && (
               <button type="button" onClick={() => { setError(null); void reload(); }}>
-                Recharger l’état actuel
+                {t('admin.reloadState')}
               </button>
             )}
           </div>
@@ -403,51 +421,51 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
 
       {newerFailed && (
         <div className="banner error" role="alert">
-          <p>Impossible de vérifier si des leçons du cours ont des révisions plus récentes.</p>
+          <p>{t('admin.course.newerFailed')}</p>
           <button type="button" onClick={() => void reload()}>
-            Réessayer
+            {t('shell.retry')}
           </button>
         </div>
       )}
       {newer && newer.steps.length > 0 && (
         <section className="status-card warning" aria-labelledby="newer-heading">
-          <h2 id="newer-heading">Des leçons du cours publié ont une révision plus récente</h2>
+          <h2 id="newer-heading">{t('admin.course.newerTitle')}</h2>
           <ul>
             {newer.steps.map((s) => (
               <li key={s.lessonId}>
-                « {s.title} » : révision {s.pinnedNumber} épinglée, révision {s.newerNumber} disponible
+                {t('admin.course.newerStep', { title: s.title, pinned: s.pinnedNumber, newer: s.newerNumber })}
               </li>
             ))}
           </ul>
-          <p>Seul le propriétaire peut créer l’amendement qui les remplace ; il sera relu comme toute version.</p>
+          <p>{t('admin.course.newerOwner')}</p>
         </section>
       )}
 
       <section className="status-card safeguard" aria-labelledby="course-actions-heading">
-        <h2 id="course-actions-heading">Actions sur le cours</h2>
+        <h2 id="course-actions-heading">{t('admin.course.actions')}</h2>
         <div className="actions">
           {actions.suspend && (
             <button type="button" className="danger" onClick={() => open({ kind: 'suspend' })}>
-              Suspendre le cours…
+              {t('admin.course.suspend')}
             </button>
           )}
           {actions.archive && (
             <button type="button" className="danger" onClick={() => open({ kind: 'archive' })}>
-              Archiver le cours…
+              {t('admin.course.archive')}
             </button>
           )}
           {actions.unarchive && (
             <button type="button" onClick={() => open({ kind: 'unarchive' })}>
-              Désarchiver le cours…
+              {t('admin.course.unarchive')}
             </button>
           )}
           <button type="button" onClick={() => open({ kind: 'transfer' })} disabled={!actions.transfer} aria-describedby={actions.transfer ? undefined : `${formId}-transfer`}>
-            Transférer le cours…
+            {t('admin.course.transfer')}
           </button>
         </div>
         {!actions.transfer && (
           <p className="hint" id={`${formId}-transfer`}>
-            Transfert impossible tant qu’une version est en cours (brouillon, en relecture ou approuvée non publiée) : supprimez le brouillon ou retirez la version d’abord.
+            {t('admin.course.transferBlocked')}
           </p>
         )}
         {pending && (
@@ -464,13 +482,13 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
             <p>{ACTION_EFFECTS[pending.kind]}</p>
             {pending.kind === 'transfer' && (
               <div className="fields">
-                <label htmlFor={`${formId}-search`}>Rechercher un auteur</label>
+                <label htmlFor={`${formId}-search`}>{t('admin.course.searchAuthor')}</label>
                 <input id={`${formId}-search`} type="search" value={authorQuery} onChange={(e) => setAuthorQuery(e.target.value)} aria-describedby={`${formId}-count`} />
                 <p className="hint" id={`${formId}-count`} role="status">
-                  {matchingAuthors.length} auteur{matchingAuthors.length > 1 ? 's' : ''} actif{matchingAuthors.length > 1 ? 's' : ''}
-                  {detail.authors.length >= 200 ? ' (200 premiers par nom : précisez la recherche)' : ''}
+                  {tn('admin.course.activeAuthors', matchingAuthors.length)}
+                  {detail.authors.length >= 200 ? ` ${t('admin.course.first200')}` : ''}
                 </p>
-                <label htmlFor={`${formId}-target`}>Nouveau propriétaire</label>
+                <label htmlFor={`${formId}-target`}>{t('admin.course.newOwner')}</label>
                 {targetError && (
                   <p className="field-error" id={`${formId}-target-error`}>
                     {targetError}
@@ -486,7 +504,7 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
                     setTargetError(null);
                   }}
                 >
-                  <option value="">Choisir un auteur…</option>
+                  <option value="">{t('admin.course.chooseAuthor')}</option>
                   {matchingAuthors.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.displayName}
@@ -498,8 +516,8 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
             {needsReason(pending.kind) && (
               <NoteField
                 id={`${formId}-reason`}
-                label="Motif"
-                hint="Obligatoire, conservé dans l’historique (2 000 caractères au maximum)."
+                label={t('admin.course.reason')}
+                hint={t('admin.course.reasonHint')}
                 value={reason}
                 onChange={(v) => {
                   setReason(v);
@@ -511,10 +529,10 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
             )}
             <div className="actions">
               <button type="submit" className={pending.kind === 'restore' || pending.kind === 'unarchive' ? 'primary' : 'danger'}>
-                Continuer…
+                {t('admin.course.continue')}
               </button>
               <button type="button" onClick={() => setPending(null)}>
-                Annuler
+                {t('shell.cancel')}
               </button>
             </div>
           </form>
@@ -522,24 +540,24 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       </section>
 
       <section className="panel" aria-labelledby="revisions-heading">
-        <h2 id="revisions-heading">Versions du cours</h2>
+        <h2 id="revisions-heading">{t('admin.course.versions')}</h2>
         {detail.revisions.length === 0 ? (
-          <p>Aucune version.</p>
+          <p>{t('admin.course.noVersion')}</p>
         ) : (
-          <ul className="lesson-list" aria-label="Versions du cours">
+          <ul className="lesson-list" aria-label={t('admin.course.versions')}>
             {detail.revisions.map((r) => (
               <li key={r.id} className="lesson-card">
                 <h3>
-                  Version {r.number} · {revisionState(detail, r)}
+                  {t('admin.course.version', { number: r.number })} · {revisionState(detail, r)}
                 </h3>
                 <p className="lesson-context">
-                  {r.kind === 'amendment' ? 'Amendement' : 'Version ordinaire'} · par {r.authorName}
-                  {r.submittedAt && ` · soumise le ${formatDateTime(r.submittedAt)}`}
-                  {r.review && ` · ${r.review.action === 'approve' ? 'approuvée' : 'modifications demandées'} par ${r.review.reviewerName}`}
+                  {r.kind === 'amendment' ? t('admin.course.amendment') : t('admin.course.ordinary')} · {t('admin.course.by', { name: r.authorName })}
+                  {r.submittedAt && ` · ${t('admin.course.submittedOn', { date: formatDateTime(r.submittedAt) })}`}
+                  {r.review && ` · ${t(r.review.action === 'approve' ? 'admin.course.approvedBy' : 'admin.course.changesBy', { name: r.review.reviewerName })}`}
                 </p>
                 {(r.status === 'in_review' || r.status === 'approved') && r.withdrawnAt === null && (
                   <p className="lesson-context">
-                    <Link to={paths.reviewCourse(r.id)}>Lire cette version</Link>
+                    <Link to={paths.reviewCourse(r.id)}>{t('admin.course.read')}</Link>
                   </p>
                 )}
                 {revisionButtons(r)}
@@ -550,13 +568,13 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       </section>
 
       <section className="panel" aria-labelledby="history-heading">
-        <h2 id="history-heading">Historique</h2>
+        <h2 id="history-heading">{t('admin.history')}</h2>
         {detail.history.length === 0 && detail.lifecycle.length === 0 ? (
-          <p>Aucun évènement de publication ni de cycle de vie.</p>
+          <p>{t('admin.course.noHistory')}</p>
         ) : (
-          <ul className="history" aria-label="Historique du cours">
+          <ul className="history" aria-label={t('admin.course.historyList')}>
             {[
-              ...detail.history.map((e, i) => ({ at: e.occurredAt, key: `p-${i}`, label: `${pointerLabel(e.action)}${e.publishedRevisionId !== null ? ` de la ${numberOf(e.publishedRevisionId)}` : ''}`, actor: e.actorName, reason: e.reason })),
+              ...detail.history.map((e, i) => ({ at: e.occurredAt, key: `p-${i}`, label: e.publishedRevisionId !== null ? t('admin.course.pointerOf', { action: pointerLabel(e.action), version: numberOf(e.publishedRevisionId) }) : pointerLabel(e.action), actor: e.actorName, reason: e.reason })),
               ...detail.lifecycle.map((e) => ({ at: e.occurredAt, key: `l-${e.id}`, label: lifecycleLabel(e.action), actor: e.actorName, reason: e.reason })),
             ]
               .sort((a, b) => b.at.localeCompare(a.at))
@@ -574,15 +592,15 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
 
       {confirming && pending && (
         <Dialog
-          title={`${pendingTitle} ?`}
+          title={t('admin.course.confirmTitle', { title: pendingTitle })}
           onCancel={() => setConfirming(false)}
-          cancelLabel="Ne rien faire"
+          cancelLabel={t('admin.course.doNothing')}
           actions={[{ label: ACTION_TITLES[pending.kind], kind: pending.kind === 'restore' || pending.kind === 'unarchive' ? 'primary' : 'danger', disabled: busy, onClick: () => void run() }]}
         >
           <p>{ACTION_EFFECTS[pending.kind]}</p>
           {needsReason(pending.kind) && (
             <>
-              <p>Motif :</p>
+              <p>{t('admin.reasonColon')}</p>
               <Quote>{reason.trim()}</Quote>
             </>
           )}

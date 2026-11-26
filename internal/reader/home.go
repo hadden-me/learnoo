@@ -30,7 +30,9 @@ type Preference struct {
 	LevelID   int64
 	SectionID int64 // 0: every section of the level
 	Level     string
+	LevelAr   string
 	Section   string
+	SectionAr string
 }
 
 // Set reports whether a preference is stored and still usable.
@@ -38,14 +40,16 @@ func (p Preference) Set() bool { return p.LevelID != 0 }
 
 // SectionOption is a selectable section of a level.
 type SectionOption struct {
-	ID   int64
-	Name string
+	ID     int64
+	Name   string
+	NameAr string
 }
 
 // LevelOption is a selectable level with its selectable sections.
 type LevelOption struct {
 	ID       int64
 	Name     string
+	NameAr   string
 	Sections []SectionOption
 }
 
@@ -63,13 +67,13 @@ type RecentItem struct {
 func (s *Store) Preference(ctx context.Context, userID int64) (Preference, error) {
 	var p Preference
 	var sec *int64
-	var secName *string
+	var secName, secNameAr *string
 	err := s.db.QueryRow(ctx, `
-		SELECT lv.id, lv.name_fr, sec.id, sec.name_fr
+		SELECT lv.id, lv.name_fr, lv.name_ar, sec.id, sec.name_fr, sec.name_ar
 		  FROM student_preferences sp
 		  JOIN education_levels lv ON lv.id = sp.level_id AND lv.retired_at IS NULL
 		  LEFT JOIN academic_sections sec ON sec.id = sp.section_id
-		 WHERE sp.user_id = $1 AND (sp.section_id IS NULL OR sec.retired_at IS NULL)`, userID).Scan(&p.LevelID, &p.Level, &sec, &secName)
+		 WHERE sp.user_id = $1 AND (sp.section_id IS NULL OR sec.retired_at IS NULL)`, userID).Scan(&p.LevelID, &p.Level, &p.LevelAr, &sec, &secName, &secNameAr)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Preference{}, nil
 	}
@@ -77,7 +81,7 @@ func (s *Store) Preference(ctx context.Context, userID int64) (Preference, error
 		return Preference{}, fmt.Errorf("load preference: %w", err)
 	}
 	if sec != nil {
-		p.SectionID, p.Section = *sec, *secName
+		p.SectionID, p.Section, p.SectionAr = *sec, *secName, *secNameAr
 	}
 	return p, nil
 }
@@ -86,7 +90,7 @@ func (s *Store) Preference(ctx context.Context, userID int64) (Preference, error
 // retired, in the catalogue's display order.
 func (s *Store) LevelOptions(ctx context.Context) ([]LevelOption, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT lv.id, lv.name_fr, sec.id, sec.name_fr
+		SELECT lv.id, lv.name_fr, lv.name_ar, sec.id, sec.name_fr, sec.name_ar
 		  FROM education_levels lv
 		  LEFT JOIN academic_sections sec ON sec.level_id = lv.id AND sec.retired_at IS NULL
 		 WHERE lv.retired_at IS NULL
@@ -99,18 +103,18 @@ func (s *Store) LevelOptions(ctx context.Context) ([]LevelOption, error) {
 	var out []LevelOption
 	for rows.Next() {
 		var id int64
-		var name string
+		var name, nameAr string
 		var secID *int64
-		var secName *string
-		if err := rows.Scan(&id, &name, &secID, &secName); err != nil {
+		var secName, secNameAr *string
+		if err := rows.Scan(&id, &name, &nameAr, &secID, &secName, &secNameAr); err != nil {
 			return nil, fmt.Errorf("level options: %w", err)
 		}
 		if n := len(out); n == 0 || out[n-1].ID != id {
-			out = append(out, LevelOption{ID: id, Name: name})
+			out = append(out, LevelOption{ID: id, Name: name, NameAr: nameAr})
 		}
 		if secID != nil {
 			l := &out[len(out)-1]
-			l.Sections = append(l.Sections, SectionOption{ID: *secID, Name: *secName})
+			l.Sections = append(l.Sections, SectionOption{ID: *secID, Name: *secName, NameAr: *secNameAr})
 		}
 	}
 	return out, rows.Err()

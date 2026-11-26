@@ -2,6 +2,7 @@
 // schema cannot hold, and summarised so the author sees what was removed.
 // Supported text is never removed: unsupported formatting is unwrapped, not deleted.
 import { ALLOWED_IMAGES, MEDIA_REF } from './lesson';
+import { t, tn } from '../i18n';
 
 export interface PasteReport {
   /** Elements removed with their content (scripts, embeds, external images…). */
@@ -27,7 +28,7 @@ export function sanitizePastedHTML(html: string): { html: string; report: PasteR
     } else if (tag === 'img' && !(ALLOWED_IMAGES as readonly string[]).includes(el.getAttribute('src') ?? '') && !MEDIA_REF.test(el.closest('figure[data-type="image"]')?.getAttribute('data-src') ?? '')) {
       // Kept: allowlisted assets and the editor's own uploaded-image figures (copied within the Studio),
       // which name their "media:<id>" reference; the server checks the author may use that ID.
-      report.removed.push('image externe');
+      report.removed.push(t('lessons.paste.externalImage'));
       el.remove();
     } else if (!KNOWN.has(tag) && !el.closest('.katex')) {
       report.unwrapped.push(tag);
@@ -43,7 +44,7 @@ export function sanitizePastedHTML(html: string): { html: string; report: PasteR
 export function describePaste(report: PasteReport): string | null {
   const unique = (list: string[]) => Array.from(new Set(list)).join(', ');
   const parts: string[] = [];
-  if (report.removed.length) parts.push(`${report.removed.length} élément(s) non pris en charge retiré(s) (${unique(report.removed)})`);
-  if (report.unwrapped.length) parts.push(`mise en forme ignorée, texte conservé (${unique(report.unwrapped)})`);
-  return parts.length ? `Collage nettoyé : ${parts.join(' ; ')}.` : null;
+  if (report.removed.length) parts.push(tn('lessons.paste.removed', report.removed.length, { list: unique(report.removed) }));
+  if (report.unwrapped.length) parts.push(t('lessons.paste.unwrapped', { list: unique(report.unwrapped) }));
+  return parts.length ? t('lessons.paste.cleaned', { parts: parts.join(t('lessons.paste.separator')) }) : null;
 }

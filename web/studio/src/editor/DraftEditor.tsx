@@ -12,6 +12,7 @@ import { ApiError, type Chapter, type Media, type Revision } from '../api/client
 import { describeError, isHeif } from '../api/messages';
 import { isUnloadAllowed, useStudio } from '../context';
 import { buildFields, discardOnServer, saveToServer, submitToServer, type SaveTarget } from '../drafts';
+import { t } from '../i18n';
 import { LANGUAGE_LABELS, formatDateTime, formatTime } from '../labels';
 import { disableVideos, loadKatex, typeset } from '../preview';
 import { findLessonRecovery, findRecovery, newInstance, recoveryKey, removeRecovery, snapshot, writeRecovery, type NewLessonParams, type RecoveryData, type RecoveryEntry, type RecoveryTarget } from '../recovery';
@@ -104,7 +105,7 @@ export function DraftEditor(props: DraftEditorProps) {
     injectCSS: false,
     content: props.initial.doc as JSONContent,
     editorProps: {
-      attributes: { class: 'studio-editor', 'aria-label': 'Éditeur du contenu de la leçon', 'aria-multiline': 'true', role: 'textbox' },
+      attributes: { class: 'studio-editor', 'aria-label': t('lessons.editor.label'), 'aria-multiline': 'true', role: 'textbox' },
       transformPastedHTML: (html) => {
         const result = sanitizePastedHTML(html);
         pasteRef.current(describePaste(result.report));
@@ -174,7 +175,7 @@ export function DraftEditor(props: DraftEditorProps) {
     if (props.restore) {
       load(props.restore.data, false);
       setRestoredKey(props.restore.key);
-      setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
+      setMessage({ text: t('lessons.editor.restored') });
     }
     refreshEntries();
   }, [editor]);
@@ -240,14 +241,14 @@ export function DraftEditor(props: DraftEditorProps) {
     if (expired) {
       // Nothing is sent until the author resumes with their own account (banner at the top).
       writeRecovery(localStorage, recoveryTarget(), data());
-      setMessage({ text: `Rien n’a été envoyé : ${accountChanged ? 'un autre compte est connecté dans ce navigateur' : 'la session a expiré'}. Vos modifications restent ici et dans la copie de secours ; reconnectez-vous puis choisissez « Reprendre ici ».`, error: true });
+      setMessage({ text: accountChanged ? t('lessons.editor.blockedAccount') : t('lessons.editor.blockedExpired'), error: true });
       return null;
     }
     const sent = data();
     const built = buildFields({ ...sent, doc: sent.doc as JSONContent, language });
     setErrors(built.errors);
     if (!built.fields) {
-      setMessage({ text: 'Le document ne respecte pas le format de leçon ; rien n’a été enregistré. Corrigez les points ci-dessous.', error: true });
+      setMessage({ text: t('lessons.editor.invalid'), error: true });
       return null;
     }
     setSaving(true);
@@ -276,7 +277,7 @@ export function DraftEditor(props: DraftEditorProps) {
       case 'conflict':
         writeRecovery(localStorage, before, sent, 'conflict');
         setConflict(true);
-        setMessage({ text: 'Enregistrement refusé : conflit de version. Vos modifications sont conservées.', error: true });
+        setMessage({ text: t('lessons.editor.saveConflict'), error: true });
         return null;
       case 'not_draft':
         writeRecovery(localStorage, before, sent, 'conflict');
@@ -284,11 +285,11 @@ export function DraftEditor(props: DraftEditorProps) {
         return null;
       case 'expired':
         writeRecovery(localStorage, before, sent);
-        setMessage({ text: 'Session expirée : rien n’a été enregistré. Vos modifications restent ici et dans la copie de secours. Reconnectez-vous puis enregistrez à nouveau.', error: true });
+        setMessage({ text: t('lessons.editor.saveExpired'), error: true });
         return null;
       case 'failed':
         writeRecovery(localStorage, before, sent);
-        setMessage({ text: `Enregistrement impossible. ${describeError(outcome.error)}`, error: true });
+        setMessage({ text: t('lessons.editor.saveFailed', { error: describeError(outcome.error) }), error: true });
         return null;
     }
   }, [editor, saving, expired, accountChanged, data, language, target, recoveryTarget, api, restoredKey, refreshEntries, props]);
@@ -313,7 +314,7 @@ export function DraftEditor(props: DraftEditorProps) {
     try {
       const revision = await api.revision(target.revisionId);
       if (revision.status !== 'draft') {
-        setMessage({ text: 'Cette révision a été soumise depuis un autre onglet ; elle ne peut plus être modifiée ici. Votre copie locale est conservée sur cet appareil.', error: true });
+        setMessage({ text: t('lessons.editor.submittedElsewhere'), error: true });
         setConflict(false);
         props.onSubmitted?.(revision);
         return;
@@ -324,18 +325,18 @@ export function DraftEditor(props: DraftEditorProps) {
       load(serverData, true);
       setConflict(false);
       refreshEntries(next);
-      setMessage({ text: `Version ${revision.version} du serveur chargée. Votre copie locale est conservée ci-dessous : vous pouvez la copier ou la restaurer.` });
+      setMessage({ text: t('lessons.editor.serverLoaded', { version: revision.version }) });
     } catch (error) {
-      setMessage({ text: `Rechargement impossible. ${describeError(error)} Vos modifications sont toujours dans l’éditeur.`, error: true });
+      setMessage({ text: t('lessons.editor.reloadFailed', { error: describeError(error) }), error: true });
     }
   };
 
   const [copyFallback, setCopyFallback] = useState<string | null>(null);
-  const copyText = async (text: string, what: string) => {
+  const copyText = async (text: string, copied: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopyFallback(null);
-      setMessage({ text: `${what} copié dans le presse-papiers.` });
+      setMessage({ text: copied });
     } catch {
       // Clipboard refused (permissions, insecure context): show the text to copy by hand.
       setCopyFallback(text);
@@ -371,14 +372,14 @@ export function DraftEditor(props: DraftEditorProps) {
       props.onSubmitted?.(outcome.revision);
     } else if (outcome.kind === 'conflict') {
       setConflict(true);
-      setMessage({ text: 'Soumission refusée : le brouillon a changé ailleurs depuis son ouverture.', error: true });
+      setMessage({ text: t('lessons.editor.submitConflict'), error: true });
     } else if (outcome.kind === 'not_draft') {
       writeRecovery(localStorage, recoveryTarget(), data(), 'conflict');
       setNotDraft(true);
     } else if (outcome.kind === 'expired') {
-      setMessage({ text: 'Session expirée : la leçon n’a pas été soumise. Reconnectez-vous puis réessayez.', error: true });
+      setMessage({ text: t('lessons.editor.submitExpired'), error: true });
     } else {
-      setMessage({ text: `Soumission impossible. ${describeError(outcome.error)}`, error: true });
+      setMessage({ text: t('lessons.editor.submitFailed', { error: describeError(outcome.error) }), error: true });
     }
   };
 
@@ -394,9 +395,9 @@ export function DraftEditor(props: DraftEditorProps) {
       props.onDiscarded?.();
     } else if ((result as { code?: string }).code === 'version_conflict') {
       setConflict(true);
-      setMessage({ text: 'Suppression refusée : le brouillon a changé ailleurs. Rechargez la version du serveur avant de le supprimer.', error: true });
+      setMessage({ text: t('lessons.editor.discardConflict'), error: true });
     } else {
-      setMessage({ text: `Suppression impossible. ${describeError(result)}`, error: true });
+      setMessage({ text: t('lessons.editor.discardFailed', { error: describeError(result) }), error: true });
     }
   };
 
@@ -416,11 +417,11 @@ export function DraftEditor(props: DraftEditorProps) {
       return;
     }
     if (!IMAGE_TYPES.includes(file.type)) {
-      setUploadError('Format refusé : seules les images PNG, JPEG et WebP sont acceptées (pas de SVG ni de GIF).');
+      setUploadError(t('shell.error.unsupported_media_type'));
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      setUploadError('Image trop lourde : 5 Mio au maximum. Réduisez-la ou ré-exportez-la.');
+      setUploadError(t('lessons.media.tooHeavy'));
       return;
     }
     setUploading(true);
@@ -428,9 +429,9 @@ export function DraftEditor(props: DraftEditorProps) {
       const media = await api.uploadMedia(file);
       setMediaInfo((m) => ({ ...m, [media.id]: media }));
       setMediaIds((ids) => (ids.includes(media.id) ? ids : [...ids, media.id]));
-      setMessage({ text: `Image « ${file.name} » téléversée (${media.width} × ${media.height}). Placez le curseur dans le texte puis choisissez « Placer dans le texte » ; enregistrez ensuite le brouillon.` });
+      setMessage({ text: t('lessons.media.uploaded', { name: file.name, width: media.width, height: media.height }) });
     } catch (error) {
-      setUploadError(`Téléversement refusé. ${describeError(error)}`);
+      setUploadError(t('lessons.media.uploadRefused', { error: describeError(error) }));
     } finally {
       setUploading(false);
     }
@@ -445,7 +446,7 @@ export function DraftEditor(props: DraftEditorProps) {
     if (selection instanceof NodeSelection) editor.chain().focus().insertContentAt(selection.to, { type: 'image', attrs }).run();
     else editor.chain().focus().insertContent({ type: 'image', attrs }).run();
     setMediaIds((ids) => (ids.includes(placing.id) ? ids : [...ids, placing.id]));
-    setMessage({ text: `Image n° ${placing.id} placée dans le texte.` });
+    setMessage({ text: t('lessons.media.placedMessage', { id: placing.id }) });
     setPlacing(null);
   };
 
@@ -466,7 +467,7 @@ export function DraftEditor(props: DraftEditorProps) {
     const built = buildFields({ ...d, doc: d.doc as JSONContent, language });
     setErrors(built.errors);
     if (!built.fields) {
-      setPreviewError('Aperçu impossible : le document ne respecte pas le format de leçon (voir les points à corriger).');
+      setPreviewError(t('lessons.preview.invalid'));
       return;
     }
     setPreviewing(true);
@@ -475,7 +476,7 @@ export function DraftEditor(props: DraftEditorProps) {
       setPreview({ html, snapshot: snapshot(d), at: new Date() });
       setPreviewError(null);
     } catch (error) {
-      setPreviewError(`Aperçu impossible. ${describeError(error)} Le dernier aperçu est conservé.`);
+      setPreviewError(t('lessons.preview.failed', { error: describeError(error) }));
     } finally {
       setPreviewing(false);
     }
@@ -503,11 +504,11 @@ export function DraftEditor(props: DraftEditorProps) {
     if (!file || !editor) return;
     try {
       const prepared = prepareSource(editor.schema, await file.text());
-      if (prepared.doc.language !== language) throw new Error(`le document est en ${LANGUAGE_LABELS[prepared.doc.language]}, la leçon en ${LANGUAGE_LABELS[language]}.`);
+      if (prepared.doc.language !== language) throw new Error(t('lessons.editor.importLanguage', { document: LANGUAGE_LABELS[prepared.doc.language], lesson: LANGUAGE_LABELS[language] }));
       load({ ...data(), doc: prepared.content, title: prepared.doc.title, objective: prepared.doc.objective }, false);
-      setMessage({ text: `Fichier « ${file.name} » importé dans l’éditeur. Enregistrez pour le conserver.` });
+      setMessage({ text: t('lessons.editor.imported', { name: file.name }) });
     } catch (error) {
-      setMessage({ text: `Import refusé, document actuel conservé : ${(error as Error).message}`, error: true });
+      setMessage({ text: t('lessons.editor.importRefused', { error: (error as Error).message }), error: true });
     }
   };
   const onExport = () => {
@@ -527,16 +528,16 @@ export function DraftEditor(props: DraftEditorProps) {
   const dir = language === 'ar' ? 'rtl' : 'ltr';
   const version = target.kind === 'revision' ? target.version : null;
   const saveState = saving
-    ? 'Enregistrement en cours…'
+    ? t('lessons.save.saving')
     : expired && dirty
-      ? 'Session expirée : modifications non enregistrées, conservées sur cet appareil.'
+      ? t('lessons.save.expiredDirty')
       : dirty
-        ? 'Modifications non enregistrées sur le serveur.'
+        ? t('lessons.save.dirty')
         : lastSaved
-          ? `Enregistré sur le serveur à ${formatTime(lastSaved)} (version ${version}).`
+          ? t('lessons.save.savedAt', { time: formatTime(lastSaved), version: String(version) })
           : version !== null
-            ? `À jour avec le serveur (version ${version}).`
-            : 'Pas encore enregistré sur le serveur.';
+            ? t('lessons.save.upToDate', { version })
+            : t('lessons.save.never');
   const previewStale = preview !== null && preview.snapshot !== current;
 
   return (
@@ -548,13 +549,13 @@ export function DraftEditor(props: DraftEditorProps) {
         </p>
         <div className="actions">
           <button type="button" className="primary" onClick={() => void save()} disabled={saving} aria-describedby={ids.save}>
-            Enregistrer
+            {t('lessons.save.save')}
           </button>
           <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-            Prévisualiser
+            {t('lessons.save.preview')}
           </button>
           <button type="button" onClick={() => setDialog('submit')} disabled={saving || target.kind !== 'revision'}>
-            Soumettre pour relecture
+            {t('lessons.save.submit')}
           </button>
         </div>
       </div>
@@ -565,7 +566,7 @@ export function DraftEditor(props: DraftEditorProps) {
         </p>
       )}
       {errors.length > 0 && (
-        <ul className="errors" aria-label="Problèmes à corriger">
+        <ul className="errors" aria-label={t('lessons.editor.problems')}>
           {errors.map((e) => (
             <li key={e}>{e}</li>
           ))}
@@ -575,32 +576,32 @@ export function DraftEditor(props: DraftEditorProps) {
       {conflict && (
         <section className="conflict" aria-labelledby="conflict-heading">
           <h2 id="conflict-heading" tabIndex={-1} ref={conflictRef}>
-            Conflit : ce brouillon a été enregistré ailleurs
+            {t('lessons.conflict.title')}
           </h2>
           <p>
-            Une autre fenêtre ou un autre appareil a enregistré ce brouillon après son ouverture ici. Le serveur a refusé d’écraser cette version. <strong>Vos modifications ne sont pas perdues</strong> : elles sont toujours dans l’éditeur, et une copie de secours a été faite sur cet appareil.
+            {t('lessons.conflict.text')} <strong>{t('lessons.conflict.notLost')}</strong> {t('lessons.conflict.kept')}
           </p>
           <div className="actions">
             <button type="button" className="primary" onClick={() => void reloadServer()}>
-              Charger la version du serveur
+              {t('lessons.conflict.loadServer')}
             </button>
-            <button type="button" onClick={() => void copyText(localText(data()), 'Votre contenu local')}>
-              Copier mon contenu local
+            <button type="button" onClick={() => void copyText(localText(data()), t('lessons.editor.localCopied'))}>
+              {t('lessons.conflict.copyLocal')}
             </button>
             <button type="button" onClick={() => setConflict(false)}>
-              Continuer à éditer
+              {t('lessons.conflict.continue')}
             </button>
           </div>
-          <p className="hint">Charger la version du serveur remplace le contenu de l’éditeur ; votre version locale reste proposée ci-dessous comme copie de secours, à copier ou à restaurer.</p>
+          <p className="hint">{t('lessons.conflict.hint')}</p>
         </section>
       )}
       {copyFallback !== null && (
         <section className="copy-fallback" aria-labelledby="copy-heading">
-          <h2 id="copy-heading">Copier à la main</h2>
-          <p className="hint">Le navigateur refuse l’accès au presse-papiers. Sélectionnez le texte ci-dessous puis copiez-le.</p>
+          <h2 id="copy-heading">{t('lessons.conflict.copyByHand')}</h2>
+          <p className="hint">{t('lessons.clipboardRefused')}</p>
           <textarea readOnly dir="ltr" rows={8} value={copyFallback} aria-labelledby="copy-heading" onFocus={(e) => e.currentTarget.select()} />
           <button type="button" onClick={() => setCopyFallback(null)}>
-            Fermer
+            {t('lessons.close')}
           </button>
         </section>
       )}
@@ -608,14 +609,14 @@ export function DraftEditor(props: DraftEditorProps) {
       {notDraft && (
         <section className="conflict" aria-labelledby="notdraft-heading">
           <h2 id="notdraft-heading" tabIndex={-1} ref={notDraftRef}>
-            Ce brouillon a été soumis ailleurs
+            {t('lessons.notDraft.title')}
           </h2>
           <p>
-            Une autre fenêtre ou un autre appareil a soumis ce brouillon pour relecture : il ne peut plus être modifié. <strong>Vos modifications ne sont pas perdues</strong> : elles sont toujours dans l’éditeur, et une copie de secours de cette leçon a été faite sur cet appareil. Elle vous sera proposée sur la révision soumise et sur la prochaine version de la leçon.
+            {t('lessons.notDraft.text')} <strong>{t('lessons.conflict.notLost')}</strong> {t('lessons.notDraft.kept')}
           </p>
           <div className="actions">
-            <button type="button" onClick={() => void copyText(localText(data()), 'Votre contenu local')}>
-              Copier mon contenu local
+            <button type="button" onClick={() => void copyText(localText(data()), t('lessons.editor.localCopied'))}>
+              {t('lessons.conflict.copyLocal')}
             </button>
             <button
               type="button"
@@ -626,7 +627,7 @@ export function DraftEditor(props: DraftEditorProps) {
                 props.onSubmitted?.();
               }}
             >
-              Voir la révision soumise
+              {t('lessons.notDraft.view')}
             </button>
           </div>
         </section>
@@ -639,7 +640,7 @@ export function DraftEditor(props: DraftEditorProps) {
         onRestore={(e) => {
           load(e.data, false);
           setRestoredKey(e.key);
-          setMessage({ text: 'Copie de secours restaurée dans l’éditeur. Enregistrez pour la conserver sur le serveur.' });
+          setMessage({ text: t('lessons.editor.restored') });
         }}
         onChanged={() => refreshEntries()}
       />
@@ -648,11 +649,11 @@ export function DraftEditor(props: DraftEditorProps) {
 
       <div className="editor-layout">
         <section className="panel" aria-labelledby="edit-heading">
-          <h2 id="edit-heading">Contenu</h2>
+          <h2 id="edit-heading">{t('lessons.editor.content')}</h2>
           <div className="fields">
-            <label htmlFor={ids.title}>Titre</label>
+            <label htmlFor={ids.title}>{t('lessons.editor.title')}</label>
             <input id={ids.title} value={title} maxLength={240} lang={language} dir={dir} onChange={(e) => setTitle(e.target.value)} />
-            <label htmlFor={ids.objective}>Objectif</label>
+            <label htmlFor={ids.objective}>{t('lessons.editor.objective')}</label>
             <textarea id={ids.objective} value={objective} rows={2} lang={language} dir={dir} onChange={(e) => setObjective(e.target.value)} />
           </div>
           {editor && <Toolbar editor={editor} />}
@@ -667,16 +668,18 @@ export function DraftEditor(props: DraftEditorProps) {
           {editor && <Inspector editor={editor} />}
 
           <fieldset className="classification">
-            <legend>Classement</legend>
+            <legend>{t('lessons.editor.classification')}</legend>
             <p className="hint">
-              Matière :{' '}
+              {t('lessons.editor.subject')}{' '}
               <strong>
                 <CatalogueName label={props.subject} />
-              </strong> · Langue : <strong>{LANGUAGE_LABELS[language]}</strong> (fixées à la création)
+              </strong>
+              {' · '}
+              {t('lessons.editor.language')} <strong>{LANGUAGE_LABELS[language]}</strong> {t('lessons.editor.fixed')}
             </p>
-            <label htmlFor={ids.chapter}>Chapitre</label>
+            <label htmlFor={ids.chapter}>{t('lessons.editor.chapter')}</label>
             <select id={ids.chapter} value={chapterId ?? ''} onChange={(e) => setChapterId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Sans chapitre</option>
+              <option value="">{t('lessons.noChapter')}</option>
               {chapters.filter((c) => !c.retiredAt || c.id === chapterId).map((c) => {
                 const label = entryLabel(c, language);
                 return (
@@ -686,61 +689,69 @@ export function DraftEditor(props: DraftEditorProps) {
                 );
               })}
             </select>
-            <label htmlFor={ids.prerequisites}>Prérequis</label>
+            <label htmlFor={ids.prerequisites}>{t('lessons.editor.prerequisites')}</label>
             <textarea id={ids.prerequisites} value={prerequisites} rows={2} lang={language} dir={dir} onChange={(e) => setPrerequisites(e.target.value)} />
           </fieldset>
 
           <section className="media" aria-labelledby="media-heading">
-            <h3 id="media-heading">Images jointes</h3>
+            <h3 id="media-heading">{t('lessons.media.attached')}</h3>
             <p className="hint">
-              Téléversez une image puis placez-la dans le texte, à l’emplacement du curseur, avec un texte alternatif obligatoire. Les images sont jointes à la révision comme références immuables : enregistrées avec le brouillon, figées à la soumission, visibles des relecteurs, puis des élèves une fois la leçon publiée. Une image retirée du texte reste jointe jusqu’à ce que vous la retiriez de la révision.
+              {t('lessons.media.hint')}
             </p>
             {mediaIds.length > 0 ? (
               <ul className="media-list">
                 {mediaIds.map((id) => (
                   <li key={id}>
-                    <img src={`/api/media/${id}`} alt={`Image jointe n° ${id}`} width={mediaInfo[id]?.width} height={mediaInfo[id]?.height} />
+                    <img src={`/api/media/${id}`} alt={t('lessons.media.alt', { id })} width={mediaInfo[id]?.width} height={mediaInfo[id]?.height} />
                     <span>
-                      Image n° {id}
+                      {t('lessons.media.name', { id })}
                       {mediaInfo[id] ? ` · ${mediaInfo[id].width} × ${mediaInfo[id].height}` : ''}
-                      {embedded.has(id) ? ' · placée dans le texte' : ' · non placée'}
+                      {` · ${embedded.has(id) ? t('lessons.media.placed') : t('lessons.media.notPlaced')}`}
                     </span>
                     <button type="button" onClick={() => setPlacing({ id, alt: '', caption: '' })}>
-                      Placer dans le texte
+                      {t('lessons.media.place')}
                     </button>
                     <button
                       type="button"
                       disabled={embedded.has(id)}
-                      title={embedded.has(id) ? 'Supprimez d’abord l’image du texte.' : undefined}
+                      title={embedded.has(id) ? t('lessons.media.removeFirst') : undefined}
                       onClick={() => setMediaIds((ids) => ids.filter((x) => x !== id))}
                     >
-                      Retirer de la révision
+                      {t('lessons.media.detach')}
                     </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p>Aucune image jointe.</p>
+              <p>{t('lessons.media.none')}</p>
             )}
-            <label htmlFor={ids.upload}>Téléverser une image (PNG, JPEG ou WebP, 5 Mio au maximum)</label>
-            <input id={ids.upload} type="file" accept={IMAGE_TYPES.join(',')} onChange={(e) => void upload(e)} disabled={uploading} />
-            {uploading && <p role="status">Téléversement en cours…</p>}
+            <label htmlFor={ids.upload}>{t('lessons.media.upload')}</label>
+            <input
+              id={ids.upload}
+              type="file"
+              accept={IMAGE_TYPES.join(',')}
+              onChange={(e) => void upload(e)}
+              disabled={uploading}
+              aria-invalid={uploadError ? true : undefined}
+              aria-describedby={uploadError ? `${ids.upload}-error` : undefined}
+            />
+            {uploading && <p role="status">{t('lessons.media.uploading')}</p>}
             {uploadError && (
-              <p className="banner error" role="alert">
+              <p id={`${ids.upload}-error`} className="banner error" role="alert">
                 {uploadError}
               </p>
             )}
           </section>
 
           <details className="tools">
-            <summary>Importer ou exporter le JSON</summary>
-            <p className="hint">Format restreint (schéma 1). L’import remplace le contenu de l’éditeur, sans rien enregistrer.</p>
+            <summary>{t('lessons.editor.jsonTools')}</summary>
+            <p className="hint">{t('lessons.editor.jsonHint')}</p>
             <div className="actions">
               <button type="button" onClick={onExport}>
-                Exporter le JSON
+                {t('lessons.editor.exportJson')}
               </button>
               <button type="button" onClick={() => importRef.current?.click()}>
-                Importer un JSON
+                {t('lessons.editor.importJson')}
               </button>
               <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(e) => void onImport(e)} />
             </div>
@@ -749,21 +760,21 @@ export function DraftEditor(props: DraftEditorProps) {
           {target.kind === 'revision' && (
             <div className="danger-zone">
               <button type="button" className="danger" onClick={() => setDialog('discard')} disabled={saving}>
-                Supprimer ce brouillon
+                {t('lessons.editor.deleteDraft')}
               </button>
             </div>
           )}
         </section>
 
         <section className="panel" aria-labelledby="preview-heading">
-          <h2 id="preview-heading">Aperçu élève</h2>
-          <p className="hint">Rendu par le serveur, identique à la page de lecture de l’élève. Non publié.</p>
+          <h2 id="preview-heading">{t('lessons.preview.title')}</h2>
+          <p className="hint">{t('lessons.preview.hint')}</p>
           <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-            {preview ? 'Actualiser l’aperçu' : 'Prévisualiser'}
+            {preview ? t('lessons.preview.refresh') : t('lessons.save.preview')}
           </button>
           <p role="status" className={previewError ? 'error' : 'hint'}>
             {previewError ??
-              (previewing ? 'Aperçu en cours…' : preview ? (previewStale ? `Aperçu du ${formatTime(preview.at)} : il ne reflète pas les dernières modifications.` : `Aperçu à jour (${formatTime(preview.at)}).`) : '')}
+              (previewing ? t('lessons.preview.running') : preview ? (previewStale ? t('lessons.preview.stale', { time: formatTime(preview.at) }) : t('lessons.preview.fresh', { time: formatTime(preview.at) })) : '')}
           </p>
           <div ref={previewRef} className="lesson-preview" data-testid="lesson-preview" hidden={!preview} />
         </section>
@@ -771,14 +782,14 @@ export function DraftEditor(props: DraftEditorProps) {
 
       {placing && (
         <Dialog
-          title={`Placer l’image n° ${placing.id} dans le texte`}
+          title={t('lessons.media.placeTitle', { id: placing.id })}
           onCancel={() => setPlacing(null)}
           initialFocus={altRef}
-          actions={[{ label: 'Placer l’image', kind: 'primary', disabled: BLANK.test(placing.alt), onClick: placeImage }]}
+          actions={[{ label: t('lessons.media.placeAction'), kind: 'primary', disabled: BLANK.test(placing.alt), onClick: placeImage }]}
         >
           <img className="placing-preview" src={`/api/media/${placing.id}`} alt="" />
           <label>
-            Texte alternatif (obligatoire)
+            {t('lessons.altRequired')}
             <input
               ref={altRef}
               dir="auto"
@@ -791,24 +802,24 @@ export function DraftEditor(props: DraftEditorProps) {
             />
           </label>
           <p id={`${ids.upload}-alt-hint`} className="hint">
-            Décrivez ce que l’image apporte à la leçon, pour les élèves qui ne la voient pas.
+            {t('lessons.media.altHint')}
           </p>
           <label>
-            Légende (facultative, visible sous l’image)
+            {t('lessons.media.captionVisible')}
             <input dir="auto" lang={language} maxLength={1000} value={placing.caption} onChange={(e) => setPlacing({ ...placing, caption: e.target.value })} />
           </label>
-          <p className="hint">L’image sera insérée à l’emplacement du curseur dans l’éditeur.</p>
+          <p className="hint">{t('lessons.media.atCursor')}</p>
         </Dialog>
       )}
       {dialog === 'submit' && (
-        <Dialog title="Soumettre pour relecture ?" onCancel={() => setDialog(null)} actions={[{ label: 'Soumettre', kind: 'primary', onClick: () => void submit() }]}>
-          <p>Après soumission, cette révision ne pourra plus être modifiée. Un relecteur de la matière l’examinera ; pour corriger ensuite, vous créerez une nouvelle version.</p>
-          {dirty && <p>Les modifications en cours seront d’abord enregistrées.</p>}
+        <Dialog title={t('lessons.submit.title')} onCancel={() => setDialog(null)} actions={[{ label: t('lessons.submit.action'), kind: 'primary', onClick: () => void submit() }]}>
+          <p>{t('lessons.submit.text')}</p>
+          {dirty && <p>{t('lessons.submit.saveFirst')}</p>}
         </Dialog>
       )}
       {dialog === 'discard' && (
-        <Dialog title="Supprimer ce brouillon ?" onCancel={() => setDialog(null)} cancelLabel="Garder le brouillon" actions={[{ label: 'Supprimer définitivement', kind: 'danger', onClick: () => void discard() }]}>
-          <p>Le brouillon et ses références d’images seront supprimés du serveur. Cette action est définitive. Les versions déjà soumises ou publiées ne sont pas touchées. Les copies de secours d’autres onglets restent proposées sur cette leçon.</p>
+        <Dialog title={t('lessons.discard.title')} onCancel={() => setDialog(null)} cancelLabel={t('lessons.discard.keep')} actions={[{ label: t('lessons.discard.action'), kind: 'danger', onClick: () => void discard() }]}>
+          <p>{t('lessons.discard.text')}</p>
         </Dialog>
       )}
     </div>
@@ -820,9 +831,9 @@ export function Feedback({ revision }: { revision: Revision }) {
   if (!revision.review?.comment) return null;
   return (
     <section className="feedback" aria-labelledby="feedback-heading">
-      <h2 id="feedback-heading">Le relecteur a demandé des modifications</h2>
+      <h2 id="feedback-heading">{t('lessons.feedback.title')}</h2>
       <p className="hint">
-        Révision {revision.number} · {formatDateTime(revision.review.decidedAt)}
+        {t('lessons.feedback.meta', { number: revision.number, date: formatDateTime(revision.review.decidedAt) })}
       </p>
       <blockquote dir="auto">{revision.review.comment}</blockquote>
     </section>

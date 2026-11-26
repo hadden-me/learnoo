@@ -1,6 +1,7 @@
 package reader
 
 import (
+	"github.com/hadden-me/learnoo/internal/i18n"
 	"strings"
 	"testing"
 )
@@ -80,8 +81,10 @@ func TestValidPublicIDAndDir(t *testing.T) {
 func TestTemplatesParse(t *testing.T) {
 	h := New(Config{})
 	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "search", "error"} {
-		if h.pages[name] == nil || h.pages[name].Lookup("layout") == nil || h.pages[name].Lookup("content") == nil {
-			t.Errorf("page %s incomplete", name)
+		for _, l := range i18n.Locales {
+			if p := h.pages[name][l]; p == nil || p.Lookup("layout") == nil || p.Lookup("content") == nil {
+				t.Errorf("page %s (%s) incomplete", name, l)
+			}
 		}
 	}
 }

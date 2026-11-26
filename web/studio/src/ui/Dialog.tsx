@@ -2,6 +2,7 @@
 // closes on Escape and makes the rest of the page inert. Focus goes to the
 // least destructive action and returns to the element that opened it.
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
+import { t } from '../i18n';
 
 export interface DialogAction {
   label: string;
@@ -15,7 +16,7 @@ export function Dialog({
   children,
   actions,
   onCancel,
-  cancelLabel = 'Annuler',
+  cancelLabel = t('shell.cancel'),
   initialFocus,
 }: {
   title: string;

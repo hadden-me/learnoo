@@ -1,3 +1,3 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <span aria-current="page">{{template "catname" .Subject.Label}}</span></nav>
-<h1>{{template "catname" .Subject.Label}}</h1>
-{{range .Chapters}}<section class="chapter"><h2>{{if .Code}}{{template "catname" .Label}}{{else}}Sans chapitre{{end}}</h2><ul class="cards">{{range .Lessons}}<li class="card"><a href="/learn/lessons/{{.PublicID}}" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</a></li>{{end}}</ul></section>{{end}}{{end}}{{end}}
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="{{t "breadcrumb"}}"><a href="/learn">{{t "nav.home"}}</a> › <span aria-current="page">{{template "catname" (.Subject.Label ui)}}</span></nav>
+<h1>{{template "catname" (.Subject.Label ui)}}</h1>
+{{range .Chapters}}<section class="chapter"><h2>{{if .Code}}{{template "catname" (.Label ui)}}{{else}}{{t "subject.noChapter"}}{{end}}</h2><ul class="cards">{{range .Lessons}}<li class="card"><a href="/learn/lessons/{{.PublicID}}" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</a></li>{{end}}</ul></section>{{end}}{{end}}{{end}}
