@@ -338,7 +338,7 @@ export const fr = {
   'admin.catalogue.chapter': 'Chapitre',
   'admin.catalogue.chapterRetired': 'Retiré',
   'admin.catalogue.subjectForm': 'Noms et ordre de la matière {code}',
-  'admin.catalogue.chapterForm': 'Noms et ordre de le chapitre {code}',
+  'admin.catalogue.chapterForm': 'Noms et ordre du chapitre {code}',
   'admin.catalogue.noChange': 'Aucun changement.',
   'admin.catalogue.saved': 'Enregistré.',
   // Curriculum
