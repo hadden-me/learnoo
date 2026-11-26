@@ -57,7 +57,7 @@ The account types are a **presentation** of the existing backend permissions, wh
 
 A reviewer **may** also receive `publisher`, per [CONTENT_AND_EDITORIAL.md](CONTENT_AND_EDITORIAL.md#workflow-and-permissions). Trusted reviewers will usually get both, but reviewing never implies publishing. Administrators review educational content only in subjects they are assigned as reviewers.
 
-A teacher may draft and submit lessons and courses within **existing valid curriculum assignments**. Courses and teacher-owned modules follow the product-completion specification; official catalogue chapters remain separate. Quality is controlled by subject-scoped review, not by restricting who may write. Creating new sections, subjects or chapters is an administrator action; teachers can propose them.
+A teacher may draft and submit a lesson for **any subject and official chapter that exists in the catalogue** (unchanged), and a course within **existing valid curriculum assignments** of its subject. Courses and teacher-owned modules follow the product-completion specification; official catalogue chapters remain separate. Quality is controlled by subject-scoped review, not by restricting who may write. Creating new sections, subjects or chapters is an administrator action; teachers can propose them.
 
 ### 2.2 Permission matrix
 

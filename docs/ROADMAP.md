@@ -2,7 +2,7 @@
 
 ## Next milestone: usable LMS
 
-Use [LMS_DELIVERY_BACKLOG.md](LMS_DELIVERY_BACKLOG.md) and acceptance journeys LMS-A01–A11 in [LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md). Reconcile those slices with live GitHub issues before creating new work. Existing LRN issues describe the lesson-platform foundation; closing them does not close course CRUD, full curriculum placement or student arrival/discovery. Public homepage/catalogue and basic supporting administration move into the next product-completion milestone; public launch still requires its recorded gates.
+Use [LMS_DELIVERY_BACKLOG.md](LMS_DELIVERY_BACKLOG.md) and acceptance journeys LMS-A01–A12 in [LMS_PRODUCT_SPEC.md](LMS_PRODUCT_SPEC.md). Reconcile those slices with live GitHub issues before creating new work. Existing LRN issues describe the lesson-platform foundation; closing them does not close course CRUD, full curriculum placement or student arrival/discovery. Public homepage/catalogue and basic supporting administration move into the next product-completion milestone; public launch still requires its recorded gates.
 
 Status: planned, not completed. No fixed delivery date. Keep the first experiment smaller than the internal MVP. Implement permissions alongside editorial actions, not afterward.
 
