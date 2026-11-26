@@ -152,7 +152,7 @@ https://{$LEARNOO_PROXY_SITE:localhost} {
 	}
 
 	# Errors raised by Caddy itself (502 upstream down, 413 body too large
-	# while streaming, ...): same headers, an empty body.
+	# while streaming, ...): same headers, a body of just the status code.
 	handle_errors {
 		import https_headers
 		respond {err.status_code}

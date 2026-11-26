@@ -29,8 +29,8 @@ services:
     user: "65532:65532"
     read_only: true
     cap_drop: [ALL]
-    # Not used: the process runs with no capability at all (CapEff 0;
-    # no-new-privileges stops the file capability from being granted). It
+    # Not used: Caddy listens on unprivileged ports, so this is the only
+    # effective capability (CapEff 0x400) and nothing needs it. It
     # stays in the bounding set only because the image's caddy binary carries
     # a cap_net_bind_service file capability, and the kernel refuses to exec
     # such a binary when that capability is outside the bounding set.
