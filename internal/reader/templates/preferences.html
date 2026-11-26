@@ -1,0 +1,9 @@
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <span aria-current="page">Mon niveau</span></nav>
+<h1>Mon niveau et ma section</h1>
+<p>Ce choix est facultatif. Il sert seulement à afficher d’abord les matières et les cours de votre niveau, dans l’édition en vigueur du programme. Aucune autre information n’est demandée.</p>
+<form method="post" action="/learn/preferences" class="form" novalidate><input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+{{with .Error}}<div class="form-error" role="alert"><p id="choice_error">{{.}}</p></div>{{end}}
+{{if .Levels}}<div class="field"><label for="choice">Niveau et section</label><select id="choice" name="choice"{{if .Error}} aria-describedby="choice_error"{{end}}><option value="">Tout le programme</option>{{$p := .Preference}}{{range .Levels}}<optgroup label="{{.Name}}"><option value="level:{{.ID}}"{{if and (eq $p.LevelID .ID) (eq $p.SectionID 0)}} selected{{end}}>{{.Name}} — toutes les sections</option>{{$l := .}}{{range .Sections}}<option value="section:{{$l.ID}}:{{.ID}}"{{if eq $p.SectionID .ID}} selected{{end}}>{{$l.Name}} › {{.Name}}</option>{{end}}</optgroup>{{end}}</select></div>
+<div class="actions"><button type="submit">Enregistrer</button><button type="submit" name="skip" value="1" class="secondary">Passer et tout parcourir</button></div>
+{{else}}<p>Aucun niveau n’est encore proposé. Vous pouvez parcourir tout le programme.</p><div class="actions"><button type="submit" name="skip" value="1" class="secondary">Tout parcourir</button></div>{{end}}
+</form>{{end}}{{end}}

@@ -53,7 +53,12 @@ var testOperator = func() permissions.Actor {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	db := dbtest.Migrated(t)
+	return newEnvOn(t, dbtest.Migrated(t))
+}
+
+// newEnvOn is newEnv on an already migrated pool.
+func newEnvOn(t *testing.T, db *pgxpool.Pool) *env {
+	t.Helper()
 	e := &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db),
 		lessons: lessons.NewStore(db), review: review.NewStore(db), reports: reports.NewStore(db)}
 	e.subject = e.newSubject("test-math")

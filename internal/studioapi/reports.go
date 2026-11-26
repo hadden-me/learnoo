@@ -39,24 +39,29 @@ type resolutionJSON struct {
 }
 
 type reportJSON struct {
-	ID                 int64           `json:"id"`
-	LessonID           int64           `json:"lessonId"`
-	LessonPublicID     string          `json:"lessonPublicId"`
-	SubjectID          int64           `json:"subjectId"`
-	RevisionID         int64           `json:"revisionId"`
-	RevisionNumber     int             `json:"revisionNumber"`
-	RevisionTitle      string          `json:"revisionTitle"`
-	CurrentlyPublished bool            `json:"currentlyPublished"`
-	Message            string          `json:"message"`
-	Status             reports.Status  `json:"status"`
-	CreatedAt          time.Time       `json:"createdAt"`
-	Resolution         *resolutionJSON `json:"resolution"`
+	ID                 int64  `json:"id"`
+	LessonID           int64  `json:"lessonId"`
+	LessonPublicID     string `json:"lessonPublicId"`
+	SubjectID          int64  `json:"subjectId"`
+	RevisionID         int64  `json:"revisionId"`
+	RevisionNumber     int    `json:"revisionNumber"`
+	RevisionTitle      string `json:"revisionTitle"`
+	CurrentlyPublished bool   `json:"currentlyPublished"`
+	// Set only for a report filed in course context (LMS-B08).
+	CourseRevisionID     *int64          `json:"courseRevisionId,omitempty"`
+	CoursePublicID       string          `json:"coursePublicId,omitempty"`
+	CourseRevisionNumber int             `json:"courseRevisionNumber,omitempty"`
+	Message              string          `json:"message"`
+	Status               reports.Status  `json:"status"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	Resolution           *resolutionJSON `json:"resolution"`
 }
 
 func toReportJSON(r reports.Report) reportJSON {
 	out := reportJSON{ID: r.ID, LessonID: r.LessonID, LessonPublicID: r.LessonPublicID, SubjectID: r.SubjectID,
 		RevisionID: r.RevisionID, RevisionNumber: r.RevisionNumber, RevisionTitle: r.RevisionTitle,
-		CurrentlyPublished: r.Current, Message: r.Message, Status: r.Status, CreatedAt: r.CreatedAt}
+		CurrentlyPublished: r.Current, Message: r.Message, Status: r.Status, CreatedAt: r.CreatedAt,
+		CourseRevisionID: r.CourseRevisionID, CoursePublicID: r.CoursePublicID, CourseRevisionNumber: r.CourseRevisionNumber}
 	if x := r.Resolution; x != nil {
 		out.Resolution = &resolutionJSON{Action: x.Action, ActorID: x.ActorID, Note: x.Note, OccurredAt: x.OccurredAt}
 	}

@@ -1,6 +1,10 @@
-{{define "content"}}{{with .Data}}<h1>Rechercher une leçon</h1>
-<form method="get" action="/learn/search" class="search" role="search"><label for="q">Titre de la leçon</label><span class="hint" id="q_hint">Majuscules et accents sont ignorés.</span><div class="search-row"><input id="q" name="q" type="search" dir="auto" maxlength="100" value="{{.Query}}" aria-describedby="q_hint"><button type="submit">Rechercher</button></div></form>
+{{define "content"}}{{with .Data}}<h1>Rechercher une leçon ou un cours</h1>
+<form method="get" action="/learn/search" class="search" role="search"><label for="q">Titre de la leçon ou du cours</label><span class="hint" id="q_hint">Majuscules et accents sont ignorés.</span><div class="search-row"><input id="q" name="q" type="search" dir="auto" maxlength="100" value="{{.Query}}" aria-describedby="q_hint"><button type="submit">Rechercher</button></div></form>
 {{if .Invalid}}<p role="status">Saisissez entre {{.Min}} et 100 caractères.</p>
-{{else if .Searched}}<section aria-labelledby="results-heading"><h2 id="results-heading">Résultats ({{len .Results}})</h2>
+{{else if .Searched}}<section aria-labelledby="course-results-heading"><h2 id="course-results-heading">Cours ({{len .Courses}})</h2>
+{{if .Courses}}<ul class="cards">{{range .Courses}}<li class="card course-card"><a href="/learn/courses/{{.PublicID}}" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</a>{{template "placements" .Placements}}</li>{{end}}</ul>{{if eq (len .Courses) .Max}}<p class="hint">Seuls les {{.Max}} premiers cours sont affichés. Précisez votre recherche.</p>{{end}}
+{{else}}<p>Aucun cours publié ne correspond à « <bdi>{{.Query}}</bdi> ».</p>{{end}}</section>
+<section aria-labelledby="results-heading"><h2 id="results-heading">Résultats ({{len .Results}})</h2>
 {{if .Results}}<ul class="cards">{{range .Results}}<li class="card"><a href="/learn/lessons/{{.PublicID}}" lang="{{.Language}}" dir="{{dir .Language}}">{{.Title}}</a><span class="context">{{template "catname" .SubjectLabel}}{{if .ChapterCode}} › {{template "catname" .ChapterLabel}}{{end}}</span></li>{{end}}</ul>{{if eq (len .Results) .Max}}<p class="hint">Seuls les {{.Max}} premiers résultats sont affichés. Précisez votre recherche.</p>{{end}}
 {{else}}<p>Aucune leçon publiée ne correspond à « <bdi>{{.Query}}</bdi> ».</p>{{end}}</section>{{end}}{{end}}{{end}}
+{{define "placements"}}{{if .}}<ul class="placements">{{range .}}<li>{{.Level}} › {{.Section}} · {{.Edition}}{{if .Earlier}} <span class="earlier">(édition antérieure)</span>{{end}}</li>{{end}}</ul>{{end}}{{end}}
