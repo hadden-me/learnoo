@@ -316,3 +316,113 @@ func TestVerifyDetectsUnauditedSubmission(t *testing.T) {
 	}
 	wantProblem(t, f.verify(), "has no submission audit row")
 }
+
+// Course rows that bypassed the guards (triggers disabled, which only a
+// superuser or owner can do) are reported: a published pointer to a missing
+// revision without a publication audit row, and a submitted course revision
+// without its submission audit row (migrations/0014, 0015).
+func TestVerifyDetectsInconsistentCourses(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	user := strconv.FormatInt(f.user, 10)
+	steps := []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO subjects (code) VALUES ('test-math')`,
+		`INSERT INTO courses (owner_id, subject_id, language, created_by, published_revision_id, last_revision_number)
+		 SELECT ` + user + `, id, 'fr', ` + user + `, 987654, 2 FROM subjects`,
+		`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, status, author_id, submitted_at)
+		 SELECT id, subject_id, language, 1, 'in_review', ` + user + `, now() FROM courses`,
+	}
+	for _, s := range steps {
+		if _, err := tx.Exec(ctx, s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := f.verify()
+	wantProblem(t, r, "names a missing revision or one of another course")
+	wantProblem(t, r, "has no course publication audit row")
+	wantProblem(t, r, "has no submission audit row")
+	if r.Courses != 1 {
+		t.Fatalf("published courses: %d", r.Courses)
+	}
+}
+
+// Each reachable course message, from rows written in replica mode (the
+// guards and foreign-key triggers off, which only a superuser or owner can
+// do). The "published pointer is set on an archived course" message is not
+// reachable: the CHECK courses_archived_unpublished (0015) is not a trigger
+// and refuses such a row even in replica mode.
+func TestVerifyReportsEachCourseInconsistency(t *testing.T) {
+	const (
+		course   = `(SELECT id FROM courses)`
+		revision = `(SELECT min(id) FROM course_revisions)`
+	)
+	for _, c := range []struct {
+		name, want string
+		sql        []string
+	}{
+		{"status other than approved", "names a revision with status in_review", []string{
+			`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, status, author_id, submitted_at)
+			 SELECT id, subject_id, language, 1, 'in_review', owner_id, now() FROM courses`,
+			`UPDATE courses SET published_revision_id = ` + revision,
+		}},
+		{"withdrawn revision", "names a withdrawn revision", []string{
+			`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, status, author_id, submitted_at, withdrawn_at)
+			 SELECT id, subject_id, language, 1, 'approved', owner_id, now(), now() FROM courses`,
+			`UPDATE courses SET published_revision_id = ` + revision,
+		}},
+		{"pointer differs from the latest audit row", "differs from the latest course publication audit row", []string{
+			`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, status, author_id, submitted_at, candidate_closed_at)
+			 SELECT id, subject_id, language, n, 'approved', owner_id, now(), now() FROM courses, generate_series(1, 2) n`,
+			`INSERT INTO course_publication_audit (course_id, revision_id, actor_id, action)
+			 SELECT ` + course + `, max(id), min(author_id), 'publish' FROM course_revisions`,
+			`UPDATE courses SET published_revision_id = ` + revision,
+		}},
+		{"draft with a submission audit row", "is a draft with a submission audit row", []string{
+			`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, author_id)
+			 SELECT id, subject_id, language, 1, owner_id FROM courses`,
+			`INSERT INTO course_submission_audit (course_id, revision_id, actor_id)
+			 SELECT course_id, id, author_id FROM course_revisions`,
+		}},
+		{"submission audit that differs", "differs from its submission audit row", []string{
+			`INSERT INTO course_revisions (course_id, subject_id, language, revision_number, status, author_id, submitted_at)
+			 SELECT id, subject_id, language, 1, 'in_review', owner_id, now() FROM courses`,
+			`INSERT INTO course_submission_audit (course_id, revision_id, actor_id, submitted_at)
+			 SELECT course_id, id, author_id, submitted_at - interval '1 hour' FROM course_revisions`,
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			tx, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			user := strconv.FormatInt(f.user, 10)
+			steps := append([]string{
+				`SET LOCAL session_replication_role = replica`,
+				`INSERT INTO subjects (code) VALUES ('test-math')`,
+				`INSERT INTO courses (owner_id, subject_id, language, created_by, last_revision_number)
+				 SELECT ` + user + `, id, 'fr', ` + user + `, 2 FROM subjects`,
+			}, c.sql...)
+			for _, s := range steps {
+				if _, err := tx.Exec(ctx, s); err != nil {
+					t.Fatalf("%s: %v", s, err)
+				}
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			wantProblem(t, f.verify(), c.want)
+		})
+	}
+}
