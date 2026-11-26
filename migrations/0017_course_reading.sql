@@ -1,7 +1,9 @@
 -- LMS-B08 (issue #98): student home preference, course bookmarks and
 -- course-context error reports (docs/LMS_CONTRACT.md §9, docs/LMS_PRODUCT_SPEC.md
--- §5 and §7). 0016 is reserved by the administration slice; the runner
--- applies migrations in lexical order and accepts the gap.
+-- §5 and §7). 0016 is the administration slice (PR #114), which must be
+-- merged and applied first: the runner applies migrations in lexical order
+-- and refuses a database where 0017 was applied before 0016, so the merge
+-- order is #114, then this slice.
 --
 -- Conventions of 0004 and later apply: guards raise SQLSTATE LRN01 and are
 -- named zz_guard_*; trigger functions pin search_path to pg_catalog, pg_temp

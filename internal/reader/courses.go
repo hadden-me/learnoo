@@ -433,8 +433,9 @@ func (s *Store) CourseBookmarks(ctx context.Context, userID int64) ([]CourseBook
 
 // AddCourseBookmark bookmarks a readable course. Adding an existing
 // bookmark is not an error; a course that is not readable is ErrNotFound.
-// The per-user limit (MaxBookmarks courses) is checked in the same
-// statement, as for lessons.
+// The per-user limit (MaxBookmarks courses) is checked before the insert,
+// not atomically with it: concurrent adds by one user can exceed it by a
+// few rows, which is harmless (as for lessons).
 func (s *Store) AddCourseBookmark(ctx context.Context, userID int64, publicID string) error {
 	if !ValidPublicID(publicID) {
 		return ErrNotFound

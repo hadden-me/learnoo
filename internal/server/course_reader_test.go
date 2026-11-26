@@ -92,7 +92,7 @@ func TestCourseOutlineNavigationAndUnavailableSteps(t *testing.T) {
 	wantAbsent(t, "step 1", w, `rel="prev"`)
 	w = f.get(s, courseStepURL(c, l4))
 	wantPage(t, "last step", w, http.StatusOK, "Corps de test DELTA.", `rel="prev"`, "Retour au cours")
-	wantAbsent(t, "last step", w, `rel="next"`)
+	wantAbsent(t, "last step", w, `rel="next"`, "cours incomplet", "le cours est incomplet")
 
 	// A lesson that is not a step, malformed IDs: the generic notice.
 	other := f.courseLesson("ECHO")
@@ -116,7 +116,7 @@ func TestCourseOutlineNavigationAndUnavailableSteps(t *testing.T) {
 	wantAbsent(t, "outline after", w, "TEST Titre leçon BRAVO", "TEST Titre leçon CHARLIE", "TEST Titre leçon DELTA")
 	w = f.get(s, courseStepURL(c, l1))
 	wantPage(t, "step 1 after", w, http.StatusOK, "Corps de test ALPHA.",
-		`rel="next" href="`+courseStepURL(c, l2)+`"`, "TEST Étape bravo</span> <span class=\"step-state\">(indisponible)")
+		`rel="next" href="`+courseStepURL(c, l2)+`"`, "TEST Étape bravo</span> <span class=\"step-state\">(temporairement indisponible)", "le cours est incomplet pour le moment")
 	for _, tc := range []struct {
 		p              published
 		title, prev    string
@@ -130,6 +130,10 @@ func TestCourseOutlineNavigationAndUnavailableSteps(t *testing.T) {
 		wantPage(t, "unavailable "+tc.title, w, http.StatusOK, "Cette leçon est temporairement indisponible", tc.title, `rel="prev" href="`+tc.prev+`"`)
 		if tc.next != "" {
 			wantPage(t, "unavailable next "+tc.title, w, http.StatusOK, `rel="next" href="`+tc.next+`"`)
+		} else {
+			// The end of the outline never presents the course as complete.
+			wantPage(t, "end of plan "+tc.title, w, http.StatusOK, "Fin du plan · cours incomplet",
+				"3 leçons de ce cours sont temporairement indisponibles : le cours est incomplet pour le moment.")
 		}
 		wantAbsent(t, "unavailable "+tc.title, w, "Corps de test "+tc.absentRe, "TEST Titre leçon "+tc.absentRe, "Signaler une erreur", "katex")
 	}
@@ -397,4 +401,70 @@ func TestCourseContextReportsNameTheDisplayedRevision(t *testing.T) {
 	if after := f.count(`SELECT count(*) FROM error_reports`); after != before {
 		t.Fatalf("refused reports stored: %d -> %d", before, after)
 	}
+}
+
+// Course routes refuse anonymous and CSRF-less posts, keep every response
+// private, and never accept an oversized report body.
+func TestCourseRoutesRefuseForgedPostsAndStayPrivate(t *testing.T) {
+	rf := newReader(t)
+	wf := withdrawFixture{reviewFixture: reviewFixture{studioFixture: studioFixture{env: rf.env, subject: rf.subject, author: rf.author},
+		reviewer: rf.reviewer, publisher: rf.publisher}, admin: rf.admin}
+	img := rf.uploadAs(rf.author, 131)
+	w := rf.createWithMedia(rf.author, rf.subject, mediaDoc("TEST Image privée", false, img), []int64{img})
+	wantStatus(t, "create", w, http.StatusCreated, "")
+	rev := wf.submitRev(rf.author, decodeRevision(t, w))
+	wf.approvedRev(rev)
+	wf.publishedRev(rev)
+	l := published{lessonID: rev.LessonID, revisionID: rev.ID, publicID: rf.publicID(rev.LessonID)}
+	c := coursetest.Publish(t, rf.db, rf.courseSpec("TEST Cours privé",
+		coursetest.Module{Title: "TEST Module", Steps: []coursetest.Step{step(l, "TEST Étape privée")}}))
+	s := rf.student
+	wantStatus(t, "bookmark", rf.post(s, courseURL(c)+"/bookmark", nil), http.StatusSeeOther, "")
+	report := url.Values{"course_revision": {strconv.Itoa(c.RevisionNumber)}, "revision": {"1"}, "message": {"Erreur."}}
+	posts := map[string]url.Values{
+		"/learn/preferences":            {"skip": {"1"}},
+		courseURL(c) + "/unbookmark":    {},
+		courseStepURL(c, l) + "/report": report,
+	}
+	for path, form := range posts {
+		// rf.page skips the reader header check; it is asserted below.
+		w := rf.page(apiUser{}, http.MethodPost, path, form)
+		wantPage(t, "anonymous "+path, w, http.StatusUnauthorized, "Connexion requise")
+		checkReaderHeaders(t, "anonymous "+path, w)
+		w = rf.page(s, http.MethodPost, path, form)
+		wantPage(t, "no csrf "+path, w, http.StatusForbidden, "Requête refusée")
+		checkReaderHeaders(t, "no csrf "+path, w)
+		bad := url.Values{}
+		for k, v := range form {
+			bad[k] = v
+		}
+		bad.Set("csrf_token", "wrong-token")
+		wantPage(t, "wrong csrf "+path, rf.post(s, path, bad), http.StatusForbidden, "Requête refusée")
+	}
+	if n := rf.count(`SELECT count(*) FROM course_bookmarks`); n != 1 {
+		t.Fatalf("%d course bookmarks after refused posts", n)
+	}
+	if n := rf.count(`SELECT count(*) FROM error_reports`); n != 0 {
+		t.Fatalf("%d reports after refused posts", n)
+	}
+
+	// Successful pages and media are private, no-store (rf.get checks
+	// Cache-Control and Vary on every page).
+	wantPage(t, "course", rf.get(s, courseURL(c)), http.StatusOK, "TEST Cours privé")
+	wantPage(t, "step", rf.get(s, courseStepURL(c, l)), http.StatusOK, "TEST Image privée")
+	wantMedia(t, "course media", rf.get(s, fmt.Sprintf("%s/media/%d", courseStepURL(c, l), img)))
+
+	// An oversized report body is refused, read-only: nothing is stored or
+	// throttled, and the text is not kept.
+	big := url.Values{"csrf_token": {s.csrf}, "course_revision": {strconv.Itoa(c.RevisionNumber)}, "revision": {"1"},
+		"message": {strings.Repeat("é", 40000)}}
+	w = rf.post(s, courseStepURL(c, l)+"/report", big)
+	wantPage(t, "oversized", w, http.StatusRequestEntityTooLarge, "Le texte est trop long")
+	if strings.Contains(w.Body.String(), strings.Repeat("é", 100)) {
+		t.Fatal("oversized text echoed back")
+	}
+	if n := rf.count(`SELECT count(*) FROM error_reports`); n != 0 {
+		t.Fatalf("%d reports after an oversized body", n)
+	}
+	wantStatus(t, "report after", rf.post(s, courseStepURL(c, l)+"/report", report), http.StatusSeeOther, "")
 }

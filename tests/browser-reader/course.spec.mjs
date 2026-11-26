@@ -75,7 +75,7 @@ test('course reading with an unavailable step, a course bookmark and a course-co
   await expect(page.getByText('Signaler une erreur')).toHaveCount(0);
   await steps.getByRole('link', { name: /Précédente/ }).click();
   await expect(page.getByText('Corps de la leçon de cours un.')).toBeVisible();
-  await expect(steps.getByRole('link', { name: /Suivante/ })).toContainText('(indisponible)');
+  await expect(steps.getByRole('link', { name: /Suivante/ })).toContainText('(temporairement indisponible)');
   expect(await noOverflow(page)).toBe(true);
   await page.screenshot({ path: 'test-results/course-step-mobile.png', fullPage: true });
   // From 64rem the outline is a sticky side column next to the lesson.

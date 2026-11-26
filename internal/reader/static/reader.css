@@ -65,6 +65,7 @@ select:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-of
 .step-nav a { align-items: flex-start; }
 .step-nav a.next { align-items: flex-end; text-align: end; }
 .step-nav .dir { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
+.course-incomplete { font-size: var(--learnoo-text-small); color: var(--learnoo-color-warning-text); }
 .step-state { font-size: var(--learnoo-text-small); color: var(--learnoo-color-warning-text); font-weight: var(--learnoo-weight-emphasis); }
 .course-outline { border-block-start: 1px solid var(--learnoo-color-border); margin-block-start: var(--learnoo-space-6); padding-block-start: var(--learnoo-space-4); }
 .course-outline h2 { font-size: var(--learnoo-text-body); margin-block: 0 var(--learnoo-space-3); }
