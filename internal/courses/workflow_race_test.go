@@ -108,13 +108,19 @@ func TestLessonEffectsRaceCoursePublicationAndRestore(t *testing.T) {
 	}
 }
 
-// A withdrawal racing readers: a reader never sees a step marked readable
+// A withdrawal, unpublication or archive racing readers: a reader never sees a step marked readable
 // without its body or a body for an unreadable step, and once the
 // withdrawal committed no reader sees the step readable.
 func TestWithdrawalRacesCourseRead(t *testing.T) {
 	e := newEnv(t)
-	l := e.publishedLesson(e.other, e.math, "fr", "Read race")
-	other := e.publishedLesson(e.other, e.math, "fr", "Unaffected")
+	for _, kind := range []string{"withdraw", "unpublish", "archive"} {
+		raceRead(t, e, kind)
+	}
+}
+
+func raceRead(t *testing.T, e *env, kind string) {
+	l := e.publishedLesson(e.other, e.math, "fr", "Read race "+kind)
+	other := e.publishedLesson(e.other, e.math, "fr", "Unaffected "+kind)
 	r := e.publishedCourse(l, other)
 	var done atomic.Bool
 	readErr := make(chan error, 1)
@@ -151,7 +157,7 @@ func TestWithdrawalRacesCourseRead(t *testing.T) {
 			}
 		}
 	}()
-	if err := e.lessonEffect("withdraw", l); err != nil {
+	if err := e.lessonEffect(kind, l); err != nil {
 		t.Fatal(err)
 	}
 	done.Store(true)
