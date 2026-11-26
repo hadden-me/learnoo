@@ -718,21 +718,13 @@ func FuzzInspectJPEG(f *testing.F) {
 	})
 }
 
-// The CMYK fast path (Adobe CMYK JPEGs; Go cannot encode them, so orient is
-// tested directly) matches the reference transforms and allocates only the
+// The RGBA fast path (JPEGs stored as RGB, which Go cannot encode, so orient
+// is tested directly) matches the reference transforms and allocates only the
 // destination.
-func TestOrientCMYK(t *testing.T) {
-	src := image.NewCMYK(image.Rect(0, 0, 5, 3))
+func TestOrientRGBA(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 5, 3))
 	rng := rand.New(rand.NewSource(7))
 	rng.Read(src.Pix)
-	ref := image.NewRGBA(src.Bounds())
-	for y := 0; y < 3; y++ {
-		for x := 0; x < 5; x++ {
-			c := src.CMYKAt(x, y)
-			r, g, b := color.CMYKToRGB(c.C, c.M, c.Y, c.K)
-			ref.SetRGBA(x, y, color.RGBA{r, g, b, 255})
-		}
-	}
 	for o := 1; o <= 8; o++ {
 		got := orient(src, o)
 		if o == 1 {
@@ -741,7 +733,7 @@ func TestOrientCMYK(t *testing.T) {
 			}
 			continue
 		}
-		want := upright(ref, o)
+		want := upright(src, o)
 		rgba, ok := got.(*image.RGBA)
 		if !ok || !bytes.Equal(rgba.Pix, want.Pix) || rgba.Bounds() != want.Bounds() {
 			t.Fatalf("orientation %d: got %T %v", o, got, got.Bounds())

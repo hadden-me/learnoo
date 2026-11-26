@@ -2,7 +2,9 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,7 +12,12 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
+	"sync"
 	"testing"
+	"time"
 )
 
 type worstCase struct {
@@ -78,6 +85,89 @@ func worstCases(t testing.TB) []worstCase {
 	}
 }
 
+// heapPeak runs f while sampling the heap and returns the largest amount of
+// heap object memory (live plus not yet swept) above the starting point, and
+// the bytes allocated by f. With a small GOGC the sample approximates the
+// live heap; with the default it shows what the collector lets accumulate.
+func heapPeak(gcPercent int, f func()) (peak, allocated uint64) {
+	samples := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}, {Name: "/gc/heap/allocs:bytes"}}
+	read := func() (uint64, uint64) {
+		metrics.Read(samples)
+		return samples[0].Value.Uint64(), samples[1].Value.Uint64()
+	}
+	old := debug.SetGCPercent(gcPercent)
+	defer debug.SetGCPercent(old)
+	runtime.GC()
+	base, alloc0 := read()
+	var max uint64
+	var mu sync.Mutex
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			v, _ := read()
+			mu.Lock()
+			if v > max {
+				max = v
+			}
+			mu.Unlock()
+			select {
+			case <-done:
+				return
+			default:
+				time.Sleep(200 * time.Microsecond)
+			}
+		}
+	}()
+	f()
+	close(done)
+	<-stopped
+	_, alloc1 := read()
+	if max < base {
+		return 0, alloc1 - alloc0
+	}
+	return max - base, alloc1 - alloc0
+}
+
+const mib = 1 << 20
+
+// TestDecodeMemoryReport prints the per-Process heap figures of
+// docs/measurements/upload-memory.md (go test -run DecodeMemoryReport -v
+// with LEARNOO_MEMORY_REPORT=1).
+func TestDecodeMemoryReport(t *testing.T) {
+	if os.Getenv("LEARNOO_MEMORY_REPORT") == "" {
+		t.Skip("set LEARNOO_MEMORY_REPORT=1 to print the measurements")
+	}
+	t.Logf("%s %s/%s, GOMAXPROCS %d", runtime.Version(), runtime.GOOS, runtime.GOARCH, runtime.GOMAXPROCS(0))
+	t.Logf("| Input | Upload | Estimate | Decode+orient live (GOGC=1) | Process result | Process live (GOGC=1) | Process heap (GOGC=100) | Process allocated |")
+	for _, c := range worstCases(t) {
+		est, err := estimate(t, c.data)
+		estimated, decoded := "-", "-"
+		if err == nil {
+			estimated = fmt.Sprintf("%.0f MiB", float64(est)/mib)
+			f, _ := sniff(c.data)
+			ins, _ := f.inspect(c.data)
+			d, _ := heapPeak(1, func() {
+				img, err := f.decode(bytes.NewReader(c.data[:ins.end]))
+				if err == nil {
+					img = orient(img, ins.orientation)
+				}
+				runtime.KeepAlive(img)
+			})
+			decoded = fmt.Sprintf("%.0f MiB", float64(d)/mib)
+		}
+		res := "accepted"
+		live, alloc := heapPeak(1, func() { _, err = Process(context.Background(), bytes.NewReader(c.data), "") })
+		if err != nil {
+			res = err.Error()
+		}
+		heap, _ := heapPeak(100, func() { _, _ = Process(context.Background(), bytes.NewReader(c.data), "") })
+		t.Logf("| %s | %.2f MiB | %s | %s | %s | %.0f MiB | %.0f MiB | %.0f MiB |", c.name, float64(len(c.data))/mib, estimated, decoded, res,
+			float64(live)/mib, float64(heap)/mib, float64(alloc)/mib)
+	}
+}
+
 // TestWriteWorstCaseInputs writes the inputs for the whole-process
 // measurement (scripts/upload-memory) to $LEARNOO_WORST_CASE_DIR.
 func TestWriteWorstCaseInputs(t *testing.T) {
@@ -90,5 +180,76 @@ func TestWriteWorstCaseInputs(t *testing.T) {
 			t.Fatal(err)
 		}
 		fmt.Println(c.file, len(c.data))
+	}
+}
+
+// estimate runs the checks Process makes before decoding and returns the
+// decode cost estimate.
+func estimate(t *testing.T, data []byte) (int64, error) {
+	t.Helper()
+	f, ok := sniff(data)
+	if !ok {
+		t.Fatal("unknown format")
+	}
+	ins, err := f.inspect(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := f.decodeConfig(bytes.NewReader(data[:ins.end]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decodeCost(f, data[:ins.end], cfg, ins)
+}
+
+// The decode cost estimate is an upper bound of the measured heap of the
+// decode and orientation steps, for every worst-case input (also those that
+// Process rejects for their cost), and every accepted input stays within
+// MaxDecodeBytes plus the bounded re-encoding buffer through all of Process.
+// About 20 seconds; skipped with -short and -race.
+func TestDecodeMemoryWithinEstimate(t *testing.T) {
+	if testing.Short() || raceEnabled {
+		t.Skip("heap measurement: not with -short or -race")
+	}
+	// A bytes.Buffer that ends at MaxEncodedBytes may briefly hold its old and
+	// new backing arrays.
+	const processBound = MaxDecodeBytes + 3*MaxEncodedBytes
+	const slack = 4 << 20 // row buffers, decoder state, sampling noise
+	for _, c := range worstCases(t) {
+		est, err := estimate(t, c.data)
+		if errors.Is(err, ErrUnsupportedCMYK) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		f, _ := sniff(c.data)
+		ins, _ := f.inspect(c.data)
+		var derr error
+		decoded, _ := heapPeak(1, func() {
+			var img image.Image
+			img, derr = f.decode(bytes.NewReader(c.data[:ins.end]))
+			if derr == nil {
+				img = orient(img, ins.orientation)
+			}
+			runtime.KeepAlive(img)
+		})
+		if derr != nil {
+			t.Fatalf("%s: decode: %v", c.name, derr)
+		}
+		if int64(decoded) > est+slack {
+			t.Errorf("%s: decode and orientation used %d MiB, estimated %d MiB", c.name, decoded>>20, est>>20)
+		}
+		if est > MaxDecodeBytes {
+			continue
+		}
+		var perr error
+		processed, _ := heapPeak(1, func() { _, perr = Process(context.Background(), bytes.NewReader(c.data), "") })
+		if perr != nil {
+			t.Errorf("%s: estimated %d MiB but rejected: %v", c.name, est>>20, perr)
+		}
+		if processed > processBound+slack {
+			t.Errorf("%s: Process used %d MiB", c.name, processed>>20)
+		}
 	}
 }
