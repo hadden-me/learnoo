@@ -54,6 +54,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
 | 415 | `unsupported_heic` | The upload is a HEIC/HEIF photo (detected from its bytes or declared as `image/heic`/`image/heif`), not yet accepted; export it as JPEG or PNG |
+| 415 | `unsupported_cmyk` | The upload is a CMYK or YCCK JPEG (print colour); convert it to RGB and export it as JPEG or PNG |
 | 422 | `invalid_content` | The document fails schema v1 validation (drafts and `POST /api/preview` alike), or a field limit (prerequisites, number of media) is exceeded. `message` carries the validator's reason |
 | 422 | `language_mismatch` | The document's `language` differs from the lesson's |
 | 422 | `unknown_subject` / `unknown_chapter` / `unknown_media` | Referenced subject, chapter (of this subject) or media asset does not exist |
@@ -64,6 +65,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `invalid_image` | The image is corrupt or truncated |
 | 422 | `invalid_dimensions` | Over 4096 px per side or 16 megapixels |
 | 422 | `trailing_data` | Data after the end of the image that is not a validated phone-photo structure (MPF images, Ultra HDR gain map, XMP-declared motion-photo video, zero padding): polyglots, appended files, inconsistent declarations; re-export the image or upload PNG |
+| 422 | `image_too_complex` | Decoding the image would need more than 192 MiB (estimated from its headers), or its re-encoded form would exceed 16 MiB; export it as a standard JPEG or an 8-bit PNG, or reduce its size |
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
@@ -282,14 +284,14 @@ Discards the caller's own draft and its media references (the assets remain). `e
 
 Uploads one image as the **raw request body** (no multipart) with `Content-Type: image/png`, `image/jpeg` or `image/webp`, plus `X-CSRF-Token`.
 
-The type is detected from the bytes; the declared type must agree. The image is decoded and re-encoded (metadata removed; WebP stored as PNG). JPEG EXIF orientation is applied, so the stored image is upright and `width`/`height` are the upright size. Phone-photo structures after a JPEG's end (MPF previews, Ultra HDR gain maps, motion-photo video, zero padding) are validated and dropped; see [DECISIONS.md](DECISIONS.md#media-upload-limits-lrn-006). Limits: 5 MiB, 4096 px per side, 16 megapixels. A larger declared `Content-Length` is refused before the body is read; a longer body is cut off at the limit.
+The type is detected from the bytes; the declared type must agree. The image is decoded and re-encoded (metadata removed; WebP stored as PNG). JPEG EXIF orientation is applied, so the stored image is upright and `width`/`height` are the upright size. Phone-photo structures after a JPEG's end (MPF previews, Ultra HDR gain maps, motion-photo video, zero padding) are validated and dropped; see [DECISIONS.md](DECISIONS.md#media-upload-limits-lrn-006). Limits: 5 MiB, 4096 px per side, 16 megapixels. A larger declared `Content-Length` is refused before the body is read; a longer body is cut off at the limit. Within these limits the server also bounds decoding memory ([measurements](measurements/upload-memory.md)): CMYK and YCCK JPEGs (print workflows; phones never produce them) are refused with `415 unsupported_cmyk`, and an image whose decoding would need more than 192 MiB, estimated from its headers (for example a progressive JPEG without chroma subsampling above about 13 megapixels, or 10 with EXIF rotation, or an interlaced 16-bit PNG above about 12 megapixels), or whose stored form would exceed 16 MiB, is refused with `422 image_too_complex`. Ordinary phone photos, screenshots and WebP images up to the limits are accepted.
 
 ```json
 {"id": 5, "contentType": "image/png", "byteSize": 1234, "width": 800, "height": 600, "sha256": "…64 hex…", "url": "/api/media/5"}
 ```
 
 - `201` (`Location` = `url`), whether the asset is new or identical canonical bytes were already uploaded (by anyone), in which case the existing asset ID is returned and the caller gains read access to it. Media IDs are sequential, so deduplication is observable only through the returned ID being older than expected. Assets never change; replacing an image means uploading a new one and referencing its ID.
-- `400 invalid_request` (empty or interrupted upload), `413 too_large`, `415 unsupported_media_type | type_mismatch | unsupported_heic`, `422 invalid_image | invalid_dimensions | trailing_data`, `408 upload_timeout`, `503 busy` (more than 4 uploads in progress for 5 seconds; `Retry-After: 5`), `409 retry`.
+- `400 invalid_request` (empty or interrupted upload), `413 too_large`, `415 unsupported_media_type | type_mismatch | unsupported_heic | unsupported_cmyk`, `422 invalid_image | invalid_dimensions | trailing_data | image_too_complex`, `408 upload_timeout`, `503 busy` (more than 4 uploads in progress for 5 seconds; `Retry-After: 5`), `409 retry`.
 - The whole upload must arrive within the server's 15-second read timeout (about 3 Mbit/s for 5 MiB); otherwise `408 upload_timeout`.
 
 ### `GET /api/media/{mediaId}`
