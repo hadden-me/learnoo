@@ -15,7 +15,7 @@ import { navigate } from '../router';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 import { ErrorPage, LoadingPage, NoteField, Quote, dirOf, useEditorial, useLoad } from './common';
-import { AdminTabs } from './CourseAdminPages';
+import { AdminNav } from './adminCommon';
 import { canUnpublish, describeEvent, describeSubmission, revisionActions, revisionStateLabel } from './policy';
 
 export function AdminLessonsPage() {
@@ -38,8 +38,8 @@ export function AdminLessonsPage() {
 
   return (
     <main className="page" id="main">
+      <AdminNav />
       <h1 tabIndex={-1}>Administration</h1>
-      <AdminTabs current="lessons" />
       <p className="hint">Actions d’urgence sur les leçons : retrait d’une révision, dépublication, restauration d’une version publiée auparavant. Chaque action est enregistrée avec son motif.</p>
       <form className="find-lesson" onSubmit={find} noValidate>
         <div className="fields">

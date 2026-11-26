@@ -19,25 +19,12 @@ import { paths } from '../editorialRoutes';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
+import { AdminNav } from './adminCommon';
 import { ErrorPage, LoadingPage, NoteField, Quote, dirOf, useLoad } from './common';
 
 function useCourseAdmin() {
   const { api } = useStudio();
   return useMemo(() => courseReviewApi(api), [api]);
-}
-
-/** Lessons / courses switch of the administration space. */
-export function AdminTabs({ current }: { current: 'lessons' | 'courses' }) {
-  return (
-    <nav className="tabs" aria-label="Administration">
-      <Link to={paths.adminLessons} current={current === 'lessons'}>
-        Leçons
-      </Link>
-      <Link to={paths.adminCourses} current={current === 'courses'}>
-        Cours
-      </Link>
-    </nav>
-  );
 }
 
 function CourseStateTag({ course }: { course: AdminCourse }) {
@@ -72,8 +59,8 @@ export function AdminCoursesPage() {
 
   return (
     <main className="page" id="main">
+      <AdminNav />
       <h1 tabIndex={-1}>Administration des cours</h1>
-      <AdminTabs current="courses" />
       <p className="hint">Suspension, archivage, restauration, retrait d’une version, suppression d’un brouillon et transfert de propriété. Chaque action est enregistrée avec son motif. Aucune action n’approuve un cours à la place d’un relecteur.</p>
 
       <section aria-labelledby="blocked-reviews-heading">
@@ -367,6 +354,7 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
 
   return (
     <main className="page" id="main">
+      <AdminNav />
       <p className="breadcrumb">
         <Link to={paths.adminCourses}>Administration des cours</Link>
       </p>

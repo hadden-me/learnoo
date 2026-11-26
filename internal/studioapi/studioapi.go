@@ -4,9 +4,10 @@
 // withdraw.go), for error reports (LRN-015, reports.go) and for the Studio
 // catalogue, owned-lesson listing and preview (issue #65, studio.go), for
 // the curriculum hierarchy and its administration (LMS-B02, curriculum.go),
-// for course drafts (LMS-B03, courses.go) and for course review,
-// publication and lifecycle (LMS-B04, course_review.go), documented in
-// docs/API.md.
+// for course drafts (LMS-B03, courses.go), for course review,
+// publication and lifecycle (LMS-B04, course_review.go) and for the
+// administration of accounts, grants, invitations and catalogue names
+// (LMS-B10, admin.go), documented in docs/API.md.
 //
 // Draft and media routes require a session and the global author
 // permission, checked on the server by permissions.Middleware before any
@@ -31,10 +32,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hadden-me/learnoo/internal/accounts"
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/courses"
 	"github.com/hadden-me/learnoo/internal/curriculum"
+	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/permissions"
@@ -73,6 +76,14 @@ type Config struct {
 	Curriculum *curriculum.Store
 	// Courses serves the course draft endpoints (courses.go).
 	Courses *courses.Store
+	// Permissions, Accounts and Invitations serve the administration
+	// endpoints (admin.go), the only HTTP code that changes permissions and
+	// account status.
+	Permissions *permissions.Store
+	Accounts    *accounts.Store
+	Invitations *invitations.Store
+	// Service throttles invitation issuing per administrator (admin.go).
+	Service *auth.Service
 	Log     *slog.Logger
 }
 
@@ -114,6 +125,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	h.registerCurriculum(mux)
 	h.registerCourses(mux)
 	h.registerCourseReview(mux)
+	h.registerAdmin(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or

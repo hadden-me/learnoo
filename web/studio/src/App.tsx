@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ACCOUNT_CHANGED, Api, isApiError, type Session } from './api/client';
 import { describeError } from './api/messages';
+import { noticeFrom } from './api/admin';
 import { StudioContext, allowUnload, useStudio, type Studio } from './context';
 import { Link } from './ui/Link';
 import { BASE, hasBlockingGuard, onNavigate, setLeaveConfirmation, useRoute } from './router';
@@ -129,6 +130,16 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   const route = useRoute();
   const [signingOut, setSigningOut] = useState<'ask' | 'busy' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // A one-time notice passed in the address (api/admin.ts noticeFrom), dropped from it once read.
+  const [notice] = useState(() => noticeFrom(location.search));
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.has('notice')) {
+      params.delete('notice');
+      const rest = params.toString();
+      history.replaceState(history.state, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+    }
+  }, []);
 
   const userId = studio.session.user.id;
   const signOut = useCallback(async () => {
@@ -196,6 +207,11 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
         </div>
       </header>
       {studio.expired && <ExpiredBanner onRenewed={onRenewed} />}
+      {notice && (
+        <p className="banner" role="status">
+          {notice}
+        </p>
+      )}
       {message && (
         <p className="banner error" role="alert">
           {message}

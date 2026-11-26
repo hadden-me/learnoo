@@ -14,6 +14,12 @@ export type EditorialRoute =
   | { name: 'adminLessons' }
   | { name: 'adminCourses' }
   | { name: 'adminCourse'; courseId: number }
+  | { name: 'adminUsers' }
+  | { name: 'adminUser'; userId: number }
+  | { name: 'adminCatalogue' }
+  | { name: 'adminCurriculum' }
+  | { name: 'adminSection'; sectionId: number }
+  | { name: 'adminEdition'; editionId: number }
   | { name: 'publication'; ref: string }
   | { name: 'reports' }
   | { name: 'report'; reportId: number };
@@ -32,6 +38,12 @@ const PATTERNS: Array<[RegExp, (m: RegExpExecArray) => EditorialRoute]> = [
   [/^\/studio\/admin$/, () => ({ name: 'adminLessons' })],
   [/^\/studio\/admin\/courses$/, () => ({ name: 'adminCourses' })],
   [new RegExp(`^/studio/admin/courses/${ID}$`), (m) => ({ name: 'adminCourse', courseId: Number(m[1]) })],
+  [/^\/studio\/admin\/users$/, () => ({ name: 'adminUsers' })],
+  [new RegExp(`^/studio/admin/users/${ID}$`), (m) => ({ name: 'adminUser', userId: Number(m[1]) })],
+  [/^\/studio\/admin\/catalogue$/, () => ({ name: 'adminCatalogue' })],
+  [/^\/studio\/admin\/curriculum$/, () => ({ name: 'adminCurriculum' })],
+  [new RegExp(`^/studio/admin/curriculum/sections/${ID}$`), (m) => ({ name: 'adminSection', sectionId: Number(m[1]) })],
+  [new RegExp(`^/studio/admin/curriculum/editions/${ID}$`), (m) => ({ name: 'adminEdition', editionId: Number(m[1]) })],
   [new RegExp(`^/studio/publication/${LESSON_REF}$`), (m) => ({ name: 'publication', ref: m[1] })],
   [/^\/studio\/reports$/, () => ({ name: 'reports' })],
   [new RegExp(`^/studio/reports/${ID}$`), (m) => ({ name: 'report', reportId: Number(m[1]) })],
@@ -47,6 +59,12 @@ const NAMES = new Set<string>([
   'adminLessons',
   'adminCourses',
   'adminCourse',
+  'adminUsers',
+  'adminUser',
+  'adminCatalogue',
+  'adminCurriculum',
+  'adminSection',
+  'adminEdition',
   'publication',
   'reports',
   'report',
@@ -74,6 +92,12 @@ export const paths = {
   adminLessons: `${BASE}/admin`,
   adminCourses: `${BASE}/admin/courses`,
   adminCourse: (courseId: number) => `${BASE}/admin/courses/${courseId}`,
+  adminUsers: `${BASE}/admin/users`,
+  adminUser: (id: number) => `${BASE}/admin/users/${id}`,
+  adminCatalogue: `${BASE}/admin/catalogue`,
+  adminCurriculum: `${BASE}/admin/curriculum`,
+  adminSection: (id: number) => `${BASE}/admin/curriculum/sections/${id}`,
+  adminEdition: (id: number) => `${BASE}/admin/curriculum/editions/${id}`,
   publication: (ref: string | number) => `${BASE}/publication/${ref}`,
   reports: `${BASE}/reports`,
   report: (id: number) => `${BASE}/reports/${id}`,

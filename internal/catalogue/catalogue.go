@@ -4,11 +4,14 @@
 // display order (0012). Lists are ordered by sort order, then code. Nothing
 // is seeded: the pilot catalogue waits for teacher-confirmed names (LRN-014).
 //
-// Only the operator tools change the catalogue (add-subject, add-chapter,
-// set-subject-name, set-chapter-name, set-order), each change in one
-// transaction with an append-only catalogue_audit row naming the operator
-// label, and the old and new values of a rename or reorder (migrations/0010,
-// 0012). Nothing here changes a code or deletes an entry.
+// Only the operator tools add entries (add-subject, add-chapter). Display
+// names and order are changed by the operator tools (set-subject-name,
+// set-chapter-name, set-order) and, since LMS-B10, by active administrators
+// through the administration API, each change in one transaction with an
+// append-only catalogue_audit row naming the operator label or the
+// administrator (actor_id), and the old and new values of a rename or
+// reorder (migrations/0010, 0012, 0016). Nothing here changes a code or
+// deletes an entry.
 package catalogue
 
 import (
@@ -58,8 +61,9 @@ var (
 	ErrSubjectRetired = errors.New("subject is retired; no chapter can be added to it")
 	// ErrNotFound means the subject does not exist.
 	ErrNotFound = errors.New("subject not found")
-	// ErrOperatorOnly means a non-operator actor tried to change the catalogue.
-	ErrOperatorOnly = errors.New("only operator tools change the catalogue")
+	// ErrOperatorOnly means a non-operator actor tried to add a subject or
+	// chapter.
+	ErrOperatorOnly = errors.New("only operator tools add catalogue entries")
 )
 
 // NormalizeName trims surrounding white space from a display name and
@@ -196,6 +200,68 @@ func (s *Store) Chapters(ctx context.Context, subjectCode string) (Subject, []Ch
 	return subject, chapters, nil
 }
 
+// SubjectWithChapters is a subject and its chapters.
+type SubjectWithChapters struct {
+	Subject
+	Chapters []Chapter
+}
+
+// Tree lists every subject with its chapters, retired entries included,
+// each list by sort order, then code, from one snapshot. More than
+// MaxListed subjects or chapters in all is an error rather than a truncated
+// list. It performs no authorization.
+func (s *Store) Tree(ctx context.Context) ([]SubjectWithChapters, error) {
+	var out []SubjectWithChapters
+	err := pgx.BeginTxFunc(ctx, s.db, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT `+entryColumns+` FROM subjects ORDER BY sort_order, code COLLATE "C", id LIMIT $1`, MaxListed+1)
+		if err != nil {
+			return fmt.Errorf("list subjects: %w", err)
+		}
+		subjects, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Subject, error) { return scanSubject(r) })
+		if err != nil {
+			return fmt.Errorf("list subjects: %w", err)
+		}
+		if len(subjects) > MaxListed {
+			return fmt.Errorf("list subjects: more than %d", MaxListed)
+		}
+		rows, err = tx.Query(ctx, `SELECT subject_id, `+entryColumns+` FROM chapters ORDER BY sort_order, code COLLATE "C", id LIMIT $1`, MaxListed+1)
+		if err != nil {
+			return fmt.Errorf("list chapters: %w", err)
+		}
+		bySubject := map[int64][]Chapter{}
+		count := 0
+		for rows.Next() {
+			var subjectID int64
+			var c Chapter
+			if err := rows.Scan(&subjectID, &c.ID, &c.Code, &c.Names.Fr, &c.Names.Ar, &c.SortOrder, &c.RetiredAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("list chapters: %w", err)
+			}
+			bySubject[subjectID] = append(bySubject[subjectID], c)
+			count++
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("list chapters: %w", err)
+		}
+		if count > MaxListed {
+			return fmt.Errorf("list chapters: more than %d", MaxListed)
+		}
+		out = make([]SubjectWithChapters, 0, len(subjects))
+		for _, sj := range subjects {
+			chapters := bySubject[sj.ID]
+			if chapters == nil {
+				chapters = []Chapter{}
+			}
+			out = append(out, SubjectWithChapters{Subject: sj, Chapters: chapters})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // operatorLabel returns the audit label of an operator actor.
 func operatorLabel(actor permissions.Actor) (string, error) {
 	label := actor.AuditLabel()
@@ -203,6 +269,30 @@ func operatorLabel(actor permissions.Actor) (string, error) {
 		return "", ErrOperatorOnly
 	}
 	return *label, nil
+}
+
+// metadataActor is who changes display metadata: an operator (label) or an
+// administrator (actor_id). A user actor is rechecked inside tx, first, so
+// the permission and account rows are locked before any catalogue entry
+// (docs/LMS_CONTRACT.md §2): a revocation or disablement committed before
+// the change denies it.
+type metadataActor struct {
+	label   *string
+	actorID *int64
+}
+
+func authorizeMetadata(ctx context.Context, tx pgx.Tx, actor permissions.Actor) (metadataActor, error) {
+	if label := actor.AuditLabel(); label != nil {
+		return metadataActor{label: label}, nil
+	}
+	id := actor.AuditID()
+	if id == nil {
+		return metadataActor{}, permissions.ErrDenied
+	}
+	if err := permissions.RequireTx(ctx, tx, *id, permissions.Administrator); err != nil {
+		return metadataActor{}, err
+	}
+	return metadataActor{actorID: id}, nil
 }
 
 // AddSubject adds a subject with this code and audits it, in one
@@ -370,6 +460,12 @@ func lockChapter(ctx context.Context, tx pgx.Tx, subjectCode, code string) (Subj
 // (rename_subject, old and new names) are written in one transaction.
 // changed is false, and nothing is written, when the names are already
 // these. An unknown subject is ErrNotFound.
+//
+// actor is an operator (audited with its label) or a user who must be an
+// active administrator, rechecked first inside the transaction
+// (permissions.RequireTx; permissions.ErrDenied otherwise) and audited as
+// actor_id. The same holds for SetChapterNames, SetSubjectOrder and
+// SetChapterOrder.
 func (s *Store) SetSubjectNames(ctx context.Context, actor permissions.Actor, code string, fr, ar *string) (sj Subject, changed bool, err error) {
 	if !ValidCode(code) {
 		return Subject{}, false, ErrInvalidCode
@@ -378,11 +474,11 @@ func (s *Store) SetSubjectNames(ctx context.Context, actor permissions.Actor, co
 	if err != nil {
 		return Subject{}, false, err
 	}
-	label, err := operatorLabel(actor)
-	if err != nil {
-		return Subject{}, false, err
-	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		who, err := authorizeMetadata(ctx, tx, actor)
+		if err != nil {
+			return err
+		}
 		cur, err := lockSubject(ctx, tx, code)
 		if err != nil {
 			return err
@@ -393,8 +489,8 @@ func (s *Store) SetSubjectNames(ctx context.Context, actor permissions.Actor, co
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO catalogue_audit (operator_label, action, subject_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
-			VALUES ($1, 'rename_subject', $2, $3, $4, $5, $6)`, label, cur.ID, cur.Names.Fr, cur.Names.Ar, next.Fr, next.Ar); err != nil {
+			INSERT INTO catalogue_audit (operator_label, actor_id, action, subject_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
+			VALUES ($1, $7, 'rename_subject', $2, $3, $4, $5, $6)`, who.label, cur.ID, cur.Names.Fr, cur.Names.Ar, next.Fr, next.Ar, who.actorID); err != nil {
 			return fmt.Errorf("audit rename: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE subjects SET name_fr = $2, name_ar = $3 WHERE id = $1`, cur.ID, next.Fr, next.Ar); err != nil {
@@ -420,13 +516,12 @@ func (s *Store) SetChapterNames(ctx context.Context, actor permissions.Actor, su
 	if err != nil {
 		return Subject{}, Chapter{}, false, err
 	}
-	label, err := operatorLabel(actor)
-	if err != nil {
-		return Subject{}, Chapter{}, false, err
-	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		who, err := authorizeMetadata(ctx, tx, actor)
+		if err != nil {
+			return err
+		}
 		var cur Chapter
-		var err error
 		sj, cur, err = lockChapter(ctx, tx, subjectCode, code)
 		if err != nil {
 			return err
@@ -437,8 +532,8 @@ func (s *Store) SetChapterNames(ctx context.Context, actor permissions.Actor, su
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO catalogue_audit (operator_label, action, subject_id, chapter_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
-			VALUES ($1, 'rename_chapter', $2, $3, $4, $5, $6, $7)`, label, sj.ID, cur.ID, cur.Names.Fr, cur.Names.Ar, next.Fr, next.Ar); err != nil {
+			INSERT INTO catalogue_audit (operator_label, actor_id, action, subject_id, chapter_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
+			VALUES ($1, $8, 'rename_chapter', $2, $3, $4, $5, $6, $7)`, who.label, sj.ID, cur.ID, cur.Names.Fr, cur.Names.Ar, next.Fr, next.Ar, who.actorID); err != nil {
 			return fmt.Errorf("audit rename: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE chapters SET name_fr = $2, name_ar = $3 WHERE id = $1`, cur.ID, next.Fr, next.Ar); err != nil {
@@ -464,11 +559,11 @@ func (s *Store) SetSubjectOrder(ctx context.Context, actor permissions.Actor, co
 	if !ValidSortOrder(order) {
 		return Subject{}, false, ErrInvalidSortOrder
 	}
-	label, err := operatorLabel(actor)
-	if err != nil {
-		return Subject{}, false, err
-	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		who, err := authorizeMetadata(ctx, tx, actor)
+		if err != nil {
+			return err
+		}
 		cur, err := lockSubject(ctx, tx, code)
 		if err != nil {
 			return err
@@ -478,8 +573,8 @@ func (s *Store) SetSubjectOrder(ctx context.Context, actor permissions.Actor, co
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO catalogue_audit (operator_label, action, subject_id, old_sort_order, new_sort_order)
-			VALUES ($1, 'reorder_subject', $2, $3, $4)`, label, cur.ID, cur.SortOrder, order); err != nil {
+			INSERT INTO catalogue_audit (operator_label, actor_id, action, subject_id, old_sort_order, new_sort_order)
+			VALUES ($1, $5, 'reorder_subject', $2, $3, $4)`, who.label, cur.ID, cur.SortOrder, order, who.actorID); err != nil {
 			return fmt.Errorf("audit reorder: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE subjects SET sort_order = $2 WHERE id = $1`, cur.ID, order); err != nil {
@@ -504,13 +599,12 @@ func (s *Store) SetChapterOrder(ctx context.Context, actor permissions.Actor, su
 	if !ValidSortOrder(order) {
 		return Subject{}, Chapter{}, false, ErrInvalidSortOrder
 	}
-	label, err := operatorLabel(actor)
-	if err != nil {
-		return Subject{}, Chapter{}, false, err
-	}
 	err = pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		who, err := authorizeMetadata(ctx, tx, actor)
+		if err != nil {
+			return err
+		}
 		var cur Chapter
-		var err error
 		sj, cur, err = lockChapter(ctx, tx, subjectCode, code)
 		if err != nil {
 			return err
@@ -520,8 +614,8 @@ func (s *Store) SetChapterOrder(ctx context.Context, actor permissions.Actor, su
 			return nil
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO catalogue_audit (operator_label, action, subject_id, chapter_id, old_sort_order, new_sort_order)
-			VALUES ($1, 'reorder_chapter', $2, $3, $4, $5)`, label, sj.ID, cur.ID, cur.SortOrder, order); err != nil {
+			INSERT INTO catalogue_audit (operator_label, actor_id, action, subject_id, chapter_id, old_sort_order, new_sort_order)
+			VALUES ($1, $6, 'reorder_chapter', $2, $3, $4, $5)`, who.label, sj.ID, cur.ID, cur.SortOrder, order, who.actorID); err != nil {
 			return fmt.Errorf("audit reorder: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE chapters SET sort_order = $2 WHERE id = $1`, cur.ID, order); err != nil {

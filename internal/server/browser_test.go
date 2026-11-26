@@ -73,6 +73,12 @@ func TestBrowserReaderServer(t *testing.T) {
 	svt := f.newSubject("test-svt")
 	f.setName(f.newUser("test-svt-a", svt, permissions.Author, permissions.Reviewer).id, "TEST Auteur SVT Anis")
 	f.setName(f.newUser("test-svt-b", svt, permissions.Author, permissions.Reviewer).id, "TEST Autrice SVT Bochra")
+	// Accounts for the administration tests (tests/browser-reader/
+	// admin.spec.mjs), used by no other test: a signed-up account without
+	// permissions that an administrator makes a reviewer, and an author that
+	// an administrator disables and enables again.
+	f.setName(f.newUser("test-onboard", 0).id, "TEST Enseignant à intégrer")
+	f.setName(f.newUser("test-suspend", 0, permissions.Author).id, "TEST Compte à suspendre")
 	ch := f.chapter(f.subject, "test-chapter")
 	// A second chapter with no lessons, retired by the course chapter
 	// retirement spec without affecting the specs that use test-chapter.
