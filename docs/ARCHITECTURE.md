@@ -1,5 +1,9 @@
 # Architecture
 
+## LMS extension contract
+
+The next milestone adds teacher-owned courses/modules and immutable course revisions, plus versioned level/section/subject curriculum assignments; see [LMS_PRODUCT_SPEC.md §2–5](LMS_PRODUCT_SPEC.md#2-vocabulary-and-data-relationships). These are requirements to implement, not existing tables. Preserve the Go monolith, PostgreSQL and existing lesson identities. Agree the pinned-course-revision reader/API contract before parallel changes. Existing standalone lesson URLs/bookmarks and audit history must survive upgrades. The real homepage is served by the application; the renderer experiment stays isolated.
+
 Status: selected direction; renderer and detailed schema pending prototype.
 
 ## Components

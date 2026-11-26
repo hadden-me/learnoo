@@ -8,9 +8,12 @@ Free, community-driven learning for Tunisian Baccalauréat students.
 
 Learnoo will combine curriculum-aligned lessons, exercises, and educational videos with a native teacher contribution and review workflow. Students will access learning materials through free accounts. Teachers will contribute through Learnoo Studio; developers will collaborate here.
 
-**Status:** a local Go + KaTeX renderer experiment is available. It is not the deployed learning platform; authentication, editorial publishing, and database persistence are not implemented. All sample lessons are unreviewed.
+**Status:** the internal lesson-authoring, review and student-reader workflow is implemented on `develop`. It is not the complete or deployed LMS. Teacher course management, curriculum structure and student discovery are defined in the product-completion specification; human and release gates remain open.
 
 ## Start here
+
+- [Complete LMS product specification](docs/LMS_PRODUCT_SPEC.md)
+- [Product-completion delivery backlog](docs/LMS_DELIVERY_BACKLOG.md)
 
 - [Cahier des charges: status, access levels and plan to v1.0](docs/CAHIER_DES_CHARGES.md)
 - [Run and test the local prototype](docs/DEVELOPMENT.md)
@@ -28,13 +31,13 @@ Learnoo will combine curriculum-aligned lessons, exercises, and educational vide
 
 Prove that one representative lesson can be edited, saved, reopened, and rendered correctly with Arabic, French, mathematics, an image, a YouTube reference, and a worked example. Begin with restricted Go rendering and locally hosted browser-side KaTeX; measure mobile performance before considering server-side JavaScript. Pilot exercises live inside lesson revisions, with one active candidate (draft, in review, or approved but unpublished) per lesson.
 
-Next, implement the author → reviewer/publisher → student workflow with real permissions, safe revisions, and tested recovery.
+The author → reviewer/publisher → student workflow now has a working internal implementation. The next milestone completes teacher-managed courses and student arrival/discovery; see the LMS product specification.
 
 ## Planned stack
 
 Go modular monolith · PostgreSQL · server-rendered learning pages · React/TypeScript/TipTap Studio · Docker Compose · YouTube video hosting.
 
-The experiment uses Go 1.25+, KaTeX 0.19.1 and Playwright 1.65.1; see [development instructions](docs/DEVELOPMENT.md). React/TipTap and PostgreSQL are planned for later milestones.
+The experiment uses Go 1.25+, KaTeX 0.19.1 and Playwright 1.65.1; see [development instructions](docs/DEVELOPMENT.md). React/TipTap Studio and PostgreSQL now support the internal application.
 
 ## Scope and licensing
 
