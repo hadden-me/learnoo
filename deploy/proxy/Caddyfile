@@ -1,0 +1,119 @@
+# Learnoo reference reverse proxy (issue 87). A reference to adapt, NOT a
+# deployed configuration: see docs/DEPLOYMENT.md ("Reference reverse proxy").
+# Used by deploy/compose.proxy.yaml; every {$VAR:default} comes from the
+# container environment set there.
+#
+# What it does:
+#   - TLS for LEARNOO_PROXY_SITE (default: localhost with Caddy's local CA,
+#     "tls internal"); HTTP -> HTTPS redirect (Caddy's automatic HTTPS).
+#   - HSTS on HTTPS responses (max-age configurable, no includeSubDomains,
+#     no preload).
+#   - Replaces any client-supplied X-Forwarded-For with the single address of
+#     the connecting client (no trusted_proxies here, so Caddy trusts no
+#     incoming forwarding header); the app trusts only this proxy's /32.
+#   - Answers /healthz and /readyz with 404 (container health checks run
+#     inside the app container and never pass through here).
+#   - Limits request bodies and sets timeouts.
+#   - Does not cache anything: stock Caddy has no response cache. The app's
+#     Cache-Control (no-store / private, no-store; public only for the
+#     fingerprinted /assets/<version>/<name> files) is passed through
+#     unchanged to browsers and any CDN.
+#   - JSON access log on stdout without cookies, credentials, Referer, query
+#     strings or invitation tokens.
+{
+	# No admin API: the configuration only changes by restarting the container.
+	admin off
+	# The local CA (tls internal) is not installed into any trust store.
+	skip_install_trust
+
+	# Non-access logs (errors) can include the request; apply the same filter.
+	log default {
+		output stdout
+		format filter {
+			wrap json
+			request>uri regexp "^(/invite/)[^?]*|(\?).*$" "${1}${2}REDACTED"
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			request>headers>Proxy-Authorization delete
+			request>headers>Referer delete
+			request>headers>X-Csrf-Token delete
+		}
+	}
+
+	servers {
+		# HTTP/1.1 and HTTP/2 only: HTTP/3 would need UDP 443 published too.
+		protocols h1 h2
+		timeouts {
+			read_header {$LEARNOO_PROXY_READ_HEADER_TIMEOUT:10s}
+			# Covers a 5 MiB image upload on a slow connection.
+			read_body {$LEARNOO_PROXY_READ_BODY_TIMEOUT:60s}
+			write {$LEARNOO_PROXY_WRITE_TIMEOUT:90s}
+			idle {$LEARNOO_PROXY_IDLE_TIMEOUT:2m}
+		}
+	}
+}
+
+{$LEARNOO_PROXY_SITE:localhost} {
+	# "internal" = Caddy's own local CA (testing). For a real domain set an
+	# ACME contact email instead, or an explicit "cert.pem key.pem" pair.
+	tls {$LEARNOO_PROXY_TLS:internal}
+
+	log {
+		output stdout
+		format filter {
+			wrap json
+			# /invite/<token> -> /invite/REDACTED; any query string -> ?REDACTED.
+			request>uri regexp "^(/invite/)[^?]*|(\?).*$" "${1}${2}REDACTED"
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			request>headers>Proxy-Authorization delete
+			request>headers>Referer delete
+			request>headers>X-Csrf-Token delete
+			resp_headers>Set-Cookie delete
+			resp_headers>Location delete
+		}
+	}
+
+	# Probes are for container health checks and internal monitoring only.
+	# The path matcher compares the decoded, case-insensitive path, so
+	# /%68ealthz or /HEALTHZ are caught too.
+	@probes path /healthz /healthz/* /readyz /readyz/*
+	respond @probes 404 {
+		close
+	}
+
+	# 5 MiB media upload (internal/media MaxUploadBytes) plus headroom; every
+	# other body the app accepts is far smaller (lesson JSON 256 KiB).
+	# A declared Content-Length above the limit is refused before anything
+	# reaches the app; a body without one (chunked) is cut off at the limit
+	# while it is read.
+	@oversized expression `{http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > {$LEARNOO_PROXY_MAX_BODY_BYTES:6291456}`
+	respond @oversized 413 {
+		close
+	}
+	request_body {
+		max_size {$LEARNOO_PROXY_MAX_BODY_BYTES:6291456}
+	}
+
+	header {
+		Strict-Transport-Security "max-age={$LEARNOO_PROXY_HSTS_MAX_AGE:31536000}"
+		-Server
+		# Defaults only for responses the app did not produce (redirects,
+		# probe 404s, proxy errors); the app's own headers, including its
+		# per-page Content-Security-Policy, are never overridden.
+		?Cache-Control "no-store"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "same-origin"
+		?Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+	}
+
+	reverse_proxy {$LEARNOO_PROXY_UPSTREAM:app:8090} {
+		# Host, Cookie, Origin and Sec-Fetch-Site are passed unchanged.
+		# X-Forwarded-For is set to the connecting client's address only.
+		transport http {
+			dial_timeout 5s
+			response_header_timeout {$LEARNOO_PROXY_UPSTREAM_TIMEOUT:60s}
+		}
+	}
+}
