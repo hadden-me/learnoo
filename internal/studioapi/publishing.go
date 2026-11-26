@@ -118,6 +118,12 @@ type withdrawalInfoJSON struct {
 	WithdrawnAt     time.Time `json:"withdrawnAt"`
 }
 
+type submissionInfoJSON struct {
+	SubmittedBy int64     `json:"submittedBy"`
+	SubmittedAt time.Time `json:"submittedAt"`
+	Backfilled  bool      `json:"backfilled"`
+}
+
 type lessonRevisionJSON struct {
 	ID             int64               `json:"id"`
 	Number         int                 `json:"number"`
@@ -134,6 +140,7 @@ type lessonRevisionJSON struct {
 	Candidate      bool                `json:"candidate"`
 	Withdrawn      bool                `json:"withdrawn"`
 	Withdrawal     *withdrawalInfoJSON `json:"withdrawal"`
+	Submission     *submissionInfoJSON `json:"submission"`
 }
 
 type pointerEventJSON struct {
@@ -186,6 +193,10 @@ func (h *Handlers) lessonPublication(w http.ResponseWriter, r *http.Request) {
 		if lp.Full {
 			id, name := rv.AuthorID, rv.AuthorName
 			out.Revisions[i].AuthorID, out.Revisions[i].AuthorName = &id, &name
+		}
+		if sub := rv.Submission; sub != nil {
+			out.Revisions[i].Submission = &submissionInfoJSON{SubmittedBy: sub.ActorID, SubmittedAt: sub.SubmittedAt,
+				Backfilled: sub.Backfilled}
 		}
 		if wd := rv.Withdrawal; wd != nil {
 			out.Revisions[i].Withdrawal = &withdrawalInfoJSON{WithdrawnBy: wd.ActorID, WithdrawnByName: rv.WithdrawnByName,
