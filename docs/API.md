@@ -768,6 +768,21 @@ Submission, independent review, amendments, publication, suspension, archive, wi
 - `409 ineligible` bodies carry `"steps": [{"moduleKey", "position", "title", "lessonId", "revisionId"}…]` next to `code` and `message`; `422 incomplete` carries `"fields"`; `403 not_eligible_reviewer` carries `"reasons"`.
 - Reader views (used by B08): `reader_published_courses` (readable courses: pointer set, not archived, published revision approved and not withdrawn) and `reader_course_steps` (every step of a readable course with `readable`; `lesson_title` and `content` are `NULL` for an unreadable step).
 
+## Public pages (LMS-B07)
+
+Server-rendered HTML, readable without an account, identical for every visitor ([LMS_CONTRACT.md §9](LMS_CONTRACT.md#9-reader-and-public-routes-b07b08)). They are mounted without the session middleware: the cookie is never read or cleared, and no user, CSRF token or signed-in navigation appears. Headers: `Cache-Control: public, no-cache`, a strong `ETag` of the page (`If-None-Match` answers `304`), no `Vary`, the reader's page CSP; `404` notices and every cover `404` are `no-store` without an `ETag`. A `GET` route also answers `HEAD`.
+
+| Route | Content |
+| --- | --- |
+| `GET /` | Homepage: the free service, the review process, the contribution path (Studio access by invitation), sign-in and catalogue links, and the curriculum actually available (non-retired levels and sections with a current edition, subjects with real counts of readable courses and placed lessons). No registration link. |
+| `GET /catalogue` | Levels and sections with their current edition; published lessons not yet placed in an edition, by subject (the only place they are listed). |
+| `GET /catalogue/{level}/{section}[?edition={code}]` | The section in its current edition (or the named current, superseded or retired edition, labelled as earlier), its subjects, and links to its earlier editions. |
+| `GET /catalogue/{level}/{section}/{subject}[?edition={code}]` | Readable courses placed in that edition's assignment; published lessons whose published revision's chapter the assignment lists (by its chapter order). Courses and lessons are labelled. Lessons not yet placed are never listed under a level, section or edition. |
+| `GET /courses/{publicId}` | Overview of a course in `reader_published_courses`: title, summary, objectives, prerequisites, language, subject, placements with edition labels, module titles and course-authored step titles (with an unavailable notice for unreadable steps), author and course reviewer, cover with its alt text, and a sign-in link to `/login?next=/learn/courses/{publicId}`. |
+| `GET /courses/{publicId}/cover` | The cover image of the published revision of a readable course (`ETag`, the media CSP). Anything else: JSON `404 not_found`. |
+
+Unknown or malformed codes, draft editions, a repeated or empty `edition` parameter, a subject the edition does not assign and a course that is not readable (unknown, never published, suspended, archived) get a `404` notice page; a course has no fallback to an earlier revision. Lesson links lead to the signed-in reader, which redirects to sign-in.
+
 ## Not yet defined
 
 Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); the pilot catalogue seed (LRN-014, waiting for teacher-confirmed names); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
