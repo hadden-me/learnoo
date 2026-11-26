@@ -12,6 +12,7 @@ import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 import { CanonicalPreview, ErrorPage, LoadingPage, dirOf, useEditorial, useLoad } from './common';
+import { CoursePublishQueue } from './CourseReviewPages';
 
 export const STALE_BASE_EXPLANATION =
   'La version publiée de la leçon a changé depuis la rédaction de cette révision (dépublication ou restauration) : le serveur refusera de la publier. Une révision réconciliée doit être rédigée et relue ; un administrateur peut retirer celle-ci pour débloquer la leçon.';
@@ -22,7 +23,8 @@ export function PublishQueuePage() {
   return (
     <main className="page" id="main">
       <h1 tabIndex={-1}>Publication</h1>
-      <p className="hint">Révisions approuvées par un relecteur et jamais publiées, les plus anciennes d’abord. La publication remplace la version que lisent les élèves.</p>
+      <p className="hint">Leçons et cours approuvés par un relecteur et jamais publiés, les plus anciens d’abord. La publication remplace la version que lisent les élèves.</p>
+      <h2>Leçons</h2>
       {queue.state === 'loading' && <p role="status">Chargement des révisions à publier…</p>}
       {queue.state === 'error' && (
         <p className="banner error" role="alert">
@@ -34,9 +36,9 @@ export function PublishQueuePage() {
         <ul className="lesson-list" aria-label="Révisions approuvées à publier">
           {queue.data.map((item) => (
             <li key={item.revisionId} className="lesson-card">
-              <h2 lang={item.language} dir={dirOf(item.language)}>
+              <h3 lang={item.language} dir={dirOf(item.language)}>
                 <Link to={paths.publishRevision(item.revisionId)}>{item.title}</Link>
-              </h2>
+              </h3>
               <p className="lesson-meta">
                 <span className="state state-approved">Approuvée</span>
                 {item.staleBase && <span className="state state-changes">Base périmée : publication impossible</span>}
@@ -52,6 +54,7 @@ export function PublishQueuePage() {
           ))}
         </ul>
       )}
+      <CoursePublishQueue />
     </main>
   );
 }

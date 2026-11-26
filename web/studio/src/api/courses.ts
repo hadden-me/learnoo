@@ -77,6 +77,10 @@ export interface CourseRevisionSummary {
   title: string;
   version: number;
   updatedAt: string;
+  /** Withdrawn by an administrator (LMS-B04): it no longer counts as the course's candidate. */
+  withdrawn?: boolean;
+  /** A publication or restoration named it: it no longer holds the candidate slot, even when not current. */
+  everPublished?: boolean;
 }
 
 export interface Course {
@@ -87,6 +91,8 @@ export interface Course {
   language: 'fr' | 'ar';
   publishedRevisionId: number | null;
   archived: boolean;
+  /** Not archived, no published revision, and the last pointer change was an administrator's suspension. */
+  suspended?: boolean;
   createdAt: string;
   /** Only in the list; absent when the course has no revision (its only draft was discarded). */
   latestRevision?: CourseRevisionSummary;

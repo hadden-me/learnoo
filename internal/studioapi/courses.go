@@ -51,6 +51,9 @@ type courseRevisionSummaryJSON struct {
 	Title     string         `json:"title"`
 	Version   int            `json:"version"`
 	UpdatedAt time.Time      `json:"updatedAt"`
+	Withdrawn bool           `json:"withdrawn"`
+	// EverPublished: a publication or restoration named the revision.
+	EverPublished bool `json:"everPublished"`
 }
 
 type courseJSON struct {
@@ -61,6 +64,7 @@ type courseJSON struct {
 	Language            string                     `json:"language"`
 	PublishedRevisionID *int64                     `json:"publishedRevisionId"`
 	Archived            bool                       `json:"archived"`
+	Suspended           bool                       `json:"suspended"`
 	CreatedAt           time.Time                  `json:"createdAt"`
 	LatestRevision      *courseRevisionSummaryJSON `json:"latestRevision,omitempty"`
 }
@@ -92,28 +96,33 @@ type moduleJSON struct {
 }
 
 type courseRevisionJSON struct {
-	ID                int64           `json:"id"`
-	CourseID          int64           `json:"courseId"`
-	Number            int             `json:"number"`
-	Status            courses.Status  `json:"status"`
-	Kind              string          `json:"kind"`
-	AuthorID          int64           `json:"authorId"`
-	BaseRevisionID    *int64          `json:"baseRevisionId"`
-	CompareRevisionID *int64          `json:"compareRevisionId"`
-	SubjectID         int64           `json:"subjectId"`
-	Language          string          `json:"language"`
-	Title             string          `json:"title"`
-	Summary           string          `json:"summary"`
-	Objectives        string          `json:"objectives"`
-	Prerequisites     string          `json:"prerequisites"`
-	CoverMediaID      *int64          `json:"coverMediaId"`
-	CoverAlt          *string         `json:"coverAlt"`
-	Version           int             `json:"version"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	UpdatedAt         time.Time       `json:"updatedAt"`
-	SubmittedAt       *time.Time      `json:"submittedAt"`
-	Assignments       []placementJSON `json:"assignments"`
-	Modules           []moduleJSON    `json:"modules"`
+	ID                int64          `json:"id"`
+	CourseID          int64          `json:"courseId"`
+	Number            int            `json:"number"`
+	Status            courses.Status `json:"status"`
+	Kind              string         `json:"kind"`
+	AuthorID          int64          `json:"authorId"`
+	BaseRevisionID    *int64         `json:"baseRevisionId"`
+	CompareRevisionID *int64         `json:"compareRevisionId"`
+	SubjectID         int64          `json:"subjectId"`
+	Language          string         `json:"language"`
+	Title             string         `json:"title"`
+	Summary           string         `json:"summary"`
+	Objectives        string         `json:"objectives"`
+	Prerequisites     string         `json:"prerequisites"`
+	CoverMediaID      *int64         `json:"coverMediaId"`
+	CoverAlt          *string        `json:"coverAlt"`
+	Version           int            `json:"version"`
+	CreatedAt         time.Time      `json:"createdAt"`
+	UpdatedAt         time.Time      `json:"updatedAt"`
+	SubmittedAt       *time.Time     `json:"submittedAt"`
+	WithdrawnAt       *time.Time     `json:"withdrawnAt"`
+	// The review decision (null until decided) and, for a revision in
+	// review that no active reviewer may decide, why (LMS-B04).
+	Review      *courseDecisionJSON `json:"review"`
+	Blocked     *blockedJSON        `json:"blocked"`
+	Assignments []placementJSON     `json:"assignments"`
+	Modules     []moduleJSON        `json:"modules"`
 	// Only on POST /api/courses/{id}/drafts.
 	DroppedSteps *[]droppedStepJSON `json:"droppedSteps,omitempty"`
 }
@@ -128,7 +137,7 @@ type droppedStepJSON struct {
 
 func toCourseJSON(c courses.Course) courseJSON {
 	return courseJSON{ID: c.ID, PublicID: c.PublicID, OwnerID: c.OwnerID, SubjectID: c.SubjectID, Language: c.Language,
-		PublishedRevisionID: c.PublishedRevisionID, Archived: c.ArchivedAt != nil, CreatedAt: c.CreatedAt}
+		PublishedRevisionID: c.PublishedRevisionID, Archived: c.ArchivedAt != nil, Suspended: c.Suspended, CreatedAt: c.CreatedAt}
 }
 
 func toCourseRevisionJSON(r courses.Revision) courseRevisionJSON {
@@ -136,7 +145,8 @@ func toCourseRevisionJSON(r courses.Revision) courseRevisionJSON {
 		AuthorID: r.AuthorID, BaseRevisionID: r.BaseRevisionID, CompareRevisionID: r.CompareRevisionID,
 		SubjectID: r.SubjectID, Language: r.Language, Title: r.Title, Summary: r.Summary, Objectives: r.Objectives,
 		Prerequisites: r.Prerequisites, CoverMediaID: r.CoverMediaID, CoverAlt: r.CoverAlt, Version: r.Version,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, SubmittedAt: r.SubmittedAt,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, SubmittedAt: r.SubmittedAt, WithdrawnAt: r.WithdrawnAt,
+		Review: toCourseDecisionJSON(r.Decision), Blocked: toBlockedJSON(r.Blocked),
 		Assignments: []placementJSON{}, Modules: []moduleJSON{}}
 	for _, p := range r.Assignments {
 		out.Assignments = append(out.Assignments, placementJSON{AssignmentID: p.AssignmentID, EditionID: p.EditionID,
@@ -302,7 +312,7 @@ func (h *Handlers) listCourses(w http.ResponseWriter, r *http.Request) {
 		if c.Latest != nil {
 			l := c.Latest
 			out[i].LatestRevision = &courseRevisionSummaryJSON{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title,
-				Version: l.Version, UpdatedAt: l.UpdatedAt}
+				Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn, EverPublished: l.EverPublished}
 		}
 	}
 	var cursor *string
@@ -523,6 +533,7 @@ func (h *Handlers) writeCourseError(w http.ResponseWriter, op string, err error)
 		auth.WriteError(w, http.StatusForbidden, "forbidden", "You do not have permission to do this.")
 	case errors.Is(err, courses.ErrNotFound):
 		notFound(w)
+	case writeCourseWorkflowError(w, err):
 	case errors.Is(err, courses.ErrInvalidStep):
 		unprocessable("invalid_step", detail(err, courses.ErrInvalidStep, "A step cannot be attached to this course."))
 	case errors.Is(err, courses.ErrPlacementInvalid):

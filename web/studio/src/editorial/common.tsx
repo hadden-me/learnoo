@@ -80,6 +80,17 @@ export function SubjectName({ subjects, id }: { subjects: Map<number, Subject>; 
  * will show it. Read-only.
  */
 export function CanonicalPreview({ content, testId, mediaRoute }: { content: unknown; testId: string; mediaRoute: MediaRoute }) {
+  // Nothing sent (a withdrawn or unpublished lesson): nothing is requested or rendered.
+  if (content === null || content === undefined)
+    return (
+      <p className="hint" data-testid={testId}>
+        Contenu indisponible (leçon retirée ou dépubliée).
+      </p>
+    );
+  return <RenderedPreview content={content} testId={testId} mediaRoute={mediaRoute} />;
+}
+
+function RenderedPreview({ content, testId, mediaRoute }: { content: unknown; testId: string; mediaRoute: MediaRoute }) {
   const { api } = useStudio();
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);

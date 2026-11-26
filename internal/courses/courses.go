@@ -114,7 +114,14 @@ type Course struct {
 	PublishedRevisionID *int64
 	ArchivedAt          *time.Time
 	CreatedAt           time.Time
+	// Suspended: not archived, no published revision, and the last pointer
+	// change was a suspension (LMS-B04).
+	Suspended bool
 }
+
+// suspendedSQL computes Course.Suspended for the courses row c.
+const suspendedSQL = `(c.published_revision_id IS NULL AND c.archived_at IS NULL AND coalesce((
+	SELECT a.action = 'suspend' FROM course_publication_audit a WHERE a.course_id = c.id ORDER BY a.id DESC LIMIT 1), false))`
 
 // Revision is a stored course revision with its children.
 type Revision struct {
@@ -138,8 +145,15 @@ type Revision struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	SubmittedAt       *time.Time
-	Assignments       []Placement
-	Modules           []Module
+	// WithdrawnAt is set once an administrator withdrew the revision.
+	WithdrawnAt *time.Time
+	// Decision is the review decision, nil until decided.
+	Decision *Decision
+	// Blocked is set, for a revision in review that no active reviewer of
+	// its subject may decide, with the disqualifications.
+	Blocked     *Blocked
+	Assignments []Placement
+	Modules     []Module
 	// DroppedSteps lists, only on the result of CreateDraft, the steps of
 	// the copied revision that were left out because another author's
 	// lesson is no longer attachable at its pinned revision.
@@ -430,6 +444,9 @@ func mapErr(err error) error {
 		if strings.Contains(pgErr.Message, "is not eligible") {
 			return errors.Join(ErrInvalidStep, err)
 		}
+		if strings.Contains(pgErr.Message, "changed concurrently") {
+			return errors.Join(ErrRetry, err)
+		}
 		return errors.Join(ErrImmutable, err)
 	}
 	return err
@@ -566,9 +583,10 @@ func (s *Store) CreateCourse(ctx context.Context, actor, subjectID int64, langua
 func loadCourse(ctx context.Context, tx pgx.Tx, id int64) (Course, error) {
 	var c Course
 	err := tx.QueryRow(ctx, `
-		SELECT id, public_id::text, owner_id, subject_id, language, published_revision_id, archived_at, created_at
-		  FROM courses WHERE id = $1`, id).Scan(&c.ID, &c.PublicID, &c.OwnerID, &c.SubjectID, &c.Language,
-		&c.PublishedRevisionID, &c.ArchivedAt, &c.CreatedAt)
+		SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
+		       `+suspendedSQL+`
+		  FROM courses c WHERE c.id = $1`, id).Scan(&c.ID, &c.PublicID, &c.OwnerID, &c.SubjectID, &c.Language,
+		&c.PublishedRevisionID, &c.ArchivedAt, &c.CreatedAt, &c.Suspended)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -589,7 +607,15 @@ type RevisionSummary struct {
 	Title     string
 	Version   int
 	UpdatedAt time.Time
+	// Withdrawn by an administrator (LMS-B04).
+	Withdrawn bool
+	// EverPublished: a publish or restore row names the revision, so it
+	// no longer holds the candidate slot even when it is not current.
+	EverPublished bool
 }
+
+// everPublishedSQL computes RevisionSummary.EverPublished for the revision row r.
+const everPublishedSQL = `EXISTS (SELECT 1 FROM course_publication_audit a WHERE a.course_id = r.course_id AND a.revision_id = r.id)`
 
 // Owned pages through the courses actor owns, newest first (by course
 // ID): before is the last course ID of the previous page (0 for the
@@ -600,9 +626,10 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 	err := s.read(ctx, actor, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
-			       r.id, r.revision_number, r.status, r.title, r.version, r.updated_at
+			       `+suspendedSQL+`, r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL,
+			       `+everPublishedSQL+`
 			  FROM courses c
-			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at FROM course_revisions
+			  LEFT JOIN LATERAL (SELECT id, course_id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
 			                      WHERE course_id = c.id ORDER BY revision_number DESC LIMIT 1) r ON true
 			 WHERE c.owner_id = $1 AND ($2 = 0 OR c.id < $2)
 			 ORDER BY c.id DESC
@@ -616,10 +643,12 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 			var number, version *int
 			var status, title *string
 			var updated *time.Time
+			var withdrawn, ever *bool
 			err := row.Scan(&o.ID, &o.PublicID, &o.OwnerID, &o.SubjectID, &o.Language, &o.PublishedRevisionID, &o.ArchivedAt,
-				&o.CreatedAt, &id, &number, &status, &title, &version, &updated)
+				&o.CreatedAt, &o.Suspended, &id, &number, &status, &title, &version, &updated, &withdrawn, &ever)
 			if err == nil && id != nil {
-				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated}
+				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated,
+					Withdrawn: *withdrawn, EverPublished: *ever}
 			}
 			return o, err
 		})
@@ -648,7 +677,8 @@ func (s *Store) DeleteCourse(ctx context.Context, actor, courseID int64) error {
 			return err
 		}
 		var history bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM course_revisions WHERE course_id = $1 AND status <> 'draft')`,
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM course_revisions WHERE course_id = $1 AND status <> 'draft')
+			OR EXISTS (SELECT 1 FROM course_lifecycle_audit WHERE course_id = $1)`,
 			courseID).Scan(&history); err != nil {
 			return err
 		}
@@ -665,8 +695,9 @@ func (s *Store) DeleteCourse(ctx context.Context, actor, courseID int64) error {
 // CreateDraft starts a new draft of actor's course. It copies the course's
 // latest revision (overview, cover if actor uploaded it, placements, modules
 // and the steps still attachable, the others listed in DroppedSteps) or,
-// without one, starts empty. Its base and comparison are the
-// published pointer. While the course has an active candidate it returns
+// without one, starts empty. Its base is the published pointer and its
+// comparison course_comparison_revision (the pointer, or while suspended or
+// archived the last published or restored revision not withdrawn). While the course has an active candidate it returns
 // ErrActiveCandidateExists. The copy is not validated: a step or placement
 // that is no longer allowed is reported by the next save.
 func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revision, error) {
@@ -725,7 +756,7 @@ func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revisio
 			INSERT INTO course_revisions (course_id, subject_id, language, revision_number, author_id,
 				base_revision_id, compare_revision_id, title, summary, objectives, prerequisites,
 				cover_media_id, cover_alt, created_at, updated_at)
-			SELECT $1, $2, $3, $4, $5, $6, $6,
+			SELECT $1, $2, $3, $4, $5, $6, course_comparison_revision($1),
 			       coalesce(src.title, ''), coalesce(src.summary, ''), coalesce(src.objectives, ''), coalesce(src.prerequisites, ''),
 			       CASE WHEN up.user_id IS NOT NULL THEN src.cover_media_id END,
 			       CASE WHEN up.user_id IS NOT NULL THEN src.cover_alt END,
@@ -886,6 +917,11 @@ func (s *Store) SaveDraft(ctx context.Context, actor, revisionID int64, expected
 		if err := checkSteps(ctx, tx, actor, c, d.Modules); err != nil {
 			return err
 		}
+		// The children are replaced first, so that the kind the server
+		// derives (course_revision_derived_kind, LMS-B04) reads them.
+		if err := replaceChildren(ctx, tx, revisionID, d); err != nil {
+			return err
+		}
 		if d.CoverMediaID != nil {
 			var uploaded bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM media_uploads WHERE user_id = $1 AND media_asset_id = $2)`,
@@ -897,19 +933,21 @@ func (s *Store) SaveDraft(ctx context.Context, actor, revisionID int64, expected
 			}
 		}
 		tag, err := tx.Exec(ctx, `
-			UPDATE course_revisions
+			UPDATE course_revisions u
 			   SET title = $3, summary = $4, objectives = $5, prerequisites = $6, cover_media_id = $7, cover_alt = $8,
-			       version = version + 1, updated_at = now()
-			 WHERE id = $1 AND version = $2 AND status = 'draft'`,
+			       version = version + 1, updated_at = now(),
+			       kind = CASE WHEN course_revision_structure_amends(u.id)
+			                    AND EXISTS (SELECT 1 FROM course_revisions c WHERE c.id = u.compare_revision_id
+			                                   AND (c.title, c.summary, c.objectives, c.prerequisites, c.cover_media_id, c.cover_alt)
+			                                       IS NOT DISTINCT FROM ($3, $4, $5, $6, $7::bigint, $8::text))
+			                   THEN 'amendment' ELSE 'ordinary' END
+			 WHERE u.id = $1 AND u.version = $2 AND u.status = 'draft'`,
 			revisionID, expectedVersion, d.Title, d.Summary, d.Objectives, d.Prerequisites, d.CoverMediaID, d.CoverAlt)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() != 1 {
 			return ErrVersionConflict
-		}
-		if err := replaceChildren(ctx, tx, revisionID, d); err != nil {
-			return err
 		}
 		if err := placementProblems(ctx, tx, revisionID, "save"); err != nil {
 			return err
@@ -1117,11 +1155,11 @@ func loadRevision(ctx context.Context, tx pgx.Tx, id int64) (Revision, error) {
 	err := tx.QueryRow(ctx, `
 		SELECT r.id, r.course_id, r.revision_number, r.status, r.kind, r.author_id, r.base_revision_id, r.compare_revision_id,
 		       r.subject_id, r.language, r.title, r.summary, r.objectives, r.prerequisites, r.cover_media_id, r.cover_alt,
-		       r.version, r.created_at, r.updated_at, r.submitted_at, c.owner_id
+		       r.version, r.created_at, r.updated_at, r.submitted_at, r.withdrawn_at, c.owner_id
 		  FROM course_revisions r JOIN courses c ON c.id = r.course_id WHERE r.id = $1`, id).Scan(
 		&r.ID, &r.CourseID, &r.Number, &status, &r.Kind, &r.AuthorID, &r.BaseRevisionID, &r.CompareRevisionID,
 		&r.SubjectID, &r.Language, &r.Title, &r.Summary, &r.Objectives, &r.Prerequisites, &r.CoverMediaID, &r.CoverAlt,
-		&r.Version, &r.CreatedAt, &r.UpdatedAt, &r.SubmittedAt, &owner)
+		&r.Version, &r.CreatedAt, &r.UpdatedAt, &r.SubmittedAt, &r.WithdrawnAt, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -1129,6 +1167,14 @@ func loadRevision(ctx context.Context, tx pgx.Tx, id int64) (Revision, error) {
 		return r, fmt.Errorf("load course revision: %w", err)
 	}
 	r.Status = Status(status)
+	if r.Decision, err = loadDecision(ctx, tx, id); err != nil {
+		return r, err
+	}
+	if r.Status == StatusInReview && r.WithdrawnAt == nil {
+		if r.Blocked, err = reviewBlocked(ctx, tx, id, r.SubjectID); err != nil {
+			return r, err
+		}
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT a.id, e.id, e.state, curriculum_assignment_selectable(a.id),
 		       e.state = 'retired' OR s.retired_at IS NOT NULL OR l.retired_at IS NOT NULL

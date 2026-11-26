@@ -1,12 +1,16 @@
-// Reviewer space: the queue of revisions in review in the reviewer's
-// subjects (GET /api/review/queue) and the review of one revision, read
+// Reviewer space: the queue of lessons and courses in review in the
+// reviewer's subjects (GET /api/review/queue and ?type=course), filtered by
+// content type, subject and decision, a page at a time, and the review of
+// one lesson revision (courses: CourseReviewPages.tsx), read
 // through the canonical preview, with approve (optional comment) and
 // request changes (required comment), each confirmed first. The server
 // decides who may review what (assignment per subject, no self-review);
 // this page only explains its answers.
-import { useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { isApiError, type Revision, type Subject } from '../api/client';
 import type { ReviewQueueItem } from '../api/editorial';
+import { courseReviewApi, type CourseReviewItem } from '../api/courseReview';
+import { describeBlocked, filterQueue, mergeQueue, paginate, submissionAge, type QueueDecision, type QueueType } from '../courses/workflow';
 import { describeEditorialError } from '../api/editorialMessages';
 import { setFlash, takeFlash, useStudio } from '../context';
 import { paths } from '../editorialRoutes';
@@ -18,6 +22,9 @@ import { CatalogueName, catalogueLabel, entryLabel, type CatalogueLabel } from '
 import { CanonicalPreview, ErrorPage, LoadingPage, NoteField, Quote, SubjectName, dirOf, subjectLabel, useEditorial, useLoad, useSubjects } from './common';
 
 /** Queue items grouped by subject, in catalogue order (display order, then code); subjects missing from the catalogue last, by ID. */
+/** Queue page size: large, as the queues are bounded to 200 each by the server. */
+export const QUEUE_PAGE_SIZE = 50;
+
 export function groupBySubject<T extends { subjectId: number }>(items: T[], subjects: Map<number, Subject>): Array<{ subjectId: number; items: T[] }> {
   const groups = new Map<number, T[]>();
   for (const item of items) groups.set(item.subjectId, [...(groups.get(item.subjectId) ?? []), item]);
@@ -36,13 +43,37 @@ export function groupBySubject<T extends { subjectId: number }>(items: T[], subj
 
 export function ReviewQueuePage() {
   const ed = useEditorial();
+  const { api } = useStudio();
+  const cr = useMemo(() => courseReviewApi(api), [api]);
   const subjects = useSubjects();
-  const [queue] = useLoad(() => ed.reviewQueue(), [ed]);
+  const [queue] = useLoad(async () => {
+    const [lessons, courses] = await Promise.all([ed.reviewQueue(), cr.reviewQueue()]);
+    return mergeQueue(lessons, courses);
+  }, [ed, cr]);
   const [flash] = useState(takeFlash);
+  const [type, setType] = useState<QueueType>('all');
+  const [subjectId, setSubjectId] = useState<number | null>(null);
+  const [decision, setDecision] = useState<QueueDecision>('all');
+  const [page, setPage] = useState(0);
+  const ids = { type: useId(), subject: useId(), decision: useId(), results: useId() };
+  const listTop = useRef<HTMLHeadingElement>(null);
+
+  const all = queue.state === 'ready' ? queue.data : [];
+  const filtered = filterQueue(all, { type, subjectId, decision });
+  const shown = paginate(filtered, page, QUEUE_PAGE_SIZE);
+  const subjectIds = [...new Set(all.map((e) => e.subjectId))];
+  const goTo = (p: number) => {
+    setPage(p);
+    requestAnimationFrame(() => listTop.current?.focus());
+  };
+
   return (
     <main className="page" id="main">
       <h1 tabIndex={-1}>Relecture</h1>
-      <p className="hint">Révisions soumises dans les matières dont vous êtes relecteur, les plus anciennes d’abord. Vos propres révisions n’y figurent pas : un autre relecteur doit les relire.</p>
+      <p className="hint">
+        Leçons et cours soumis dans les matières dont vous êtes relecteur, les plus anciens d’abord. Vos propres leçons n’y figurent pas. Les cours apparaissent tous, avec ce qui vous empêche
+        éventuellement de les décider : l’auteur du cours et l’auteur d’une leçon ajoutée ou remplacée ne peuvent pas l’approuver.
+      </p>
       {flash && (
         <p className="banner success" role="status">
           {flash}
@@ -54,20 +85,72 @@ export function ReviewQueuePage() {
           {queue.message}
         </p>
       )}
-      {queue.state === 'ready' && queue.data.length === 0 && <p>Aucune révision n’attend de relecture dans vos matières.</p>}
-      {queue.state === 'ready' &&
-        groupBySubject(queue.data, subjects).map((group) => (
-          <section key={group.subjectId} aria-labelledby={`subject-${group.subjectId}`}>
-            <h2 id={`subject-${group.subjectId}`}>
-              <SubjectName subjects={subjects} id={group.subjectId} /> ({group.items.length})
-            </h2>
-            <ul className="lesson-list" aria-label={`À relire en ${subjectLabel(subjects, group.subjectId)}`}>
-              {group.items.map((item) => (
-                <QueueCard key={item.revisionId} item={item} />
-              ))}
-            </ul>
-          </section>
-        ))}
+      {queue.state === 'ready' && all.length === 0 && <p>Aucune révision n’attend de relecture dans vos matières.</p>}
+      {queue.state === 'ready' && all.length > 0 && (
+        <>
+          <form className="queue-filters" onSubmit={(e) => e.preventDefault()} aria-label="Filtrer la file de relecture">
+            <div className="fields">
+              <label htmlFor={ids.type}>Type de contenu</label>
+              <select id={ids.type} value={type} onChange={(e) => { setType(e.target.value as QueueType); setPage(0); }}>
+                <option value="all">Leçons et cours</option>
+                <option value="lesson">Leçons</option>
+                <option value="course">Cours</option>
+              </select>
+            </div>
+            <div className="fields">
+              <label htmlFor={ids.subject}>Matière</label>
+              <select id={ids.subject} value={subjectId ?? ''} onChange={(e) => { setSubjectId(e.target.value ? Number(e.target.value) : null); setPage(0); }}>
+                <option value="">Toutes vos matières</option>
+                {subjectIds.map((id) => (
+                  <option key={id} value={id}>
+                    {subjectLabel(subjects, id)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="fields">
+              <label htmlFor={ids.decision}>Décision</label>
+              <select id={ids.decision} value={decision} onChange={(e) => { setDecision(e.target.value as QueueDecision); setPage(0); }}>
+                <option value="all">Tout</option>
+                <option value="mine">Je peux décider</option>
+                <option value="other">Un autre relecteur doit décider</option>
+                <option value="blocked">Bloqués : aucun relecteur éligible</option>
+              </select>
+            </div>
+          </form>
+          <p id={ids.results} role="status">
+            {filtered.length === 0
+              ? 'Aucun élément ne correspond à ces filtres.'
+              : `${filtered.length} élément${filtered.length > 1 ? 's' : ''}${shown.pages > 1 ? `, page ${shown.page + 1} sur ${shown.pages}` : ''}.`}
+          </p>
+          <h2 className="visually-hidden" tabIndex={-1} ref={listTop}>
+            Résultats
+          </h2>
+          {groupBySubject(shown.items, subjects).map((group) => (
+            <section key={group.subjectId} aria-labelledby={`subject-${group.subjectId}`}>
+              <h2 id={`subject-${group.subjectId}`}>
+                <SubjectName subjects={subjects} id={group.subjectId} /> ({group.items.length})
+              </h2>
+              <ul className="lesson-list" aria-label={`À relire en ${subjectLabel(subjects, group.subjectId)}`}>
+                {group.items.map((entry) => (entry.type === 'lesson' ? <QueueCard key={entry.id} item={entry.item} /> : <CourseQueueCard key={entry.id} item={entry.item} />))}
+              </ul>
+            </section>
+          ))}
+          {shown.pages > 1 && (
+            <nav className="pager" aria-label="Pages de la file de relecture">
+              <button type="button" onClick={() => goTo(shown.page - 1)} disabled={shown.page === 0}>
+                Page précédente
+              </button>
+              <span>
+                Page {shown.page + 1} sur {shown.pages}
+              </span>
+              <button type="button" onClick={() => goTo(shown.page + 1)} disabled={shown.page >= shown.pages - 1}>
+                Page suivante
+              </button>
+            </nav>
+          )}
+        </>
+      )}
     </main>
   );
 }
@@ -79,11 +162,49 @@ function QueueCard({ item }: { item: ReviewQueueItem }) {
         <Link to={paths.reviewRevision(item.revisionId)}>{item.title || `Révision n° ${item.revisionId}`}</Link>
       </h3>
       <p className="lesson-meta">
+        <span className="state kind-label">Leçon</span>
         <span className="state state-review">En relecture</span>
       </p>
       <p className="lesson-context">
-        Révision {item.number} · {LANGUAGE_LABELS[item.language]} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)}
+        Révision {item.number} · {LANGUAGE_LABELS[item.language]} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)} ({submissionAge(item.submittedAt)})
       </p>
+    </li>
+  );
+}
+
+function CourseQueueCard({ item }: { item: CourseReviewItem }) {
+  const blocked = item.blocked ? describeBlocked(item.blocked) : null;
+  return (
+    <li className="lesson-card">
+      <h3 lang={item.language} dir={dirOf(item.language)}>
+        <Link to={paths.reviewCourse(item.revisionId)}>{item.title || `Cours n° ${item.courseId}`}</Link>
+      </h3>
+      <p className="lesson-meta">
+        <span className="state kind-label">{item.kind === 'amendment' ? 'Cours · amendement' : 'Cours'}</span>
+        <span className="state state-review">En relecture</span>
+        {blocked ? (
+          <span className="state state-changes">Bloqué : aucun relecteur éligible</span>
+        ) : item.eligible ? (
+          <span className="state state-approved">Vous pouvez décider</span>
+        ) : (
+          <span className="state">Un autre relecteur doit décider</span>
+        )}
+      </p>
+      <p className="lesson-context">
+        Version {item.number} · {LANGUAGE_LABELS[item.language]} · par {item.authorName} · soumise le {formatDateTime(item.submittedAt)} ({submissionAge(item.submittedAt)})
+      </p>
+      {blocked && (
+        <div className="lesson-context">
+          <p>{blocked.summary}</p>
+          {blocked.details.length > 0 && (
+            <ul>
+              {blocked.details.map((d) => (
+                <li key={d}>{d}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </li>
   );
 }

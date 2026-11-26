@@ -7,9 +7,13 @@ const BASE = '/studio';
 export type EditorialRoute =
   | { name: 'reviewQueue' }
   | { name: 'reviewRevision'; revisionId: number }
+  | { name: 'reviewCourse'; revisionId: number }
   | { name: 'publishQueue' }
   | { name: 'publishRevision'; revisionId: number }
+  | { name: 'publishCourse'; revisionId: number }
   | { name: 'adminLessons' }
+  | { name: 'adminCourses' }
+  | { name: 'adminCourse'; courseId: number }
   | { name: 'publication'; ref: string }
   | { name: 'reports' }
   | { name: 'report'; reportId: number };
@@ -21,15 +25,32 @@ const LESSON_REF = '([1-9][0-9]{0,17}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const PATTERNS: Array<[RegExp, (m: RegExpExecArray) => EditorialRoute]> = [
   [/^\/studio\/review$/, () => ({ name: 'reviewQueue' })],
   [new RegExp(`^/studio/review/revisions/${ID}$`), (m) => ({ name: 'reviewRevision', revisionId: Number(m[1]) })],
+  [new RegExp(`^/studio/review/courses/${ID}$`), (m) => ({ name: 'reviewCourse', revisionId: Number(m[1]) })],
   [/^\/studio\/publish$/, () => ({ name: 'publishQueue' })],
   [new RegExp(`^/studio/publish/revisions/${ID}$`), (m) => ({ name: 'publishRevision', revisionId: Number(m[1]) })],
+  [new RegExp(`^/studio/publish/courses/${ID}$`), (m) => ({ name: 'publishCourse', revisionId: Number(m[1]) })],
   [/^\/studio\/admin$/, () => ({ name: 'adminLessons' })],
+  [/^\/studio\/admin\/courses$/, () => ({ name: 'adminCourses' })],
+  [new RegExp(`^/studio/admin/courses/${ID}$`), (m) => ({ name: 'adminCourse', courseId: Number(m[1]) })],
   [new RegExp(`^/studio/publication/${LESSON_REF}$`), (m) => ({ name: 'publication', ref: m[1] })],
   [/^\/studio\/reports$/, () => ({ name: 'reports' })],
   [new RegExp(`^/studio/reports/${ID}$`), (m) => ({ name: 'report', reportId: Number(m[1]) })],
 ];
 
-const NAMES = new Set<string>(['reviewQueue', 'reviewRevision', 'publishQueue', 'publishRevision', 'adminLessons', 'publication', 'reports', 'report']);
+const NAMES = new Set<string>([
+  'reviewQueue',
+  'reviewRevision',
+  'reviewCourse',
+  'publishQueue',
+  'publishRevision',
+  'publishCourse',
+  'adminLessons',
+  'adminCourses',
+  'adminCourse',
+  'publication',
+  'reports',
+  'report',
+]);
 
 export const isEditorialRoute = (route: { name: string }): route is EditorialRoute => NAMES.has(route.name);
 
@@ -46,9 +67,13 @@ export function parseEditorialRoute(pathname: string): EditorialRoute | null {
 export const paths = {
   reviewQueue: `${BASE}/review`,
   reviewRevision: (id: number) => `${BASE}/review/revisions/${id}`,
+  reviewCourse: (revisionId: number) => `${BASE}/review/courses/${revisionId}`,
   publishQueue: `${BASE}/publish`,
   publishRevision: (id: number) => `${BASE}/publish/revisions/${id}`,
+  publishCourse: (revisionId: number) => `${BASE}/publish/courses/${revisionId}`,
   adminLessons: `${BASE}/admin`,
+  adminCourses: `${BASE}/admin/courses`,
+  adminCourse: (courseId: number) => `${BASE}/admin/courses/${courseId}`,
   publication: (ref: string | number) => `${BASE}/publication/${ref}`,
   reports: `${BASE}/reports`,
   report: (id: number) => `${BASE}/reports/${id}`,

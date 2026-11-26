@@ -329,23 +329,27 @@ test('an Arabic lesson is edited right to left at 360px, and an expired session 
 
 test('pickers, the editor and the lesson list name subjects and chapters in the lesson language', async ({ page, baseURL }) => {
   // TEST catalogue names from the fixture (LRN-014): test-math and
-  // test-chapter are named in French and Arabic, test-physique is not.
+  // test-chapter are named in French and Arabic, test-physique and test-svt
+  // (the course review spec's subject) are not.
   const problems = watch(page, baseURL);
   await signIn(page, author);
   await page.getByRole('link', { name: 'Nouvelle leçon' }).click();
   const subject = page.getByLabel('Matière');
   const chapter = page.getByLabel('Chapitre (facultatif)');
-  await expect(subject.locator('option')).toHaveText(['TEST Mathématiques', 'test-physique']);
-  await expect(chapter.locator('option')).toHaveText(['Sans chapitre', 'TEST Nombres complexes']);
+  await expect(subject.locator('option')).toHaveText(['TEST Mathématiques', 'test-physique', 'test-svt']);
+  // test-chapter-retirable is offered until the course chapter retirement spec retires it: left out, so
+  // this test does not depend on the order the specs run in.
+  const chapterOptions = chapter.locator('option').filter({ hasNotText: 'test-chapter-retirable' });
+  await expect(chapterOptions).toHaveText(['Sans chapitre', 'TEST Nombres complexes']);
   await expect(subject.locator('option').first()).not.toHaveAttribute('lang', /./);
   // An Arabic lesson: Arabic names, marked right to left; the code stays the fallback.
   await page.getByRole('radio', { name: /Arabe/ }).check();
-  await expect(subject.locator('option')).toHaveText(['TEST رياضيات', 'test-physique']);
-  for (const option of [subject.locator('option').first(), chapter.locator('option').nth(1)]) {
+  await expect(subject.locator('option')).toHaveText(['TEST رياضيات', 'test-physique', 'test-svt']);
+  for (const option of [subject.locator('option').first(), chapterOptions.nth(1)]) {
     await expect(option).toHaveAttribute('lang', 'ar');
     await expect(option).toHaveAttribute('dir', 'rtl');
   }
-  await expect(chapter.locator('option').nth(1)).toHaveText('TEST الأعداد العقدية');
+  await expect(chapterOptions.nth(1)).toHaveText('TEST الأعداد العقدية');
   await chapter.selectOption({ label: 'TEST الأعداد العقدية' });
   await page.getByRole('button', { name: 'Commencer la rédaction' }).click();
   await page.getByLabel('Titre', { exact: true }).fill('TEST درس الأسماء');
