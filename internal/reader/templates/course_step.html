@@ -1,0 +1,21 @@
+{{define "content"}}{{with .Data}}{{$c := .Course}}<div class="course-layout"><div class="course-main">
+<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/learn">Mes leçons</a> › <a href="/learn/courses/{{$c.PublicID}}" lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{$c.Title}}</a> › <span lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{.Module}}</span> › <span aria-current="page" lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{.Step.Title}}</span></nav>
+<p class="step-position">Leçon {{.Step.Number}} sur {{$c.StepCount}} · <a href="#plan-du-cours">Plan du cours</a></p>
+{{if .Step.Readable}}{{.Parts.Heading}}
+<p class="credit">Rédigé par <bdi class="author">{{.AuthorName}}</bdi>{{if .ReviewerName}} · Relu et approuvé par <bdi class="reviewer">{{.ReviewerName}}</bdi>{{end}}</p>
+{{if .Differs}}<p class="version-note" role="note">Ce cours présente la version {{.RevisionNumber}} de cette leçon, celle qui a été relue pour ce cours.{{if .StandaloneNumber}} La version publiée seule est la version {{.StandaloneNumber}} : <a href="/learn/lessons/{{.Step.LessonPublicID}}">lire la version actuelle de la leçon</a>.{{end}}</p>{{end}}
+{{.Parts.Objective}}
+{{.Parts.Body}}
+{{else}}<h1 lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{.Step.Title}}</h1>
+<div class="step-notice" role="status"><p><strong>Cette leçon est temporairement indisponible.</strong> Elle a été retirée de la lecture en attendant une vérification. Le cours est incomplet pour le moment ; aucune autre version n’est proposée à sa place.</p></div>{{end}}
+<nav class="step-nav" aria-label="Leçons précédente et suivante">{{with .Previous}}<a class="prev" rel="prev" href="/learn/courses/{{$c.PublicID}}/lessons/{{.LessonPublicID}}"><span class="dir">Précédente</span> <span lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="step-state">(indisponible)</span>{{end}}</a>{{end}}{{with .Next}}<a class="next" rel="next" href="/learn/courses/{{$c.PublicID}}/lessons/{{.LessonPublicID}}"><span class="dir">Suivante</span> <span lang="{{$c.Language}}" dir="{{dir $c.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="step-state">(indisponible)</span>{{end}}</a>{{else}}<a class="next" href="/learn/courses/{{$c.PublicID}}"><span class="dir">Fin du plan</span> Retour au cours</a>{{end}}</nav>
+{{if .Step.Readable}}<details class="report"{{if .Report.Open}} open{{end}}><summary>Signaler une erreur</summary>
+<form method="post" action="/learn/courses/{{$c.PublicID}}/lessons/{{.Step.LessonPublicID}}/report" class="form" novalidate>
+<input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="course_revision" value="{{$c.RevisionNumber}}"><input type="hidden" name="revision" value="{{.RevisionNumber}}">
+{{with .Report.Error}}<div class="form-error" role="alert"><p id="report_error">{{.}}</p></div>{{end}}
+<div class="field"><label for="report_message">Décrivez l’erreur</label><span class="hint" id="report_hint">Indiquez le passage concerné et ce qui vous semble faux. Au plus {{.Report.Max}} caractères. Le signalement porte sur la version de la leçon affichée dans ce cours ; il est transmis à l’équipe de relecture avec votre compte et ne modifie rien.</span><textarea id="report_message" name="message" rows="5" dir="auto" required aria-describedby="report_hint{{if .Report.Error}} report_error{{end}}">{{.Report.Message}}</textarea></div>
+<button type="submit" class="secondary">Envoyer le signalement</button>
+</form></details>{{end}}
+</div>
+<nav id="plan-du-cours" class="course-outline" aria-labelledby="outline-heading"><h2 id="outline-heading"><a href="/learn/courses/{{$c.PublicID}}">Plan du cours</a></h2>{{template "outline" $c}}</nav></div>{{end}}{{end}}
+{{define "outline"}}<ol class="outline-modules">{{range .Modules}}<li><span class="module-title" lang="{{$.Language}}" dir="{{dir $.Language}}">{{.Title}}</span><ol class="outline-steps">{{range .Steps}}<li{{if not .Readable}} class="step-unavailable"{{end}}><a href="/learn/courses/{{$.PublicID}}/lessons/{{.LessonPublicID}}"{{if .Current}} aria-current="page"{{end}}><span lang="{{$.Language}}" dir="{{dir $.Language}}">{{.Title}}</span>{{if not .Readable}} <span class="step-state">(temporairement indisponible)</span>{{end}}</a></li>{{end}}</ol></li>{{end}}</ol>{{end}}
