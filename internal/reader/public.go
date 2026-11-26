@@ -265,12 +265,6 @@ func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
 	h.renderPublic(w, r, http.StatusOK, "public_course", v)
 }
 
-// courseCover serves the cover of a readable course's published revision
-// (contract §4). Everything else, including the cover of a suspended,
-// archived or withdrawn course and of an earlier revision, gets the JSON
-// 404. Readability is checked before the ETag, so a revalidation after a
-// suspension gets 404, not 304. The stored file never changes for a key, so
-// the ETag derives from the key.
 // coverNotFound is the JSON 404 of the cover route; like every negative
 // answer it must not be stored by any cache.
 func coverNotFound(w http.ResponseWriter) {
@@ -279,6 +273,12 @@ func coverNotFound(w http.ResponseWriter) {
 	staticNotFound(w)
 }
 
+// courseCover serves the cover of a readable course's published revision
+// (contract §4). Everything else, including the cover of a suspended,
+// archived or withdrawn course and of an earlier revision, gets the JSON
+// 404. Readability is checked before the ETag, so a revalidation after a
+// suspension gets 404, not 304. The stored file never changes for a key, so
+// the ETag derives from the key.
 func (h *Handlers) courseCover(w http.ResponseWriter, r *http.Request) {
 	key, err := h.Store.CourseCover(r.Context(), r.PathValue("publicId"))
 	if errors.Is(err, ErrNotFound) {
