@@ -62,7 +62,12 @@ func newEnvConfig(t *testing.T, configure func(*auth.Config)) *env {
 // newEnvOptions is newEnvConfig with server options (such as the Studio bundle).
 func newEnvOptions(t *testing.T, configure func(*auth.Config), opts ...server.Option) *env {
 	t.Helper()
-	db := dbtest.Migrated(t)
+	return newEnvOn(t, dbtest.Migrated(t), configure, opts...)
+}
+
+// newEnvOn is newEnvOptions on an existing database (for upgrade tests).
+func newEnvOn(t *testing.T, db *pgxpool.Pool, configure func(*auth.Config), opts ...server.Option) *env {
+	t.Helper()
 	cfg := auth.DefaultConfig
 	cfg.Argon2 = testArgon2
 	if configure != nil {
