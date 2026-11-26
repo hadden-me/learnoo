@@ -58,7 +58,11 @@ export async function setup(browser, baseURL) {
   const subject = subjects.find((s) => s.code === 'test-math');
   const { chapters } = await au.call('GET', '/api/catalogue/subjects/test-math/chapters');
   const chapter = chapters.find((c) => c.code === 'test-chapter');
+  const retirable = chapters.find((c) => c.code === 'test-chapter-retirable');
   const base = '/api/admin/curriculum';
+  // Chapters not retired at the time an edition is built (a spec retires test-chapter-retirable).
+  const openChapterIds = async () =>
+    (await au.call('GET', '/api/catalogue/subjects/test-math/chapters')).chapters.filter((c) => !c.retiredAt).map((c) => c.id);
   const existing = (await ad.call('GET', '/api/catalogue/levels')).levels.find((l) => l.code === 'test-bac');
   const level = existing ?? (await ad.call('POST', `${base}/levels`, { code: 'test-bac', nameFr: 'TEST Baccalauréat', nameAr: 'TEST بكالوريا' }));
   const section =
@@ -71,7 +75,7 @@ export async function setup(browser, baseURL) {
     let e = await ad.call('POST', `${base}/sections/${section.id}/editions`, { code, labelFr: label, labelAr: `${label} ع` });
     e = await ad.call('POST', `${base}/editions/${e.id}/assignments`, { expectedVersion: e.version, subjectId: subject.id });
     const assignment = e.assignments.find((a) => a.subjectId === subject.id);
-    e = await ad.call('PUT', `${base}/editions/${e.id}/assignments/${assignment.id}/chapters`, { expectedVersion: e.version, chapterIds: [chapter.id] });
+    e = await ad.call('PUT', `${base}/editions/${e.id}/assignments/${assignment.id}/chapters`, { expectedVersion: e.version, chapterIds: await openChapterIds() });
     const made = await ad.call('POST', `${base}/editions/${e.id}/make-current`, { expectedVersion: e.version, expectedCurrentEditionId });
     return { ...made.edition, assignmentId: assignment.id };
   };
@@ -87,7 +91,7 @@ export async function setup(browser, baseURL) {
     const e = await ad.call('GET', `/api/catalogue/editions/${list.find((x) => x.state === 'current').id}`);
     return { ...e, assignmentId: e.assignments.find((a) => a.subjectId === subject.id).id };
   };
-  fixture = { ad, subject, chapter, first, lessonDraft, current, newEdition: (code, label, expected) => edition(code, label, expected), close: async () => { await ad.ctx.close(); await au.ctx.close(); } };
+  fixture = { ad, subject, chapter, retirable, first, lessonDraft, current, newEdition: (code, label, expected) => edition(code, label, expected), close: async () => { await ad.ctx.close(); await au.ctx.close(); } };
   return fixture;
 }
 
