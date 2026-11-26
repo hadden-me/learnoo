@@ -1,0 +1,17 @@
+# Test-only override for deploy/proxy/test-proxy.sh (issue 87). Not for a
+# server: it attaches the proxy to an extra "edge" network on which the test
+# runs curl containers with fixed addresses, so the proxy sees several
+# distinct real clients (on Docker Desktop every host process arrives from
+# the same gateway address).
+services:
+  proxy:
+    networks:
+      edge:
+        ipv4_address: ${LEARNOO_TEST_EDGE_PROXY_IPV4:-172.30.188.10}
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${LEARNOO_TEST_EDGE_SUBNET:-172.30.188.0/24}
+          ip_range: ${LEARNOO_TEST_EDGE_IP_RANGE:-172.30.188.128/25}
