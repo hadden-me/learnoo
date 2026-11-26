@@ -67,6 +67,12 @@ func TestBrowserReaderServer(t *testing.T) {
 	f.setName(f.newUser("test-reviewer-b", f.subject, permissions.Reviewer).id, "TEST Relectrice Nadia")
 	f.setName(f.newUser("test-reviewer-physique", other, permissions.Reviewer).id, "TEST Relecteur Physique")
 	f.setName(f.newUser("test-author-reviewer", f.subject, permissions.Author, permissions.Reviewer).id, "TEST Autrice relectrice")
+	// Accounts for the administration tests (tests/browser-reader/
+	// admin.spec.mjs), used by no other test: a signed-up account without
+	// permissions that an administrator makes a reviewer, and an author that
+	// an administrator disables and enables again.
+	f.setName(f.newUser("test-onboard", 0).id, "TEST Enseignant à intégrer")
+	f.setName(f.newUser("test-suspend", 0, permissions.Author).id, "TEST Compte à suspendre")
 	ch := f.chapter(f.subject, "test-chapter")
 	// TEST display names (LRN-014) through the audited operator path:
 	// test-math and test-chapter are named in both languages; test-physique

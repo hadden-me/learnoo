@@ -39,6 +39,10 @@ type Config struct {
 	// per window (LRN-015).
 	ErrorReportAccountLimit int
 	ErrorReportAddressLimit int
+	// AdminInvitationLimit is the number of student invitations one
+	// administrator may issue through the administration API per window
+	// (LMS-B10).
+	AdminInvitationLimit int
 	// Argon2 sets the cost of new hashes, including the dummy hash.
 	Argon2 Argon2Params
 }
@@ -53,6 +57,7 @@ var DefaultConfig = Config{
 	InvitationLimit:         20,
 	ErrorReportAccountLimit: 10,
 	ErrorReportAddressLimit: 60,
+	AdminInvitationLimit:    30,
 	Argon2:                  DefaultArgon2,
 }
 
@@ -230,6 +235,18 @@ func (s *Service) ThrottleErrorReport(ctx context.Context, userID int64, clientA
 	_, err := s.recordAttempt(ctx, s.now().UTC(), []limitedKey{
 		{throttleKey("error-report-account", strconv.FormatInt(userID, 10)), s.cfg.ErrorReportAccountLimit},
 		{throttleKey("error-report-address", clientAddr), s.cfg.ErrorReportAddressLimit},
+	})
+	return err
+}
+
+// ThrottleAdminInvitation records a student invitation an administrator
+// asked to issue (LMS-B10) and returns *RateLimitedError when that account
+// exceeded Config.AdminInvitationLimit in the window. Like
+// ThrottleInvitation it uses the login throttle table under its own key
+// scope, so it never counts other attempts.
+func (s *Service) ThrottleAdminInvitation(ctx context.Context, userID int64) error {
+	_, err := s.recordAttempt(ctx, s.now().UTC(), []limitedKey{
+		{throttleKey("admin-invitation-account", strconv.FormatInt(userID, 10)), s.cfg.AdminInvitationLimit},
 	})
 	return err
 }

@@ -8,6 +8,9 @@ import type { Route } from '../router';
 import { canHandleReports, type Spaces } from '../spaces';
 import { Link } from '../ui/Link';
 import { AdminLessonsPage, LessonPublicationPage } from './AdminPages';
+import { UserListPage, UserPage } from './UserPages';
+import { CataloguePage } from './CataloguePage';
+import { CurriculumPage, EditionPage, SectionPage } from './CurriculumPages';
 import { NoAccess } from './common';
 import { PublishQueuePage, PublishRevisionPage } from './PublishPages';
 import { ReportListPage, ReportPage } from './ReportPages';
@@ -26,7 +29,7 @@ export const SPACE_LINKS: SpaceLink[] = [
   { key: 'review', label: 'Relecture', to: paths.reviewQueue, description: 'Relire les révisions soumises dans vos matières : approuver ou demander des modifications.', available: (s) => s.reviewer, routes: ['reviewQueue', 'reviewRevision'] },
   { key: 'publish', label: 'Publication', to: paths.publishQueue, description: 'Publier les révisions approuvées.', available: (s) => s.publisher, routes: ['publishQueue', 'publishRevision'] },
   { key: 'reports', label: 'Signalements', to: paths.reports, description: 'Traiter les erreurs signalées par les lecteurs.', available: canHandleReports, routes: ['reports', 'report'] },
-  { key: 'admin', label: 'Administration', to: paths.adminLessons, description: 'Retirer une révision, dépublier une leçon ou restaurer une version publiée auparavant.', available: (s) => s.administrator, routes: ['adminLessons'] },
+  { key: 'admin', label: 'Administration', to: paths.adminLessons, description: 'Gérer les utilisateurs, leurs permissions et les invitations, le catalogue et les programmes ; retirer une révision, dépublier ou restaurer une leçon.', available: (s) => s.administrator, routes: ['adminLessons', 'adminUsers', 'adminUser', 'adminCatalogue', 'adminCurriculum', 'adminSection', 'adminEdition'] },
 ];
 
 /** Navigation links for the editorial spaces this account can use. */
@@ -64,6 +67,18 @@ export function editorialPage(route: EditorialRoute, spaces: Spaces): ReactNode 
       return <PublishRevisionPage key={route.revisionId} revisionId={route.revisionId} />;
     case 'adminLessons':
       return <AdminLessonsPage />;
+    case 'adminUsers':
+      return <UserListPage />;
+    case 'adminUser':
+      return <UserPage key={route.userId} userId={route.userId} />;
+    case 'adminCatalogue':
+      return <CataloguePage />;
+    case 'adminCurriculum':
+      return <CurriculumPage />;
+    case 'adminSection':
+      return <SectionPage key={route.sectionId} sectionId={route.sectionId} />;
+    case 'adminEdition':
+      return <EditionPage key={route.editionId} editionId={route.editionId} />;
     case 'publication':
       return <LessonPublicationPage key={route.ref} lessonRef={route.ref} />;
     case 'reports':

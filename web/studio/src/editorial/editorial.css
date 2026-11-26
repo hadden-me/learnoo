@@ -47,3 +47,19 @@ code { overflow-wrap: anywhere; }
 .state-report-open { border-color: var(--learnoo-color-warning-border); background: var(--learnoo-color-warning-background); color: var(--learnoo-color-warning-text); }
 .state-report-resolved { border-color: var(--learnoo-color-success-text); }
 .state-report-dismissed { border-style: dashed; color: var(--learnoo-color-muted); }
+
+/* Administration pages (LMS-B10). */
+.admin-nav { display: flex; flex-wrap: wrap; gap: var(--learnoo-space-1) var(--learnoo-space-4); margin-block-end: var(--learnoo-space-2); padding-block-end: var(--learnoo-space-2); border-block-end: 1px solid var(--learnoo-color-border); }
+.admin-nav a { display: inline-flex; align-items: center; min-height: var(--learnoo-size-touch); }
+.admin-nav a[aria-current='page'] { font-weight: var(--learnoo-weight-emphasis); text-decoration-thickness: 2px; }
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--learnoo-space-2) var(--learnoo-space-3); margin-block: var(--learnoo-space-3); }
+.filters .fields { flex: 1 1 12rem; margin: 0; min-width: 0; }
+.grant-list, .chapter-order { padding-inline-start: 0; list-style: none; margin: var(--learnoo-space-2) 0; display: grid; gap: var(--learnoo-space-2); }
+.chapter-order { list-style: decimal; padding-inline-start: var(--learnoo-space-5); }
+.grant-list li, .chapter-order li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--learnoo-space-2); overflow-wrap: anywhere; }
+.chapter-order li { display: list-item; }
+.chapter-order li > span:first-child { margin-inline-end: var(--learnoo-space-2); }
+.row-actions { display: inline-flex; flex-wrap: wrap; gap: var(--learnoo-space-1); }
+.entry-form { max-width: 40rem; }
+.lesson-card h4 { font-size: var(--learnoo-text-body); margin: 0 0 var(--learnoo-space-1); overflow-wrap: anywhere; }
+.lesson-card h4 a { display: inline-flex; align-items: center; min-height: var(--learnoo-size-touch); }

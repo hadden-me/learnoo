@@ -252,8 +252,13 @@ func TestStoreOrdersAndNamesEntries(t *testing.T) {
 	if _, _, err := e.store.SetSubjectOrder(ctx, operator, "test-a", 10000); !errors.Is(err, catalogue.ErrInvalidSortOrder) {
 		t.Errorf("order: %v", err)
 	}
-	if _, _, err := e.store.SetSubjectNames(ctx, permissions.UserActor(1), "test-a", ptr("TEST x"), nil); !errors.Is(err, catalogue.ErrOperatorOnly) {
+	// A user actor must be an active administrator (LMS-B10); user 1 does
+	// not exist here.
+	if _, _, err := e.store.SetSubjectNames(ctx, permissions.UserActor(1), "test-a", ptr("TEST x"), nil); !errors.Is(err, permissions.ErrDenied) {
 		t.Errorf("user actor: %v", err)
+	}
+	if _, _, err := e.store.AddSubject(ctx, permissions.UserActor(1), "test-z"); !errors.Is(err, catalogue.ErrOperatorOnly) {
+		t.Errorf("user actor adding a subject: %v", err)
 	}
 }
 
