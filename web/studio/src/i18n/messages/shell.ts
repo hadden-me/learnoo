@@ -77,7 +77,7 @@ export const fr = {
   'shell.error.network': 'Le serveur ne répond pas. Vérifiez la connexion puis réessayez ; vos modifications restent dans l’éditeur.',
   'shell.error.unauthenticated': 'Votre session a expiré. Reconnectez-vous ; vos modifications restent dans l’éditeur.',
   'shell.error.account_changed':
-    'Un autre compte est connecté dans ce navigateur. Rien n’a été envoyé : vos modifications restent ici. Reconnectez-vous avec votre compte pour continuer.',
+    'Un autre compte est connecté dans ce navigateur. Rien n’a été enregistré : vos modifications restent ici. Reconnectez-vous avec votre compte pour continuer.',
   'shell.error.csrf_rejected': 'La session a changé (connexion dans un autre onglet ?). Réessayez.',
   'shell.error.cross_origin_rejected': 'Requête refusée : elle ne vient pas de Learnoo.',
   'shell.error.forbidden': 'Votre compte n’a pas la permission nécessaire pour cette action.',
@@ -187,7 +187,7 @@ export const ar: ArTable<typeof fr> = {
   'shell.state.awaitingPublication': 'موافَق عليها، في انتظار النشر',
   'shell.error.network': 'الخادم لا يستجيب. تحقّق من الاتصال ثم أعد المحاولة؛ تبقى تعديلاتك في المحرّر.',
   'shell.error.unauthenticated': 'انتهت جلستك. سجّل الدخول مجددًا؛ تبقى تعديلاتك في المحرّر.',
-  'shell.error.account_changed': 'حساب آخر مسجّل في هذا المتصفح. لم يُرسَل شيء: تبقى تعديلاتك هنا. سجّل الدخول بحسابك للمتابعة.',
+  'shell.error.account_changed': 'حساب آخر مسجّل في هذا المتصفح. لم يُحفظ شيء: تبقى تعديلاتك هنا. سجّل الدخول بحسابك للمتابعة.',
   'shell.error.csrf_rejected': 'تغيّرت الجلسة (هل سُجّل الدخول في تبويب آخر؟). أعد المحاولة.',
   'shell.error.cross_origin_rejected': 'الطلب مرفوض: لم يصدر عن Learnoo.',
   'shell.error.forbidden': 'لا يملك حسابك الصلاحية اللازمة لهذه العملية.',
