@@ -43,3 +43,14 @@ For each requirement record the application URL/action, implementation PR, revie
 Read the product spec and inspect current GitHub state first. Preserve in-flight submission-audit, catalogue, memory, proxy and caching work. Convert this map into small assigned issues and PRs; do not duplicate existing ones. Use isolated worktrees, independent review, focused tests, CI and dependency-ordered merges under the maintainer's actual authorization. The maintainer's scoped autonomy exception (DECISIONS.md, 2026-11-26) authorizes continuing eligible dependent slices of this backlog without a per-slice approval checkpoint; it grants no deployment, release, legal or curriculum-approval permission.
 
 When an external gate blocks a slice, proceed with independent work and TEST fixtures. When the spec has a genuine ambiguity, propose a concrete default and record it; do not invent legal/educational validation. Report course-management and student-discovery completeness separately from backend/editorial completeness.
+
+## Integration record
+
+This section is a history of merges into `develop`. It is appended as each slice lands. Live status, review findings and remaining work stay on GitHub, in the issues and PRs. Acceptance evidence is in [LMS_ACCEPTANCE.md](LMS_ACCEPTANCE.md) once B12 lands. Each slice is squash-merged after independent review and CI on its final head. Its tree is checked against the locally rehearsed integration of all slices.
+
+| Slice | Issue | PR | develop commit | Issue state at merge |
+| --- | --- | --- | --- | --- |
+| LMS-B01 contract | #91 | #90 | 3146021 | closed |
+| LMS-B02 curriculum (0013) | #92 | #106 | fe827b2 | closed |
+| LMS-B03 course drafts (0014) | #93 | #109 | 0dc26f9 | closed: criteria met |
+| LMS-B05 Studio course drafting | #95 | #112 | eb0e23b | open: the newer-revision notice, amendment and author-side submission arrive with B06 (#116); the A03 account-switch browser test arrives with B12 |

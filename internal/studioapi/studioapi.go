@@ -4,7 +4,9 @@
 // withdraw.go), for error reports (LRN-015, reports.go) and for the Studio
 // catalogue, owned-lesson listing and preview (issue #65, studio.go), for
 // the curriculum hierarchy and its administration (LMS-B02, curriculum.go),
-// and for course drafts (LMS-B03, courses.go), documented in docs/API.md.
+// for course drafts (LMS-B03, courses.go) and for course review,
+// publication and lifecycle (LMS-B04, course_review.go), documented in
+// docs/API.md.
 //
 // Draft and media routes require a session and the global author
 // permission, checked on the server by permissions.Middleware before any
@@ -111,6 +113,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	h.registerPublishing(mux)
 	h.registerCurriculum(mux)
 	h.registerCourses(mux)
+	h.registerCourseReview(mux)
 }
 
 // idPattern accepts positive decimal IDs without sign, leading zeros or

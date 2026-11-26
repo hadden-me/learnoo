@@ -74,7 +74,13 @@ func noQuery(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (h *Handlers) publishQueue(w http.ResponseWriter, r *http.Request) {
-	if !noQuery(w, r) {
+	switch r.URL.RawQuery {
+	case "", "type=lesson":
+	case "type=course":
+		h.coursePublishQueue(w, r)
+		return
+	default:
+		badRequest(w, "The only query parameter is an optional type: lesson or course.")
 		return
 	}
 	items, err := h.Review.PublishQueue(r.Context(), actor(r))
