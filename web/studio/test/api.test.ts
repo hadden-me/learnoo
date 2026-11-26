@@ -128,6 +128,11 @@ describe('API client', () => {
     expect(describeError(new Error('boom'))).toBe('Erreur inattendue dans le Studio.');
   });
 
+  it('explains CMYK JPEGs and images that need too much memory', () => {
+    expect(describeError(new ApiError(415, 'unsupported_cmyk', 'x'))).toMatch(/CMJN.*RVB.*JPEG ou en PNG/);
+    expect(describeError(new ApiError(422, 'image_too_complex', 'x'))).toMatch(/trop de mémoire.*WebP.*JPEG standard.*PNG 8 bits/);
+  });
+
   it('explains HEIC photos and recognizes them before uploading', () => {
     expect(describeError(new ApiError(415, 'unsupported_heic', 'x'))).toMatch(/HEIC.*JPEG/);
     expect(isHeif({ type: 'image/heic', name: 'IMG_0001.HEIC' })).toBe(true);

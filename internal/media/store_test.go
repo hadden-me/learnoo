@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"io/fs"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,5 +374,69 @@ func TestCheckWritableWritesNothing(t *testing.T) {
 	defer os.Chmod(dir, 0o750)
 	if err := s.CheckWritable(); err == nil {
 		t.Fatal("read-only directory reported writable")
+	}
+}
+
+// noisyAsset is a processed PNG of several 32 KiB comparison chunks.
+func noisyAsset(t *testing.T) *Asset {
+	t.Helper()
+	m := image.NewNRGBA(image.Rect(0, 0, 160, 160))
+	rand.New(rand.NewSource(1)).Read(m.Pix)
+	var b bytes.Buffer
+	if err := png.Encode(&b, m); err != nil {
+		t.Fatal(err)
+	}
+	a := processed(t, b.Bytes())
+	if a.ByteSize() <= 3*32<<10 {
+		t.Fatalf("asset of %d bytes is too small for a multi-chunk comparison", a.ByteSize())
+	}
+	return a
+}
+
+// Existing files are compared chunk by chunk: identical multi-chunk content
+// is idempotent, and a difference in the last byte or in length is a conflict.
+func TestStoreComparesExistingFilesInChunks(t *testing.T) {
+	a := noisyAsset(t)
+	data := a.Data()
+
+	s, dir := newStore(t)
+	key, err := s.Put(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.Put(a); err != nil || again != key {
+		t.Fatalf("identical content: %q %v", again, err)
+	}
+	if ok, err := s.matches(relPath(key), data); !ok || err != nil {
+		t.Fatalf("matches identical: %v %v", ok, err)
+	}
+	if n := len(files(t, dir)); n != 1 {
+		t.Fatalf("%d files after identical puts", n)
+	}
+
+	lastByte := bytes.Clone(data)
+	lastByte[len(lastByte)-1] ^= 0xFF
+	for name, existing := range map[string][]byte{
+		"last byte differs": lastByte,
+		"shorter":           data[:len(data)-1],
+		"longer":            append(bytes.Clone(data), 0),
+	} {
+		s, dir := newStore(t)
+		p := filepath.Join(dir, key[0:2], key[2:4], key)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, existing, 0o444); err != nil {
+			t.Fatal(err)
+		}
+		if ok, err := s.matches(relPath(key), data); ok || err != nil {
+			t.Errorf("%s: matches %v %v", name, ok, err)
+		}
+		if _, err := s.Put(a); !errors.Is(err, ErrKeyConflict) {
+			t.Errorf("%s: got %v, want ErrKeyConflict", name, err)
+		}
+		if got, _ := os.ReadFile(p); !bytes.Equal(got, existing) {
+			t.Errorf("%s: existing file was replaced", name)
+		}
 	}
 }

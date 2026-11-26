@@ -168,6 +168,7 @@ func serve(ctx context.Context, args []string, log *slog.Logger) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	applyMemoryLimit(log, os.ReadFile)
 	addr := os.Getenv("LEARNOO_ADDR")
 	if addr == "" {
 		addr = defaultAddr
