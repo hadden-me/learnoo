@@ -60,4 +60,4 @@ input:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-off
 .public .outline, .public .outline-steps { padding-inline-start: var(--learnoo-space-6); }
 .public .outline h3 { margin-block: var(--learnoo-space-5) var(--learnoo-space-2); }
 .public .outline .unavailable { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
-.site-footer { max-width: var(--learnoo-width-reader); margin: 0 auto var(--learnoo-space-8); padding-inline: var(--learnoo-space-5); }
+.public .site-footer { max-width: var(--learnoo-width-reader); margin: 0 auto var(--learnoo-space-8); padding-inline: var(--learnoo-space-5); }

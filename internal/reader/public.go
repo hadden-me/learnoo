@@ -46,7 +46,7 @@ var publicTemplates = sync.OnceValues(func() (map[string]*template.Template, err
 		return nil, err
 	}
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"home", "catalogue", "catalogue_section", "catalogue_subject", "course", "public_notice"} {
+	for _, name := range []string{"public_home", "public_catalogue", "public_catalogue_section", "public_catalogue_subject", "public_course", "public_notice"} {
 		clone, err := base.Clone()
 		if err != nil {
 			return nil, err
@@ -152,7 +152,7 @@ func (h *Handlers) home(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "curriculum", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "home", publicView{Title: "Accueil",
+	h.renderPublic(w, r, http.StatusOK, "public_home", publicView{Title: "Accueil",
 		Data: homeData{Levels: levels, Studio: signInURL("/studio")}})
 }
 
@@ -167,7 +167,7 @@ func (h *Handlers) catalogueIndex(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "catalogue index", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "catalogue", publicView{Title: "Catalogue",
+	h.renderPublic(w, r, http.StatusOK, "public_catalogue", publicView{Title: "Catalogue",
 		Data: catalogueData{Levels: levels, Unplaced: unplaced}})
 }
 
@@ -203,7 +203,7 @@ func (h *Handlers) catalogueSection(w http.ResponseWriter, r *http.Request) {
 		h.publicInternal(w, r, "section", err)
 		return
 	}
-	h.renderPublic(w, r, http.StatusOK, "catalogue_section", publicView{Title: p.Name, Data: p})
+	h.renderPublic(w, r, http.StatusOK, "public_catalogue_section", publicView{Title: p.Name, Data: p})
 }
 
 func (h *Handlers) catalogueSubject(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +226,7 @@ func (h *Handlers) catalogueSubject(w http.ResponseWriter, r *http.Request) {
 	if label.Lang == "ar" {
 		v.TitleLang = "ar"
 	}
-	h.renderPublic(w, r, http.StatusOK, "catalogue_subject", v)
+	h.renderPublic(w, r, http.StatusOK, "public_catalogue_subject", v)
 }
 
 // signInURL is the sign-in page with a validated local return path: target
@@ -262,7 +262,7 @@ func (h *Handlers) courseOverview(w http.ResponseWriter, r *http.Request) {
 	if c.Language == "ar" {
 		v.TitleLang = "ar"
 	}
-	h.renderPublic(w, r, http.StatusOK, "course", v)
+	h.renderPublic(w, r, http.StatusOK, "public_course", v)
 }
 
 // courseCover serves the cover of a readable course's published revision
