@@ -57,7 +57,7 @@ func newReaderOptions(t *testing.T, configure func(*auth.Config), opts ...server
 		reviewer:  e.newUser("test-reviewer", subject, permissions.Reviewer),
 		publisher: e.newUser("test-publisher", subject, permissions.Publisher),
 		admin:     e.newUser("test-admin", subject, permissions.Administrator),
-		ls:        lessons.NewStore(e.db, nil),
+		ls:        lessons.NewStore(e.db),
 		rs:        review.NewStore(e.db),
 		inv:       invitations.NewStore(e.db, nil),
 	}

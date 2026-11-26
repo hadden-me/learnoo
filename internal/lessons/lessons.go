@@ -176,18 +176,16 @@ func (r Revision) ApprovedBy() *int64 {
 
 // Store creates, saves, submits and discards lesson drafts. It validates
 // content but does not bound how much it reads: callers must cap input size
-// (the HTTP layer limits request bodies).
+// (the HTTP layer limits request bodies). Every timestamp it writes
+// (created_at, updated_at, submitted_at) is the database transaction time,
+// as the audit tables record, so the times of one transaction agree.
 type Store struct {
-	db  *pgxpool.Pool
-	now func() time.Time
+	db *pgxpool.Pool
 }
 
-// NewStore builds a Store. now may be nil to use the wall clock.
-func NewStore(db *pgxpool.Pool, now func() time.Time) *Store {
-	if now == nil {
-		now = time.Now
-	}
-	return &Store{db: db, now: now}
+// NewStore builds a Store.
+func NewStore(db *pgxpool.Pool) *Store {
+	return &Store{db: db}
 }
 
 type snapshot struct {
@@ -318,16 +316,15 @@ func (s *Store) CreateLesson(ctx context.Context, actor int64, nl NewLesson) (Re
 				return mapErr(err)
 			}
 		}
-		now := s.now().UTC()
 		var lessonID int64
 		err = tx.QueryRow(ctx, `
 			INSERT INTO lessons (translation_group_id, language, subject_id, created_at, created_by)
-			VALUES ($1::uuid, $2, $3, $4, $5)
-			RETURNING id`, group, nl.Language, nl.SubjectID, now, actor).Scan(&lessonID)
+			VALUES ($1::uuid, $2, $3, now(), $4)
+			RETURNING id`, group, nl.Language, nl.SubjectID, actor).Scan(&lessonID)
 		if err != nil {
 			return mapErr(err)
 		}
-		rev, err = insertRevision(ctx, tx, lessonID, 1, nil, nl.SubjectID, actor, now, snap)
+		rev, err = insertRevision(ctx, tx, lessonID, 1, nil, nl.SubjectID, actor, snap)
 		return err
 	})
 	return rev, err
@@ -396,22 +393,22 @@ func (s *Store) CreateDraft(ctx context.Context, actor, lessonID int64, f Fields
 			return ErrActiveCandidateExists
 		}
 		// Numbers are never reused, even after a discarded draft.
-		rev, err = insertRevision(ctx, tx, lessonID, last+1, published, subject, actor, s.now().UTC(), snap)
+		rev, err = insertRevision(ctx, tx, lessonID, last+1, published, subject, actor, snap)
 		return err
 	})
 	return rev, err
 }
 
-func insertRevision(ctx context.Context, tx pgx.Tx, lessonID int64, number int, base *int64, subject, author int64, now time.Time, snap snapshot) (Revision, error) {
+func insertRevision(ctx context.Context, tx pgx.Tx, lessonID int64, number int, base *int64, subject, author int64, snap snapshot) (Revision, error) {
 	var id int64
 	err := tx.QueryRow(ctx, `
 		INSERT INTO lesson_revisions (lesson_id, revision_number, author_id, base_revision_id,
 			title, objectives, prerequisites, content, schema_version, language, subject_id,
 			chapter_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
 		RETURNING id`,
 		lessonID, number, author, base, snap.doc.Title, snap.doc.Objective, snap.prereq,
-		snap.content, snap.doc.SchemaVersion, snap.doc.Language, subject, snap.chapter, now).Scan(&id)
+		snap.content, snap.doc.SchemaVersion, snap.doc.Language, subject, snap.chapter).Scan(&id)
 	if err != nil {
 		return Revision{}, mapErr(err)
 	}
@@ -506,10 +503,10 @@ func (s *Store) SaveDraft(ctx context.Context, actor, revisionID int64, expected
 		tag, err := tx.Exec(ctx, `
 			UPDATE lesson_revisions
 			   SET title = $4, objectives = $5, prerequisites = $6, content = $7,
-			       schema_version = $8, chapter_id = $9, version = version + 1, updated_at = $10
+			       schema_version = $8, chapter_id = $9, version = version + 1, updated_at = now()
 			 WHERE id = $1 AND version = $2 AND author_id = $3 AND status = 'draft'`,
 			revisionID, expectedVersion, actor, snap.doc.Title, snap.doc.Objective, snap.prereq,
-			snap.content, snap.doc.SchemaVersion, snap.chapter, s.now().UTC())
+			snap.content, snap.doc.SchemaVersion, snap.chapter)
 		if err != nil {
 			return mapErr(err)
 		}

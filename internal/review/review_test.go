@@ -50,7 +50,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	db := dbtest.Migrated(t)
 	e := &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db),
-		lessons: lessons.NewStore(db, nil), review: review.NewStore(db)}
+		lessons: lessons.NewStore(db), review: review.NewStore(db)}
 	e.subject = e.newSubject("simulated-math")
 	e.author = e.user("author", permissions.Author)
 	return e

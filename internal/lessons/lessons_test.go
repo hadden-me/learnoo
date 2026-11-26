@@ -51,7 +51,7 @@ func newEnv(t *testing.T) *env {
 // newEnvOn builds an env on an already prepared schema (the upgrade test
 // starts from an older migration).
 func newEnvOn(t *testing.T, db *pgxpool.Pool) *env {
-	return &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db), store: lessons.NewStore(db, nil)}
+	return &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db), store: lessons.NewStore(db)}
 }
 
 func (e *env) user(name string) int64 {
