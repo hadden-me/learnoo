@@ -18,6 +18,10 @@ import (
 // a secret outside the bundle directory.
 const studioIndex = `<!doctype html><html lang="fr"><head><script type="module" crossorigin src="/studio/assets/index-TEST.js"></script></head><body><div id="root"></div></body></html>`
 
+// studioFingerprinted is named like a Vite build output (name-hash.ext), so
+// it is cached by the browser; index-TEST.js is not (hash too short).
+const studioFingerprinted = "assets/index-Tq3x_9Ab.js"
+
 func studioBundle(t *testing.T) *os.Root {
 	t.Helper()
 	base := t.TempDir()
@@ -35,6 +39,7 @@ func studioBundle(t *testing.T) *os.Root {
 	write("dist/index.html", studioIndex)
 	write("dist/assets/index-TEST.js", `console.log("TEST studio")`)
 	write("dist/assets/index-TEST.css", `body{color:black}`)
+	write("dist/"+studioFingerprinted, `console.log("TEST fingerprinted")`)
 	write("dist/.hidden.txt", "TEST hidden")
 	write("dist/assets/sub.d/x.txt", "TEST nested")
 	write("secret.txt", "TEST SECRET outside the bundle")
@@ -57,8 +62,12 @@ func (f readerFixture) studio(u apiUser, method, path string) *httptest.Response
 	f.t.Helper()
 	w := f.page(u, method, path, nil)
 	h := w.Header()
-	if cc := h.Get("Cache-Control"); cc != studioweb.CacheControl {
-		f.t.Errorf("%s %s: Cache-Control %q", method, path, cc)
+	want := studioweb.CacheControl
+	if w.Code == http.StatusOK && path == "/studio/"+studioFingerprinted {
+		want = studioweb.AssetCacheControl
+	}
+	if cc := h.Get("Cache-Control"); cc != want {
+		f.t.Errorf("%s %s: Cache-Control %q, want %q", method, path, cc, want)
 	}
 	if v := h.Get("Vary"); v != "Cookie" {
 		f.t.Errorf("%s %s: Vary %q", method, path, v)
@@ -99,7 +108,7 @@ func TestStudioRequiresASession(t *testing.T) {
 		w := f.studio(apiUser{}, http.MethodGet, path)
 		wantRedirect(t, "anonymous "+path, w, "/login?next="+url.QueryEscape(next))
 	}
-	for _, path := range []string{"/studio/index.html", "/studio/assets/index-TEST.js", "/studio/assets/missing.js"} {
+	for _, path := range []string{"/studio/index.html", "/studio/assets/index-TEST.js", "/studio/assets/missing.js", "/studio/" + studioFingerprinted} {
 		wantStatus(t, "anonymous "+path, f.studio(apiUser{}, http.MethodGet, path), http.StatusNotFound, "not_found")
 	}
 	// Signing in through the reader's form returns to the Studio.
@@ -123,6 +132,7 @@ func TestStudioDeniesUsersWithoutStaffAccess(t *testing.T) {
 		}
 		wantAbsent(t, name, w, "index-TEST.js")
 		wantStatus(t, name+" asset", f.studio(u, http.MethodGet, "/studio/assets/index-TEST.js"), http.StatusNotFound, "not_found")
+		wantStatus(t, name+" fingerprinted asset", f.studio(u, http.MethodGet, "/studio/"+studioFingerprinted), http.StatusNotFound, "not_found")
 	}
 	// Revoking the last permission closes the Studio on the next request.
 	ps := permissions.NewStore(f.db)
@@ -132,8 +142,18 @@ func TestStudioDeniesUsersWithoutStaffAccess(t *testing.T) {
 	wantPage(t, "revoked author", f.studio(f.author, http.MethodGet, "/studio"), http.StatusForbidden)
 }
 
+// servedStudioIndex is studioIndex as the server sends it: with the
+// fingerprinted KaTeX URLs for the preview (web/studio/src/preview.ts).
+func servedStudioIndex(t *testing.T) string {
+	t.Helper()
+	meta := `<meta name="learnoo-katex-css" content="` + mustAssetURL(t, "vendor/katex/katex.min.css") + `">` +
+		`<meta name="learnoo-katex-js" content="` + mustAssetURL(t, "vendor/katex/katex.min.js") + `">`
+	return strings.Replace(studioIndex, "</head>", meta+"</head>", 1)
+}
+
 func TestStudioServesTheBundleToStaff(t *testing.T) {
 	f := newStudioReader(t)
+	studioIndex := servedStudioIndex(t)
 	for name, u := range map[string]apiUser{"author": f.author, "reviewer": f.reviewer, "publisher": f.publisher, "admin": f.admin} {
 		w := f.studio(u, http.MethodGet, "/studio")
 		if w.Code != http.StatusOK || w.Body.String() != studioIndex {
@@ -161,6 +181,15 @@ func TestStudioServesTheBundleToStaff(t *testing.T) {
 	if w := f.studio(a, http.MethodGet, "/studio/assets/index-TEST.css"); w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/css") {
 		t.Fatalf("stylesheet: %d %q", w.Code, w.Header().Get("Content-Type"))
 	}
+	// Fingerprinted bundle files may stay in the browser cache (the helper
+	// checks AssetCacheControl); missing ones are 404 with no-store.
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		w := f.studio(a, method, "/studio/"+studioFingerprinted)
+		if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != studioweb.AssetCacheControl {
+			t.Fatalf("%s fingerprinted: %d %v", method, w.Code, w.Header())
+		}
+	}
+	wantStatus(t, "missing fingerprinted", f.studio(a, http.MethodGet, "/studio/assets/index-Zz9y_8Xw.js"), http.StatusNotFound, "not_found")
 	if w := f.studio(a, http.MethodHead, "/studio/assets/index-TEST.js"); w.Code != http.StatusOK || w.Body.Len() != 0 {
 		t.Fatalf("HEAD: %d %q", w.Code, w.Body)
 	}

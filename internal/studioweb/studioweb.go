@@ -3,8 +3,9 @@
 // author, publisher or administrator, or assigned to review a subject.
 //
 // Every response, assets included, needs a session and that access, and is
-// sent with Cache-Control: private, no-store and the strict Content Security
-// Policy below. Anonymous navigations are redirected to the sign-in page;
+// sent with the strict Content Security Policy below and Cache-Control:
+// private, no-store, except Vite's fingerprinted files under /studio/assets/
+// (AssetCacheControl: kept by the browser, never by a shared cache). Anonymous navigations are redirected to the sign-in page;
 // signed-in users without access get the reader's 403 page. Asset requests
 // (a last path segment with a dot) are answered 404 in both cases, so the
 // bundle's file names are not revealed. Other paths under /studio/ are client
@@ -20,12 +21,16 @@ package studioweb
 import (
 	"bytes"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,8 +38,21 @@ import (
 	"github.com/hadden-me/learnoo/internal/permissions"
 )
 
-// CacheControl is sent on every Studio response.
+// CacheControl is sent on every Studio response but fingerprinted assets.
 const CacheControl = "private, no-store"
+
+// AssetCacheControl is sent on a fingerprinted bundle file (isFingerprinted)
+// served to a signed-in staff member: its name changes with its content, so
+// the browser may keep it without revalidating. It stays private (never in
+// a shared cache) because the Studio is staff-only; the files themselves
+// contain no user or lesson data, so one left in a browser cache after
+// access is revoked reveals nothing. index.html, client routes, errors and
+// 404s stay CacheControl.
+const AssetCacheControl = "private, max-age=31536000, immutable"
+
+// fingerprinted matches the names Vite gives built files under assets/
+// (assets/[name]-[hash][extname], the hash at least 8 URL-safe characters).
+var fingerprinted = regexp.MustCompile(`^assets/[A-Za-z0-9._-]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$`)
 
 // CSP allows only same-origin scripts, styles, images, fonts and API calls.
 // The Vite build emits an external module script and stylesheet and no
@@ -60,7 +78,11 @@ type Config struct {
 	Files fs.FS
 	// ErrorPage renders an HTML error page (the reader's).
 	ErrorPage func(w http.ResponseWriter, r *http.Request, status int, heading, message string)
-	Log       *slog.Logger
+	// Meta is added to index.html as <meta name content> elements before
+	// </head>: the application's fingerprinted asset URLs the Studio loads
+	// at run time (KaTeX for the preview, see web/studio/src/preview.ts).
+	Meta map[string]string
+	Log  *slog.Logger
 }
 
 // Handler serves the Studio.
@@ -164,6 +186,9 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 	content, ok := f.(io.ReadSeeker)
+	if name == "index.html" && len(h.Meta) > 0 {
+		ok = false // read into memory to add the meta elements
+	}
 	if !ok {
 		data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
 		if err != nil || len(data) > MaxFileBytes {
@@ -171,11 +196,33 @@ func (h *Handler) serveFile(w http.ResponseWriter, r *http.Request, name string)
 			auth.WriteError(w, http.StatusInternalServerError, "internal", "Something went wrong. Try again later.")
 			return
 		}
+		if name == "index.html" {
+			data = h.withMeta(data)
+		}
 		content = bytes.NewReader(data)
 	}
 	// A zero modification time sends no Last-Modified header: responses are
-	// never stored, so there is nothing to revalidate.
+	// either never stored or immutable, so there is nothing to revalidate.
+	if fingerprinted.MatchString(name) {
+		w.Header().Set("Cache-Control", AssetCacheControl)
+	}
 	http.ServeContent(w, r, path.Base(name), time.Time{}, content)
+}
+
+// withMeta inserts the Meta elements, sorted by name, before the first
+// </head>; a page without one is returned unchanged.
+func (h *Handler) withMeta(page []byte) []byte {
+	i := bytes.Index(page, []byte("</head>"))
+	if i < 0 || len(h.Meta) == 0 {
+		return page
+	}
+	var b bytes.Buffer
+	b.Write(page[:i])
+	for _, name := range slices.Sorted(maps.Keys(h.Meta)) {
+		b.WriteString(`<meta name="` + html.EscapeString(name) + `" content="` + html.EscapeString(h.Meta[name]) + `">`)
+	}
+	b.Write(page[i:])
+	return b.Bytes()
 }
 
 func notFound(w http.ResponseWriter) {

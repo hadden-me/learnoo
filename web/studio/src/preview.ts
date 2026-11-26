@@ -2,9 +2,11 @@
 // renderer, byte for byte the reader's lesson markup, allowlisted and escaped
 // by the server). It is placed in the page, styled by the reader's own
 // stylesheets (scoped at build time, see vite.config.ts) and its formulas are
-// typeset with the KaTeX the application serves under /static, with the
-// reader's options (internal/rendering/static/math.js). Same origin only:
-// no iframe, no external request.
+// typeset with the KaTeX the application serves, with the reader's options
+// (internal/rendering/static/math.js). Same origin only: no iframe, no
+// external request. The server names KaTeX's fingerprinted, cacheable URLs
+// in index.html (<meta name="learnoo-katex-js|css">); the unversioned
+// /static/ URLs (not cached) are the fallback, for the development server.
 
 interface Katex {
   render(source: string, element: HTMLElement, options: Record<string, unknown>): void;
@@ -16,22 +18,28 @@ declare global {
   }
 }
 
-const KATEX_JS = '/static/vendor/katex/katex.min.js';
-const KATEX_CSS = '/static/vendor/katex/katex.min.css';
+/** The URL the server gives for an asset in a meta element, if any and same-origin path. */
+function assetURL(name: string, fallback: string): string {
+  const url = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content ?? '';
+  return url.startsWith('/') && !url.startsWith('//') ? url : fallback;
+}
+
 let loading: Promise<Katex | null> | null = null;
 
 /** Loads the application's KaTeX once; resolves null (formulas left as source) if unavailable. */
 export function loadKatex(): Promise<Katex | null> {
   if (window.katex) return Promise.resolve(window.katex);
   loading ??= new Promise((resolve) => {
-    if (!document.querySelector(`link[href="${KATEX_CSS}"]`)) {
+    const js = assetURL('learnoo-katex-js', '/static/vendor/katex/katex.min.js');
+    const css = assetURL('learnoo-katex-css', '/static/vendor/katex/katex.min.css');
+    if (!document.querySelector(`link[href="${css}"]`)) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = KATEX_CSS;
+      link.href = css;
       document.head.append(link);
     }
     const script = document.createElement('script');
-    script.src = KATEX_JS;
+    script.src = js;
     script.onload = () => resolve(window.katex ?? null);
     script.onerror = () => {
       loading = null;
