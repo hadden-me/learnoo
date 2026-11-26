@@ -14,13 +14,19 @@ const saveButton = (page) => page.getByRole('button', { name: 'Enregistrer', exa
 const snapshot = async (session) =>
   (await session.call('GET', '/api/courses?mine=1')).courses.map((c) => ({ id: c.id, revision: c.latestRevision?.id ?? null, version: c.latestRevision?.version ?? null }));
 
+/** The session cookie's value in the browser context (one session per context). */
+const sessionCookie = async (context) => (await context.cookies()).find((c) => c.name.includes('learnoo_session'))?.value ?? null;
+
 /**
  * Author B's course exists only during the account-switch test: other specs
  * (courses.spec.mjs) expect test-author-two to own no course. Deleted here,
- * even when the test fails, without masking its result.
+ * even when the test fails, without masking its result; the test's API
+ * contexts are closed here too.
  */
 let createdForB = null;
+const apiContexts = [];
 test.afterEach(async ({ browser, baseURL }) => {
+  for (const ctx of apiContexts.splice(0)) await ctx.close().catch((e) => console.warn(`acceptance-regressions: closing a context failed: ${e}`));
   const id = createdForB;
   createdForB = null;
   if (id === null) return;
@@ -42,6 +48,7 @@ test('a course draft open in one tab never writes or shows anything as another a
   const f = await setup(browser, baseURL);
   const a = await apiSession(browser, baseURL, author);
   const b = await apiSession(browser, baseURL, authorTwo);
+  apiContexts.push(a.ctx, b.ctx);
   const { course, revision } = await apiCourse(a, f.subject.id, { title: 'TEST Cours ouvert au changement de compte', modules: [{ key: null, title: 'TEST Module enregistré', chapterId: null, steps: [] }] });
   const { course: theirs } = await apiCourse(b, f.subject.id, { title: 'TEST Cours de l’autre auteur' });
   createdForB = theirs.id;
@@ -56,6 +63,9 @@ test('a course draft open in one tab never writes or shows anything as another a
   const mine = `${COURSE_RECOVERY}u${a.me.id}:c${course.id}:`;
   await expect.poll(() => courseCopies(page)).toEqual([expect.stringMatching(new RegExp(`^${mine}`))]);
 
+  const sessionA = await sessionCookie(context);
+  expect(sessionA).toBeTruthy();
+
   // In another tab A signs out (asked first: unsaved copies exist), which removes A's copies; B signs in.
   const other = await context.newPage();
   await other.goto('/studio');
@@ -66,29 +76,39 @@ test('a course draft open in one tab never writes or shows anything as another a
   expect(await courseCopies(other)).toEqual([]);
   await signIn(other, authorTwo, '/studio/courses');
   await expect(other.locator(`a[href="/studio/courses/${theirs.id}"]`)).toHaveText('TEST Cours de l’autre auteur');
+  const sessionB = await sessionCookie(context);
+  expect(sessionB).toBeTruthy();
+  expect(sessionB).not.toBe(sessionA);
 
   // A's tab tries to save: no write is accepted under B's session, the edits stay on screen,
-  // and the copy is kept again under A's key only.
-  const writes = [];
-  page.on('response', async (r) => {
-    if (r.request().method() === 'GET' || !new URL(r.url()).pathname.startsWith('/api/')) return;
-    const w = { path: new URL(r.url()).pathname, status: r.status(), code: null };
-    writes.push(w);
-    w.code = (await r.json().catch(() => ({}))).error?.code ?? null;
+  // and the copy is kept again under A's key only. Every request the tab sends from now on is recorded.
+  const sent = [];
+  page.on('request', (r) => {
+    const { pathname } = new URL(r.url());
+    if (pathname.startsWith('/api/')) sent.push({ method: r.method(), path: pathname, request: r });
   });
-  await saveButton(page).click();
+  const writes = () => sent.filter((x) => x.method !== 'GET');
+  // The tab has not yet noticed the switch: the first save sends one request, with B's session
+  // cookie and A's CSRF token, which the server refuses (403 csrf_rejected) before writing.
+  const [refused] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === `/api/course-revisions/${revision.id}`),
+    saveButton(page).click(),
+  ]);
+  expect(refused.status()).toBe(403);
+  expect((await refused.json()).error.code).toBe('csrf_rejected');
+  const cookie = (await refused.request().allHeaders())['cookie'] ?? '';
+  expect(cookie).toContain(sessionB);
+  expect(cookie).not.toContain(sessionA);
+  // The client then reads the session, sees B, and says nothing was saved.
   const banner = page.locator('.banner.expired');
   await expect(banner).toContainText('Un autre compte est connecté dans ce navigateur.');
-  await expect(page.getByRole('alert').filter({ hasText: 'Un autre compte est connecté' }).first()).toBeVisible();
+  await expect(page.getByText('Un autre compte est connecté dans ce navigateur. Rien n’a été enregistré')).toBeVisible();
   await expect(page.getByLabel('Titre du cours')).toHaveValue('TEST Titre non enregistré de A');
   await expect(page.getByLabel('Titre du module 2')).toHaveValue('TEST Module non enregistré de A');
+  // A second save is held in the tab: nothing is sent.
   await saveButton(page).click();
   await expect(page.getByText(/Rien n’a été envoyé : un autre compte est connecté dans ce navigateur/)).toBeVisible();
-  // The tab has not yet noticed the switch when the first save is clicked: that one request
-  // carries B's session cookie with A's CSRF token and is refused (403 csrf_rejected) before
-  // anything is written; the client then reads the session, sees B and sends nothing more.
-  for (const w of writes) expect(w).toEqual({ path: `/api/course-revisions/${revision.id}`, status: 403, code: 'csrf_rejected' });
-  expect(writes.length).toBeLessThanOrEqual(1);
+  expect(writes().map((x) => `${x.method} ${x.path}`)).toEqual([`PUT /api/course-revisions/${revision.id}`]);
   const copies = await courseCopies(page);
   expect(copies.length).toBeGreaterThan(0);
   for (const k of copies) expect(k.startsWith(mine)).toBe(true);
@@ -100,9 +120,10 @@ test('a course draft open in one tab never writes or shows anything as another a
   const unchanged = await a.call('GET', `/api/course-revisions/${revision.id}`);
   expect({ title: unchanged.title, version: unchanged.version }).toEqual({ title: 'TEST Cours ouvert au changement de compte', version: revision.version });
 
-  // A's tab shows nothing of B's: still A's header and draft, none of B's courses.
+  // A's tab shows nothing of B's: still A's header and draft, and since the switch it has read
+  // nothing but the session (no course, lesson or catalogue data under B's cookie).
   await expect(page.locator('.who')).toHaveText(a.me.displayName);
-  await expect(page.getByText('TEST Cours de l’autre auteur')).toHaveCount(0);
+  expect(sent.filter((x) => x.method === 'GET' && x.path !== '/api/auth/session')).toEqual([]);
 
   // B sees neither A's draft nor A's unsaved edits, and is offered no restore of them.
   await expect(other.getByText(/TEST (Cours ouvert au changement de compte|Titre non enregistré de A)/)).toHaveCount(0);
@@ -119,6 +140,8 @@ test('a course draft open in one tab never writes or shows anything as another a
   // Resuming while B is signed in is refused; once A is back, the tab resumes and saves as A.
   await page.getByRole('button', { name: 'Reprendre ici' }).click();
   await expect(banner).toContainText('Un autre compte est toujours connecté');
+  expect(writes()).toHaveLength(1);
+  expect(sent.filter((x) => x.method === 'GET' && x.path !== '/api/auth/session')).toEqual([]);
   await other.getByRole('button', { name: 'Se déconnecter' }).click();
   await expect(other).toHaveURL(/\/login$/);
   await signIn(other, author, '/studio/courses');
@@ -135,8 +158,6 @@ test('a course draft open in one tab never writes or shows anything as another a
   expect(await snapshot(b)).toEqual(theirsBefore);
   expect(problems).toEqual([]);
   await other.close();
-  await a.ctx.close();
-  await b.ctx.close();
 });
 
 /** A published course's third step, found by a signed-in student in a separate browser context. */
