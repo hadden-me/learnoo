@@ -129,6 +129,13 @@ func TestBrowserReaderServer(t *testing.T) {
 	spec.Owner = courseAuthor.id
 	coursetest.Publish(t, f.db, spec)
 	f.setName(f.newUser("test-course-student", 0).id, "TEST Élève cours")
+	// The LMS acceptance journeys (tests/browser-reader/acceptance-lms.spec.mjs),
+	// used by no other test: a teacher who is also a reviewer of test-math
+	// (so that the self-review refusal is shown to them), and one student per
+	// interface language.
+	f.setName(f.newUser("test-acc-teacher", f.subject, permissions.Author, permissions.Reviewer).id, "TEST Enseignante Amal")
+	f.setName(f.newUser("test-acc-student-fr", 0).id, "TEST Élève Yasmine")
+	f.setName(f.newUser("test-acc-student-ar", 0).id, "TEST Élève Sami")
 
 	token, _, err := f.inv.Issue(context.Background(), "browser-student@example.test", "test-operator@test-host", time.Hour)
 	if err != nil {
