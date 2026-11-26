@@ -45,7 +45,12 @@ type env struct {
 }
 
 func newEnv(t *testing.T) *env {
-	db := dbtest.Migrated(t)
+	return newEnvOn(t, dbtest.Migrated(t))
+}
+
+// newEnvOn builds an env on an already prepared schema (the upgrade test
+// starts from an older migration).
+func newEnvOn(t *testing.T, db *pgxpool.Pool) *env {
 	return &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db), store: lessons.NewStore(db, nil)}
 }
 
@@ -194,7 +199,11 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) fixture {
-	e := newEnv(t)
+	return newFixtureOn(newEnv(t))
+}
+
+func newFixtureOn(e *env) fixture {
+	t := e.t
 	subject := e.newSubject("simulated-math")
 	reviewer := e.user("fixture-reviewer")
 	if _, err := e.perms.GrantReviewer(e.ctx, operator, reviewer, subject); err != nil {
