@@ -77,8 +77,8 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
-| 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
-| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
+| 422 | `invalid_input` | A curriculum code, name, label or display order, or a course field, is malformed (`message` says which rule) |
+| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them); for a course draft, an assignment that cannot be newly selected or of another subject, or a module chapter in none of the draft's assignments or retired (`message` says which) |
 | 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft created, saved with a chapter change, or submitted with a retired chapter other than the chapter of its published base revision |
 | 422 | `invalid_step` | A course step that cannot be attached: unknown lesson or revision, another author's lesson that is not published or a revision of it that is not eligible, another subject or language, a revision of another lesson, or a lesson attached twice |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
