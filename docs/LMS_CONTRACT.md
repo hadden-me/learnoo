@@ -24,7 +24,8 @@ The conventions of the existing system apply unchanged: guards raise SQLSTATE `L
 Invariants:
 - Assignments and their chapter lists are editable only while the edition is `draft`. Afterwards they are immutable (guard). Changing meaning means a new edition.
 - Existing `subjects` and `chapters` keep their IDs, codes and the display names/order from 0012. No existing chapter is placed into an edition by the migration; an administrator does it explicitly (audited).
-- "Selectable" for new course drafts and submissions: the edition is `current` or `superseded` (not `draft`, not `retired`), its section and level are not retired.
+- Newly selectable: the edition is `current` and its section and level are not retired. A successor may keep a `superseded` assignment inherited from its base. `retired` editions cannot be submitted or published. Each module maps to at most one chapter; a step's lesson chapter may differ from its module's (Studio warns). Assignment chapter `position` is independent of the catalogue display order from 0012.
+- Standalone lessons are listed under an edition when the chapter of their published revision is in that edition's assignment; lessons whose chapter is in no assignment, or NULL, are listed under their subject as "not yet placed".
 
 Discovery default: for a level/section, the current edition. Superseded editions are reachable only through an explicit edition parameter and are labelled with their edition label wherever shown.
 
@@ -41,7 +42,7 @@ Discovery default: for a level/section, the current edition. Superseded editions
 Invariants:
 - One active candidate per course (draft, in review, or approved awaiting publication), enforced by a partial unique index like lessons.
 - Draft saves accept incomplete structure but always enforce: owner and author permission, subject/language match of every step, no duplicates, and module chapter mapping inside the revision's assignments (§2 rule 2 of the spec). The mapping check runs on save, on submission and at publication, against the edition state at that moment.
-- As the spec states, the owner attaches their own lessons (`lessons.created_by` = owner) of the course's subject and language. A draft step may name any revision of such a lesson, including one still in draft or review; submission refuses until every step names an eligible revision (§4). Attaching other teachers' lessons is out of scope for this milestone.
+- Attachable lessons have the course's subject and language and are either the owner's own (`lessons.created_by` = owner) or another author's lesson that is currently published. A draft step may name any revision of the owner's own lesson, including one still in draft or review, but only an eligible revision of another author's lesson; submission refuses until every step names an eligible revision (§4).
 - Hard delete only for a course whose revisions were never submitted, by the owner, after confirmation. It removes course, revision, module and step rows only; lessons and media are untouched.
 - Ownership transfer (administrator, reason, audited): changes `owner_id` only; submitted history keeps its `author_id`; an open draft of the previous owner is closed (kept for history) and the new owner starts a successor.
 
@@ -49,7 +50,7 @@ Invariants:
 
 These are SQL functions or views used by every caller (API, reader, publication guards). No caller re-implements them.
 
-**Lesson revision eligible for a course step** (`course_step_revision_eligible(lesson_id, revision_id)`): the revision is `approved`, not withdrawn, has been published at least once (a `publish` row in `publication_audit`), and its lesson is currently published (`published_revision_id IS NOT NULL`) and not archived. Contract default: a course never makes a lesson revision readable that the publisher has not released standalone. An approved revision awaiting standalone publication is shown in the newer-revision notice as "awaiting publication"; an amendment can be drafted and reviewed with it, but publishing the amendment waits until the lesson revision is published.
+**Lesson revision eligible for a course step** (`course_step_revision_eligible(lesson_id, revision_id)`): the revision is `approved`, not withdrawn, has been published at least once (a `publish` row in `publication_audit`), and its lesson is currently published (`published_revision_id IS NOT NULL`) and not archived (spec §4). A course never makes a lesson revision readable that the publisher has not released standalone, and an approved candidate awaiting publication cannot be pinned.
 
 **Step readable** (`reader_course_steps` view): the course is readable and `course_step_revision_eligible` holds for the step. A step that is not readable is shown as an unavailable step: title from the course snapshot, the notice, no lesson body, no media. Withdrawal of the pinned revision, an administrator unpublish of the lesson, and archiving the lesson all make the step unreadable immediately, in the same snapshot rules as `reader_published_lessons`.
 
@@ -57,7 +58,7 @@ These are SQL functions or views used by every caller (API, reader, publication 
 
 **Course revision publishable**: course readable conditions on the candidate, plus every step eligible, every module mapping inside the revision's selectable assignments, approval by an eligible reviewer (§5), base equals the current published pointer (or NULL and never published), and the course not archived. Checked in one transaction under the lock order of §6.
 
-**Newer revision notice**: for each step of a published course, the lesson has an approved, non-withdrawn revision newer than the pinned one (higher `revision_number`). Shown in Studio to the owner, the subject's reviewers, publishers and administrators; never to students.
+**Newer revision notice**: for each step of a published course, the lesson has an eligible revision newer than the pinned one (higher `revision_number`). An amendment while an ordinary draft is open is refused with `409 draft_exists`. Shown in Studio to the owner, the subject's reviewers, publishers and administrators; never to students.
 
 ## 5. Course review eligibility
 
@@ -110,7 +111,10 @@ JSON, under the existing authorization model. New error codes are added to the t
 | `GET /learn/courses/{publicId}/lessons/{lessonPublicId}/media/{mediaId}` | signed in | media of the pinned revision only, under step readability |
 | existing `/learn/lessons/{publicId}` | signed in | unchanged: the current standalone publication |
 
-Course bookmarks are a separate table keyed by `(user_id, course_id)`; lesson bookmarks are unchanged. Error reports from course context record the course revision and the displayed lesson revision. All reader responses keep `Cache-Control: private, no-store` except the public homepage/catalogue/overview, which may be cached only when they contain no identity-dependent content.
+Changes to existing pieces, each in the slice named:
+- `course_bookmarks (user_id, course_id)` is a new table (B08); `bookmarks` is unchanged.
+- `error_reports` gains nullable `course_revision_id`; the 0009 insert guard is replaced (new migration, B08) so a report may name the displayed revision when it is the pinned revision of a readable step of that published course revision, and otherwise still only the lesson's current revision.
+- `reader_published_lessons` stays the standalone definition; course reading uses `reader_course_steps`. The media route for course context checks that the media belongs to the pinned revision of a readable step (B08). All reader responses keep `Cache-Control: private, no-store` except the public homepage/catalogue/overview, which may be cached only when they contain no identity-dependent content.
 
 ## 9. Test scenarios required before parallel work
 
