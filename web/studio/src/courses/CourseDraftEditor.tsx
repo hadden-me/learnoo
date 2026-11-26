@@ -72,6 +72,11 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const [baseline, setBaseline] = useState(() => snapshot(fromRevision(props.revision)));
   const [placements, setPlacements] = useState<Record<number, PlacementInfo>>(() => placementsOf(props.revision));
   const [editions, setEditions] = useState<Record<number, Edition>>({});
+  /** Editions whose details could not be read; retried only on request. */
+  const [failedEditions, setFailedEditions] = useState<number[]>([]);
+  /** The comparison revision's placements and module chapters; null while unknown (no flags are shown then). */
+  const [comparison, setComparison] = useState<outline.Comparison | null>(() => (props.revision.compareRevisionId === null ? outline.NO_COMPARISON : null));
+  const [comparisonError, setComparisonError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [message, setMessage] = useState<Message>(null);
@@ -83,7 +88,8 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const [restoredKey, setRestoredKey] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'discard' | 'delete' | null>(null);
   const [picker, setPicker] = useState<{ moduleId: string; step?: DraftStep } | null>(null);
-  const [announcement, setAnnouncement] = useState('');
+  const [announcement, setAnnouncement] = useState({ text: '', n: 0 });
+  const announce = (text: string) => setAnnouncement((a) => ({ text, n: a.n + 1 }));
   const [focusRequest, setFocusRequest] = useState<{ id: string; fallback?: string; n: number } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -102,23 +108,39 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   // Edition details (labels, assignment chapters) for every placement shown.
   useEffect(() => {
-    const missing = [...new Set(Object.values(placements).map((p) => p.editionId))].filter((id) => !editions[id]);
+    const missing = outline.editionsToFetch(Object.values(placements).map((p) => p.editionId), editions, failedEditions);
     if (missing.length === 0) return;
     let cancelled = false;
     void Promise.all(missing.map((id) => courses.edition(id).catch(() => null))).then((loaded) => {
       if (cancelled) return;
-      setEditions((e) => ({ ...e, ...Object.fromEntries(loaded.filter((x): x is Edition => x !== null).map((x) => [x.id, x])) }));
+      const ok = loaded.filter((x): x is Edition => x !== null);
+      const failed = missing.filter((_, i) => loaded[i] === null);
+      // State changes only when something happened, so a failure is never refetched in a loop.
+      if (ok.length > 0) setEditions((e) => ({ ...e, ...Object.fromEntries(ok.map((x) => [x.id, x])) }));
+      if (failed.length > 0) setFailedEditions((f) => [...f, ...failed]);
     });
     return () => {
       cancelled = true;
     };
-  }, [courses, placements, editions]);
+  }, [courses, placements, editions, failedEditions]);
+
+  const compareId = props.revision.compareRevisionId;
+  const loadComparison = useCallback(() => {
+    if (compareId === null) return;
+    setComparisonError(false);
+    courses.revision(compareId).then(
+      (r) => setComparison(outline.comparisonOf(r)),
+      () => setComparisonError(true),
+    );
+  }, [courses, compareId]);
+  useEffect(loadComparison, [loadComparison]);
 
   const chaptersOf = useCallback(
     (assignmentId: number) => {
       const info = placements[assignmentId];
       const assignment = info ? editions[info.editionId]?.assignments?.find((a) => a.id === assignmentId) : undefined;
-      return assignment ? [...assignment.chapters].sort((a, b) => a.position - b.position) : [];
+      // null: unknown (edition not read), never treated as "no chapters".
+      return assignment ? [...assignment.chapters].sort((a, b) => a.position - b.position) : null;
     },
     [placements, editions],
   );
@@ -127,13 +149,28 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     const byId = new Map(props.chapters.map((c) => [c.id, c]));
     const seen = new Map<number, ChapterOption>();
     for (const id of draft.assignmentIds)
-      for (const c of chaptersOf(id)) {
+      for (const c of chaptersOf(id) ?? []) {
         if (seen.has(c.chapterId)) continue;
         const entry = byId.get(c.chapterId);
         seen.set(c.chapterId, { id: c.chapterId, label: entry ? entryLabel(entry, language) : catalogueLabel(c.code, null, null, language), retired: c.retired || !!entry?.retiredAt });
       }
     return [...seen.values()];
   }, [draft.assignmentIds, chaptersOf, props.chapters, language]);
+
+  const retiredChapters = useMemo(() => {
+    const ids = new Set(props.chapters.filter((c) => c.retiredAt).map((c) => c.id));
+    for (const e of Object.values(editions)) for (const a of e.assignments ?? []) for (const c of a.chapters) if (c.retired) ids.add(c.chapterId);
+    return ids;
+  }, [props.chapters, editions]);
+  const refusedPlacements = useMemo(
+    () => new Set(comparison ? draft.assignmentIds.filter((id) => outline.placementRefused(id, placements[id], comparison)) : []),
+    [draft.assignmentIds, placements, comparison],
+  );
+  const carriedPlacements = useMemo(() => new Set(comparison ? draft.assignmentIds.filter((id) => outline.placementCarried(id, comparison)) : []), [draft.assignmentIds, comparison]);
+  const refusedChapters = useMemo(
+    () => new Set(comparison ? draft.modules.filter((m) => outline.chapterRefused(m, retiredChapters, comparison)).map((m) => m.localId) : []),
+    [draft.modules, retiredChapters, comparison],
+  );
 
   /* ---------- recovery copies ---------- */
 
@@ -239,6 +276,8 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
           ),
         );
         setBaseline(snapshot(sent));
+        // Edits made during the save are still unsaved: protect them under the new version's key right away.
+        if (snapshot(draftRef.current) !== snapshot(sent)) writeCourseRecovery(localStorage, recoveryTarget(next), draftRef.current);
         setLastSaved(new Date());
         setPlacementInvalid(false);
         setMessage({ text: 'Brouillon du cours enregistré sur le serveur.' });
@@ -304,9 +343,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   /* ---------- discard and delete ---------- */
 
+  /** Nothing is sent while the session is expired or another account is signed in. */
+  const refuseExpired = () =>
+    setMessage({ text: `Rien n’a été envoyé : ${accountChanged ? 'un autre compte est connecté dans ce navigateur' : 'la session a expiré'}. Reconnectez-vous puis choisissez « Reprendre ici ».`, error: true });
+
   const discard = async () => {
     setDialog(null);
-    if (expired) return;
+    if (expired) return refuseExpired();
     try {
       await courses.discard(server.id, server.version);
       removeCourseRecovery(localStorage, courseRecoveryKey(recoveryTarget()));
@@ -323,7 +366,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   const deleteCourse = async () => {
     setDialog(null);
-    if (expired) return;
+    if (expired) return refuseExpired();
     try {
       await courses.deleteCourse(course.id);
       // The course no longer exists: its copies on this device have nowhere to be restored.
@@ -344,8 +387,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const next = outline.addModule(draft, title);
       setDraft(next);
       const added = next.modules[next.modules.length - 1];
-      setAnnouncement(`Module ${next.modules.length} « ${title} » ajouté.`);
+      announce(`Module ${next.modules.length} « ${title} » ajouté.`);
       focusLater(`module-title-${added.localId}`);
+    },
+    clearChapter: (id) => {
+      setDraft((d) => outline.updateModule(d, id, { chapterId: null }));
+      announce('Chapitre officiel retiré du module.');
+      focusLater(`module-title-${id}`);
     },
     renameModule: (id, title) => setDraft((d) => outline.updateModule(d, id, { title })),
     setChapter: (id, chapterId) => setDraft((d) => outline.updateModule(d, id, { chapterId })),
@@ -354,7 +402,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const next = outline.moveModule(draft, index, delta);
       if (next === draft) return;
       setDraft(next);
-      setAnnouncement(`Module « ${moved.title.trim() || 'sans titre'} » déplacé en position ${index + delta + 1} sur ${next.modules.length}.`);
+      announce(`Module « ${moved.title.trim() || 'sans titre'} » déplacé en position ${index + delta + 1} sur ${next.modules.length}.`);
       const [here, other] = delta < 0 ? ['up', 'down'] : ['down', 'up'];
       focusLater(`module-${here}-${moved.localId}`, `module-${other}-${moved.localId}`);
     },
@@ -362,7 +410,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const index = draft.modules.findIndex((m) => m.localId === id);
       const removed = draft.modules[index];
       setDraft(outline.removeModule(draft, id));
-      setAnnouncement(`Module « ${removed?.title.trim() || 'sans titre'} » supprimé du plan.`);
+      announce(`Module « ${removed?.title.trim() || 'sans titre'} » supprimé du plan.`);
       const neighbour = draft.modules[index + 1] ?? draft.modules[index - 1];
       focusLater(neighbour ? `module-title-${neighbour.localId}` : 'course-outline-new');
     },
@@ -373,7 +421,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       setDraft(next);
       const at = outline.findStep(next, id)!;
       const step = next.modules[at.module].steps[at.step];
-      setAnnouncement(`Étape « ${step.title.trim() || 'sans titre'} » déplacée : module ${at.module + 1}, position ${at.step + 1}.`);
+      announce(`Étape « ${step.title.trim() || 'sans titre'} » déplacée : module ${at.module + 1}, position ${at.step + 1}.`);
       const [here, other] = delta < 0 ? ['up', 'down'] : ['down', 'up'];
       focusLater(`step-${here}-${id}`, `step-${other}-${id}`);
     },
@@ -382,7 +430,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       if (next === draft) return;
       setDraft(next);
       const at = outline.findStep(next, id)!;
-      setAnnouncement(`Étape déplacée à la fin du module ${at.module + 1}, position ${at.step + 1}.`);
+      announce(`Étape déplacée à la fin du module ${at.module + 1}, position ${at.step + 1}.`);
       focusLater(`step-up-${id}`, `step-title-${id}`);
     },
     removeStep: (id) => {
@@ -391,7 +439,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       const module = draft.modules[at.module];
       const step = module.steps[at.step];
       setDraft(outline.removeStep(draft, id));
-      setAnnouncement(`Étape « ${step.title.trim() || 'sans titre'} » retirée du plan. La leçon n’est pas supprimée.`);
+      announce(`Étape « ${step.title.trim() || 'sans titre'} » retirée du plan. La leçon n’est pas supprimée.`);
       const neighbour = module.steps[at.step + 1] ?? module.steps[at.step - 1];
       focusLater(neighbour ? `step-title-${neighbour.localId}` : `module-title-${module.localId}`);
     },
@@ -402,13 +450,13 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     if (!picker) return;
     if (picker.step) {
       setDraft(outline.updateStep(draft, picker.step.localId, { revisionId: picked.revisionId, revisionNumber: picked.revisionNumber, eligible: picked.eligible }));
-      setAnnouncement(`Révision ${picked.revisionNumber} épinglée.`);
+      announce(`Révision ${picked.revisionNumber} épinglée.`);
     } else {
       const next = outline.addStep(draft, picker.moduleId, picked);
       setDraft(next);
       const module = next.modules.find((m) => m.localId === picker.moduleId)!;
       const added = module.steps[module.steps.length - 1];
-      setAnnouncement(`Étape « ${picked.title} » ajoutée au module.`);
+      announce(`Étape « ${picked.title} » ajoutée au module.`);
       focusLater(`step-title-${added.localId}`);
     }
     setPicker(null);
@@ -634,29 +682,49 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         placements={placements}
         editions={editions}
         invalid={placementInvalid}
+        refused={refusedPlacements}
+        carried={carriedPlacements}
+        editionsFailed={failedEditions.length > 0}
+        onRetryEditions={() => setFailedEditions([])}
         onAdd={(info, edition) => {
           setPlacements((p) => ({ ...p, [info.assignmentId]: info }));
           setEditions((e) => ({ ...e, [edition.id]: edition }));
           setDraft((d) => (d.assignmentIds.includes(info.assignmentId) ? d : { ...d, assignmentIds: [...d.assignmentIds, info.assignmentId] }));
-          setAnnouncement('Classement ajouté.');
+          announce('Classement ajouté.');
         }}
         onRemove={(id) => {
-          setDraft((d) => outline.removeAssignment(d, id, (a) => chaptersOf(a).map((c) => c.chapterId)));
-          setAnnouncement('Classement retiré. Les modules dont le chapitre officiel n’appartient plus à aucun classement n’ont plus de chapitre.');
+          setDraft((d) => outline.removeAssignment(d, id, (a) => chaptersOf(a)?.map((c) => c.chapterId) ?? null));
+          announce('Classement retiré. Les modules dont le chapitre officiel n’appartient plus à aucun classement n’ont plus de chapitre.');
         }}
       />
 
-      <OutlineSection draft={draft} language={language} chapters={chapterOptions} actions={actions} invalidTargets={invalidTargets} announcement={announcement} focusRequest={focusRequest} />
+      {comparisonError && (
+        <div className="banner error" role="alert">
+          <p>La version publiée de référence du cours n’a pas pu être lue : les classements et chapitres que le prochain enregistrement refusera ne peuvent pas être signalés.</p>
+          <button type="button" onClick={loadComparison}>
+            Réessayer
+          </button>
+        </div>
+      )}
+      <OutlineSection
+        refusedChapters={refusedChapters}
+        chaptersComplete={draft.assignmentIds.every((id) => chaptersOf(id) !== null)}
+        draft={draft} language={language} chapters={chapterOptions} actions={actions} invalidTargets={invalidTargets} announcement={announcement} focusRequest={focusRequest} />
 
       <div className="danger-zone">
         <div className="actions">
-          <button type="button" className="danger" onClick={() => setDialog('discard')} disabled={saving}>
+          <button type="button" className="danger" onClick={() => setDialog('discard')} disabled={saving || expired} aria-describedby={expired ? 'course-danger-expired' : undefined}>
             Supprimer ce brouillon
           </button>
-          <button type="button" className="danger" onClick={() => setDialog('delete')} disabled={saving}>
+          <button type="button" className="danger" onClick={() => setDialog('delete')} disabled={saving || expired} aria-describedby={expired ? 'course-danger-expired' : undefined}>
             Supprimer le cours
           </button>
         </div>
+        {expired && (
+          <p id="course-danger-expired" className="field-error">
+            Suppression impossible tant que vous n’êtes pas reconnecté : rien ne serait envoyé.
+          </p>
+        )}
         <p className="hint">Supprimer le cours n’est possible que s’il n’a jamais été soumis. Les leçons et les images ne sont jamais supprimées avec un cours.</p>
       </div>
 

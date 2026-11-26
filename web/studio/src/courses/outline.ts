@@ -200,11 +200,59 @@ export const removeStep = (draft: CourseDraft, stepLocalId: string): CourseDraft
 /** Lessons already in the outline (a lesson may appear once per course). */
 export const lessonsInOutline = (draft: CourseDraft) => new Set(draft.modules.flatMap((m) => m.steps.map((s) => s.lessonId)));
 
-/** Removes a placement and clears module chapters that only it provided. */
-export function removeAssignment(draft: CourseDraft, assignmentId: number, chaptersOf: (assignmentId: number) => number[]): CourseDraft {
+/**
+ * Removes a placement and clears module chapters that no remaining placement
+ * provides. `chaptersOf` returns null when a placement's chapters are not
+ * known (its edition could not be read): then no chapter is cleared, since
+ * nothing proves it is no longer provided.
+ */
+export function removeAssignment(draft: CourseDraft, assignmentId: number, chaptersOf: (assignmentId: number) => number[] | null): CourseDraft {
   const assignmentIds = draft.assignmentIds.filter((id) => id !== assignmentId);
-  const allowed = new Set(assignmentIds.flatMap(chaptersOf));
+  const lists = assignmentIds.map(chaptersOf);
+  if (lists.some((l) => l === null)) return { ...draft, assignmentIds };
+  const allowed = new Set((lists as number[][]).flat());
   return { ...draft, assignmentIds, modules: draft.modules.map((m) => (m.chapterId !== null && !allowed.has(m.chapterId) ? { ...m, chapterId: null } : m)) };
+}
+
+/**
+ * Editions whose details are still to be read: shown by a placement, not
+ * known yet and not already failed (a failure is retried only on request,
+ * never in a loop).
+ */
+export function editionsToFetch(editionIds: number[], known: Record<number, unknown>, failed: number[]): number[] {
+  return [...new Set(editionIds)].filter((id) => !(id in known) && !failed.includes(id));
+}
+
+/* ---------- what the next save will refuse ---------- */
+
+/**
+ * The draft's comparison revision (compareRevisionId: the published revision
+ * the draft started from, none for a course never published). A placement or
+ * a module chapter is "carried" when it is unchanged from it; the server's save
+ * check accepts carried entries that can no longer be newly selected.
+ */
+export interface Comparison {
+  assignmentIds: Set<number>;
+  /** Module key → chapter on the comparison revision. */
+  moduleChapters: Map<string, number | null>;
+}
+
+export const NO_COMPARISON: Comparison = { assignmentIds: new Set(), moduleChapters: new Map() };
+
+export function comparisonOf(revision: CourseRevision | null): Comparison {
+  if (!revision) return NO_COMPARISON;
+  return { assignmentIds: new Set(revision.assignments.map((a) => a.assignmentId)), moduleChapters: new Map(revision.modules.map((m) => [m.key, m.chapterId])) };
+}
+
+export const placementCarried = (assignmentId: number, cmp: Comparison) => cmp.assignmentIds.has(assignmentId);
+
+/** A placement the next save refuses: not carried, and no longer selectable (edition not current, or something retired). */
+export const placementRefused = (assignmentId: number, info: { selectable: boolean } | undefined, cmp: Comparison) => !!info && !info.selectable && !placementCarried(assignmentId, cmp);
+
+/** A module chapter the next save refuses: retired, and not inherited unchanged (same module key and chapter on the comparison). */
+export function chapterRefused(module: Pick<DraftModule, 'key' | 'chapterId'>, retired: Set<number>, cmp: Comparison): boolean {
+  if (module.chapterId === null || !retired.has(module.chapterId)) return false;
+  return !(module.key !== null && cmp.moduleChapters.get(module.key) === module.chapterId);
 }
 
 /**

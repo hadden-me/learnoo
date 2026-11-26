@@ -250,6 +250,41 @@ describe('course outline', () => {
     expect(after.modules.map((m) => m.chapterId)).toEqual([9, null]);
   });
 
+  it('never clears a module chapter while a remaining placement’s chapters are unknown', () => {
+    const d = o.fromRevision(revision());
+    const withTwo = { ...d, assignmentIds: [11, 12, 13], modules: [{ ...d.modules[0], chapterId: 9 }, { ...d.modules[1], chapterId: 8 }] };
+    const unknown13 = (id: number) => (id === 13 ? null : id === 11 ? [9] : [8]);
+    const after = o.removeAssignment(withTwo, 12, unknown13);
+    expect(after.assignmentIds).toEqual([11, 13]);
+    expect(after.modules.map((m) => m.chapterId)).toEqual([9, 8]);
+  });
+
+  it('fetches each edition once: known and failed editions are not requested again', () => {
+    expect(o.editionsToFetch([4, 5, 4, 6], { 4: {} }, [6])).toEqual([5]);
+    expect(o.editionsToFetch([6], {}, [6])).toEqual([]);
+    expect(o.editionsToFetch([6], {}, [])).toEqual([6]);
+  });
+
+  it('flags what the next save refuses: new placements no longer selectable, retired chapters not inherited unchanged', () => {
+    const none = o.NO_COMPARISON;
+    expect(o.placementRefused(11, { selectable: false }, none)).toBe(true);
+    expect(o.placementRefused(11, { selectable: true }, none)).toBe(false);
+    expect(o.placementRefused(11, undefined, none)).toBe(false);
+    const published = revision({ assignments: [{ assignmentId: 11, editionId: 4, editionState: 'superseded', selectable: false, retired: false }] });
+    const cmp = o.comparisonOf(published);
+    expect(o.placementCarried(11, cmp)).toBe(true);
+    expect(o.placementRefused(11, { selectable: false }, cmp)).toBe(false);
+    expect(o.placementRefused(12, { selectable: false }, cmp)).toBe(true);
+    const retired = new Set([9]);
+    const key = 'aaaaaaaa-0000-4000-8000-000000000001';
+    expect(o.chapterRefused({ key, chapterId: 9 }, retired, none)).toBe(true);
+    expect(o.chapterRefused({ key, chapterId: 9 }, retired, cmp)).toBe(false); // same key, same chapter on the comparison
+    expect(o.chapterRefused({ key: 'aaaaaaaa-0000-4000-8000-000000000002', chapterId: 9 }, retired, cmp)).toBe(true);
+    expect(o.chapterRefused({ key: null, chapterId: 9 }, retired, cmp)).toBe(true);
+    expect(o.chapterRefused({ key, chapterId: 8 }, retired, none)).toBe(false);
+    expect(o.chapterRefused({ key, chapterId: null }, retired, none)).toBe(false);
+  });
+
   it('gives server keys to the modules that were sent, not to modules added during the save', () => {
     let d = o.addModule(o.fromRevision(revision()), 'new');
     const sent = d.modules.map((m) => m.localId);

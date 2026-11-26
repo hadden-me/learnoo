@@ -19,6 +19,8 @@ export interface OutlineActions {
   addModule: (title: string) => void;
   renameModule: (moduleId: string, title: string) => void;
   setChapter: (moduleId: string, chapterId: number | null) => void;
+  /** Removes the module's official chapter (the flagged one the next save would refuse). */
+  clearChapter: (moduleId: string) => void;
   moveModule: (index: number, delta: -1 | 1) => void;
   removeModule: (moduleId: string) => void;
   renameStep: (stepId: string, title: string) => void;
@@ -40,6 +42,8 @@ export function OutlineSection({
   invalidTargets,
   announcement,
   focusRequest,
+  refusedChapters,
+  chaptersComplete,
 }: {
   draft: CourseDraft;
   language: Lang;
@@ -48,7 +52,12 @@ export function OutlineSection({
   actions: OutlineActions;
   /** Targets of client-side problems (`module:<id>`, `step:<id>`). */
   invalidTargets: Set<string>;
-  announcement: string;
+  /** The text, and a counter that makes a repeated text a new node, so screen readers read it again. */
+  announcement: { text: string; n: number };
+  /** Modules (local IDs) whose chapter the next save will refuse: retired and not inherited unchanged. */
+  refusedChapters: Set<string>;
+  /** False while a selected placement's chapters are unknown (its edition could not be read). */
+  chaptersComplete: boolean;
   /** Element ID to focus after the next render (a moved item's button, a new module's title). */
   focusRequest: { id: string; fallback?: string; n: number } | null;
 }) {
@@ -80,9 +89,9 @@ export function OutlineSection({
       <p className="hint">
         Un module regroupe des étapes ; chaque étape épingle une révision précise d’une leçon. Les titres des modules et des étapes appartiennent au cours et sont relus avec lui. {draft.modules.length} module{draft.modules.length > 1 ? 's' : ''} sur {LIMITS.modules}, {totalSteps} étape{totalSteps > 1 ? 's' : ''} sur {LIMITS.steps}.
       </p>
-      <p className="visually-hidden" role="status" aria-live="polite">
-        {announcement}
-      </p>
+      <div className="visually-hidden" role="status" aria-live="polite">
+        {announcement.text && <p key={announcement.n}>{announcement.text}</p>}
+      </div>
       {draft.modules.length === 0 && <p>Le cours n’a pas encore de module. Ajoutez-en un ci-dessous.</p>}
       <ol className="module-list">
         {draft.modules.map((m, i) => (
@@ -97,6 +106,8 @@ export function OutlineSection({
             chapters={chapters}
             actions={actions}
             invalidTargets={invalidTargets}
+            chapterRefused={refusedChapters.has(m.localId)}
+            chaptersComplete={chaptersComplete}
             onRemove={() => (m.steps.length > 0 ? setConfirmRemove(m) : actions.removeModule(m.localId))}
           />
         ))}
@@ -145,6 +156,8 @@ function ModuleItem({
   chapters,
   actions,
   invalidTargets,
+  chapterRefused,
+  chaptersComplete,
   onRemove,
 }: {
   module: DraftModule;
@@ -156,6 +169,8 @@ function ModuleItem({
   chapters: ChapterOption[];
   actions: OutlineActions;
   invalidTargets: Set<string>;
+  chapterRefused: boolean;
+  chaptersComplete: boolean;
   onRemove: () => void;
 }) {
   const titleId = `module-title-${m.localId}`;
@@ -164,7 +179,9 @@ function ModuleItem({
   const name = m.title.trim() || 'sans titre';
   // Retired chapters are offered only when the module already has them.
   const options = chapters.filter((c) => !c.retired || c.id === m.chapterId);
-  const unknownChapter = m.chapterId !== null && !chapters.some((c) => c.id === m.chapterId);
+  const missingChapter = m.chapterId !== null && !chapters.some((c) => c.id === m.chapterId);
+  // Only claimed outside every placement when every placement's chapters are known.
+  const unknownChapter = missingChapter && chaptersComplete;
   return (
     <li className="module" aria-labelledby={`module-heading-${m.localId}`}>
       <h3 id={`module-heading-${m.localId}`}>
@@ -184,7 +201,7 @@ function ModuleItem({
         <label htmlFor={chapterId}>Chapitre officiel (facultatif)</label>
         <select id={chapterId} value={m.chapterId ?? ''} onChange={(e) => actions.setChapter(m.localId, e.target.value ? Number(e.target.value) : null)}>
           <option value="">Aucun chapitre officiel</option>
-          {unknownChapter && <option value={m.chapterId!}>Chapitre n° {m.chapterId} (hors des classements choisis)</option>}
+          {missingChapter && <option value={m.chapterId!}>Chapitre n° {m.chapterId}{unknownChapter ? ' (hors des classements choisis)' : ''}</option>}
           {options.map((c) => (
             <option key={c.id} value={c.id} {...labelAttrs(c.label)}>
               {c.label.text}
@@ -193,7 +210,15 @@ function ModuleItem({
           ))}
         </select>
         {chapters.length === 0 && <p className="hint">Les chapitres officiels proposés sont ceux des classements choisis : ajoutez d’abord un classement.</p>}
-        {unknownChapter && <p className="field-error">Ce chapitre n’appartient à aucun classement choisi : le serveur refusera l’enregistrement. Choisissez-en un autre ou aucun.</p>}
+        {unknownChapter && <p className="field-error">Le prochain enregistrement sera refusé : ce chapitre n’appartient à aucun classement choisi. Choisissez-en un autre ou aucun.</p>}
+        {chapterRefused && !unknownChapter && (
+          <div className="field-error-block">
+            <p className="field-error">Le prochain enregistrement sera refusé : ce chapitre officiel a été retiré du programme et ne peut plus être choisi.</p>
+            <button type="button" onClick={() => actions.clearChapter(m.localId)} aria-label={`Retirer le chapitre officiel du module ${n} : ${name}`}>
+              Retirer le chapitre
+            </button>
+          </div>
+        )}
       </div>
       <div className="actions" role="group" aria-label={`Ordre et suppression du module ${n}`}>
         <button id={`module-up-${m.localId}`} type="button" disabled={index === 0} onClick={() => actions.moveModule(index, -1)} aria-label={`Monter le module ${n} : ${name}`}>
