@@ -244,7 +244,7 @@ describe('load sequence', () => {
 
 describe('lists', () => {
   it('groups the review queue by subject in catalogue order', () => {
-    const entry = (id: number, code: string, sortOrder: number) => [id, { id, code, nameFr: null, nameAr: null, sortOrder }] as const;
+    const entry = (id: number, code: string, sortOrder: number) => [id, { id, code, nameFr: null, nameAr: null, sortOrder, retiredAt: null }] as const;
     const subjects = new Map([entry(1, 'test-math', 0), entry(2, 'test-chimie', 0), entry(3, 'test-arts', 5)]);
     const groups = groupBySubject(
       [{ subjectId: 1, n: 'a' }, { subjectId: 3, n: 'e' }, { subjectId: 2, n: 'b' }, { subjectId: 1, n: 'c' }, { subjectId: 9, n: 'd' }],

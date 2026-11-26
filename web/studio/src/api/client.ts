@@ -23,6 +23,8 @@ export interface CatalogueEntry {
   nameFr: string | null;
   nameAr: string | null;
   sortOrder: number;
+  /** Set when an administrator retired the entry: it cannot be newly selected (migrations/0013). */
+  retiredAt: string | null;
 }
 
 export type Subject = CatalogueEntry;
