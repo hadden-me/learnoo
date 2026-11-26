@@ -128,7 +128,12 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   // A one-time notice passed in the address (api/admin.ts noticeFrom), dropped from it once read.
   const [notice] = useState(() => noticeFrom(location.search));
   useEffect(() => {
-    if (location.search) history.replaceState(null, '', location.pathname);
+    const params = new URLSearchParams(location.search);
+    if (params.has('notice')) {
+      params.delete('notice');
+      const rest = params.toString();
+      history.replaceState(history.state, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+    }
   }, []);
 
   const userId = studio.session.user.id;
