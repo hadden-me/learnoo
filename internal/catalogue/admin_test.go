@@ -170,7 +170,7 @@ func TestUpgradeTo0016KeepsOperatorRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	applied, err := database.Migrate(ctx, db, migrations.FS)
-	if err != nil || len(applied) != 1 || !strings.HasPrefix(applied[0], "0016_") {
+	if err != nil || len(applied) == 0 || !strings.HasPrefix(applied[0], "0016_") { // later migrations may follow
 		t.Fatalf("applied %v: %v", applied, err)
 	}
 	var catalogueRows, invitationRows, auditRows int
