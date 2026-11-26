@@ -126,8 +126,8 @@ func wantCode(t *testing.T, what string, err error, code, msg string) {
 	}
 }
 
-// before0012 is the embedded migrations older than 0012, as an
-// installation upgraded from 0010 (or 0011) has them.
+// before0012 is the embedded migrations older than 0012 (0001 to 0011), as
+// an installation upgraded from 0011 has them.
 func before0012(t *testing.T) fs.FS {
 	t.Helper()
 	entries, err := fs.ReadDir(migrations.FS, ".")
@@ -145,8 +145,10 @@ func before0012(t *testing.T) fs.FS {
 		}
 		out[e.Name()] = &fstest.MapFile{Data: b}
 	}
-	if _, ok := out["0010_catalogue_audit.sql"]; !ok {
-		t.Fatal("0010 missing")
+	for _, name := range []string{"0010_catalogue_audit.sql", "0011_submission_audit.sql"} {
+		if _, ok := out[name]; !ok {
+			t.Fatalf("%s missing", name)
+		}
 	}
 	return out
 }
@@ -171,7 +173,7 @@ func TestUpgradeKeepsExistingEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) == 0 || !strings.HasPrefix(applied[len(applied)-1], "0012_") {
+	if len(applied) == 0 || !strings.HasPrefix(applied[0], "0012_") {
 		t.Fatalf("applied %v", applied)
 	}
 	if err := database.Check(ctx, db, migrations.FS); err != nil {
