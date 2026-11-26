@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import type { OwnedLesson } from '../api/client';
 import { describeError } from '../api/messages';
 import { takeFlash, useStudio } from '../context';
-import { LANGUAGE_LABELS, formatDateTime, lessonState } from '../labels';
+import { CatalogueName } from '../catalogue';
+import { LANGUAGE_LABELS, formatDateTime, lessonState, ownedLessonPlace } from '../labels';
 import { BASE } from '../router';
 import { Link } from '../ui/Link';
 
@@ -42,6 +43,7 @@ export function LessonList() {
           {lessons.map((lesson) => {
             const latest = lesson.latestRevision;
             const state = lessonState(lesson);
+            const place = ownedLessonPlace(lesson);
             return (
               <li key={lesson.id} className="lesson-card">
                 <h2 lang={lesson.language} dir={lesson.language === 'ar' ? 'rtl' : 'ltr'}>
@@ -54,8 +56,14 @@ export function LessonList() {
                   {lesson.archived && <span className="state">Archivée</span>}
                 </p>
                 <p className="lesson-context">
-                  {lesson.subjectCode}
-                  {latest?.chapterCode ? ` · ${latest.chapterCode}` : ''} · {LANGUAGE_LABELS[lesson.language]}
+                  <CatalogueName label={place.subject} />
+                  {place.chapter && (
+                    <>
+                      {' · '}
+                      <CatalogueName label={place.chapter} />
+                    </>
+                  )}{' '}
+                  · {LANGUAGE_LABELS[lesson.language]}
                   {latest && (
                     <>
                       {' '}

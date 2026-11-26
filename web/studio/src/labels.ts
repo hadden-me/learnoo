@@ -1,6 +1,7 @@
 // Interface wording for editorial states. Status is always written out:
 // colour never stands alone (DESIGN.md).
 import type { OwnedLesson, RevisionStatus } from './api/client';
+import { catalogueLabel, type CatalogueLabel } from './catalogue';
 
 export const STATUS_LABELS: Record<RevisionStatus, string> = {
   draft: 'Brouillon',
@@ -10,6 +11,15 @@ export const STATUS_LABELS: Record<RevisionStatus, string> = {
 };
 
 export const LANGUAGE_LABELS = { fr: 'Français', ar: 'Arabe' } as const;
+
+/** The subject's and latest chapter's names of an owned lesson, in the lesson's language (else the other, else the code). */
+export function ownedLessonPlace(lesson: OwnedLesson): { subject: CatalogueLabel; chapter: CatalogueLabel | null } {
+  const latest = lesson.latestRevision;
+  return {
+    subject: catalogueLabel(lesson.subjectCode, lesson.subjectNameFr, lesson.subjectNameAr, lesson.language),
+    chapter: latest?.chapterCode ? catalogueLabel(latest.chapterCode, latest.chapterNameFr, latest.chapterNameAr, lesson.language) : null,
+  };
+}
 
 /** The lesson's current state as one phrase, including publication. */
 export function lessonState(lesson: OwnedLesson): { label: string; tone: 'draft' | 'review' | 'changes' | 'approved' | 'published' | 'empty' } {

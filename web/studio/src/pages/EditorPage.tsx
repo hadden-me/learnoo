@@ -10,7 +10,8 @@ import { describeError } from '../api/messages';
 import { setFlash, takeFlash, useStudio } from '../context';
 import { DraftEditor, Feedback } from '../editor/DraftEditor';
 import { emptyData, revisionToData } from '../editor/convert';
-import { LANGUAGE_LABELS, STATUS_LABELS, formatDateTime, lessonState } from '../labels';
+import { CatalogueName } from '../catalogue';
+import { LANGUAGE_LABELS, STATUS_LABELS, formatDateTime, lessonState, ownedLessonPlace } from '../labels';
 import { disableVideos, loadKatex, typeset } from '../preview';
 import { BASE, navigate } from '../router';
 import { lessonExtensions } from '../schema/extensions';
@@ -105,7 +106,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           key={`${revision.id}-${generation}`}
           target={{ kind: 'revision', revisionId: revision.id, version: revision.version }}
           language={lesson.language}
-          subjectCode={lesson.subjectCode}
+          subject={ownedLessonPlace(lesson).subject}
           chapters={chapters}
           initial={initial}
           revisionLabel={`Brouillon · révision ${revision.number}`}
@@ -129,7 +130,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
           key={`empty-${generation}`}
           target={{ kind: 'draft', lessonId: lesson.id }}
           language={lesson.language}
-          subjectCode={lesson.subjectCode}
+          subject={ownedLessonPlace(lesson).subject}
           chapters={chapters}
           initial={emptyData()}
           revisionLabel="Nouveau brouillon"
@@ -158,7 +159,7 @@ export function EditorPage({ lessonId }: { lessonId: number }) {
         {title}
       </h1>
       <p className="lesson-context">
-        {lesson.subjectCode} · {LANGUAGE_LABELS[lesson.language]} · <span className={`state state-${lessonState(lesson).tone}`}>{lessonState(lesson).label}</span>
+        <CatalogueName label={ownedLessonPlace(lesson).subject} /> · {LANGUAGE_LABELS[lesson.language]} · <span className={`state state-${lessonState(lesson).tone}`}>{lessonState(lesson).label}</span>
         {lesson.publishedRevisionId !== null && lessonState(lesson).tone !== 'published' && <> · une version antérieure est publiée</>}
       </p>
       {notice && (
