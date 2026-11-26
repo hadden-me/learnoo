@@ -6,7 +6,7 @@ import { groupBySubject } from '../src/editorial/ReviewPages';
 import { latestOnly } from '../src/editorial/common';
 import { excerpt } from '../src/editorial/ReportPages';
 import { routeAccess } from '../src/editorial/spacesUi';
-import { canUnpublish, describeEvent, revisionActions, revisionStateLabel } from '../src/editorial/policy';
+import { canUnpublish, describeEvent, describeSubmission, revisionActions, revisionStateLabel } from '../src/editorial/policy';
 import { isEditorialRoute, lessonRefFromInput, parseEditorialRoute, paths } from '../src/editorialRoutes';
 import { parseRoute } from '../src/router';
 import { NO_SPACES, canHandleReports, discoverSpaces, type Spaces } from '../src/spaces';
@@ -158,6 +158,7 @@ const rev = (over: Partial<LessonRevisionState>): LessonRevisionState => ({
   candidate: false,
   withdrawn: over.withdrawal != null,
   withdrawal: null,
+  submission: null,
   ...over,
 });
 const lesson = (publishedRevisionId: number | null, revisions: LessonRevisionState[]): LessonPublication => ({
@@ -202,6 +203,19 @@ describe('publication policy', () => {
     expect(canUnpublish(lp, admin)).toBe(true);
     expect(canUnpublish(lp, publisher)).toBe(false);
     expect(canUnpublish(lesson(null, [earlier]), admin)).toBe(false);
+  });
+
+  it('describes the submission record, marking backfilled rows', () => {
+    const at = (iso: string) => `[${iso}]`;
+    const recorded = rev({ submission: { submittedBy: 2, submittedAt: '2026-11-26T08:00:00Z', backfilled: false } });
+    expect(describeSubmission(recorded, at)).toBe('Soumise par TEST Autrice le [2026-11-26T08:00:00Z]');
+    const backfilled = rev({ submission: { submittedBy: 2, submittedAt: '2026-11-20T08:00:00Z', backfilled: true } });
+    expect(describeSubmission(backfilled, at)).toBe(
+      'Soumise par TEST Autrice le [2026-11-20T08:00:00Z] (reconstitué : soumise avant l’enregistrement des soumissions)',
+    );
+    // Publisher view: no record and no names; the submission time alone, if sent.
+    expect(describeSubmission(rev({ authorName: null }), at)).toBe('Soumise le [2026-11-25T09:00:00Z]');
+    expect(describeSubmission(rev({ authorName: null, submittedAt: null }), at)).toBeNull();
   });
 
   it('names every revision state in words', () => {

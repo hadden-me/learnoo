@@ -84,6 +84,12 @@ export interface LessonRevisionState {
   withdrawn: boolean;
   /** Reason and actor: administrator view only. */
   withdrawal: { withdrawnBy: number; withdrawnByName: string; reason: string; withdrawnAt: string } | null;
+  /**
+   * The submission audit row (migration 0011): administrator view only, null for publishers.
+   * The submitter is always the author. `backfilled`: reconstructed by the migration for a
+   * revision submitted before submissions were audited, not recorded at submission.
+   */
+  submission: { submittedBy: number; submittedAt: string; backfilled: boolean } | null;
 }
 
 export interface PointerEvent {

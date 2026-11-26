@@ -15,7 +15,7 @@ import { navigate } from '../router';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 import { ErrorPage, LoadingPage, NoteField, Quote, dirOf, useEditorial, useLoad } from './common';
-import { canUnpublish, describeEvent, revisionActions, revisionStateLabel } from './policy';
+import { canUnpublish, describeEvent, describeSubmission, revisionActions, revisionStateLabel } from './policy';
 
 export function AdminLessonsPage() {
   const ed = useEditorial();
@@ -284,10 +284,11 @@ export function LessonPublicationPage({ lessonRef }: { lessonRef: string }) {
               </p>
               <p className="lesson-context">
                 {r.authorName ? `Par ${r.authorName}` : 'Approuvée'}
-                {r.submittedAt && `, soumise le ${formatDateTime(r.submittedAt)}`}
+                {!r.submission && r.submittedAt && `, soumise le ${formatDateTime(r.submittedAt)}`}
                 {r.approverName && r.approvedAt && ` · approuvée par ${r.approverName} le ${formatDateTime(r.approvedAt)}`}
                 {!r.approverName && r.approvedAt && ` le ${formatDateTime(r.approvedAt)}`}
               </p>
+              {r.submission && <p className="lesson-context">{describeSubmission(r, formatDateTime)}</p>}
               {r.withdrawn && !r.withdrawal && <p className="withdrawal">Retirée : elle ne peut plus être publiée ni restaurée.</p>}
               {r.withdrawal && (
                 <div className="withdrawal">

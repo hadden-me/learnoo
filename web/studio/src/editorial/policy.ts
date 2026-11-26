@@ -50,3 +50,17 @@ export function describeEvent(event: PointerEvent, numberOf: (id: number | null)
       return `Dépublication (la révision ${numberOf(event.previousRevisionId)} n’est plus lue par les élèves)`;
   }
 }
+
+/**
+ * Who submitted a revision and when, from its submission audit row (administrator view). The
+ * submitter is always the revision's author. A backfilled row was reconstructed when submissions
+ * started being audited, so it is marked as such. Without a row (publisher view) it falls back
+ * to the revision's submission time, if any.
+ */
+export function describeSubmission(revision: LessonRevisionState, formatTime: (iso: string) => string): string | null {
+  const s = revision.submission;
+  if (!s) return revision.submittedAt ? `Soumise le ${formatTime(revision.submittedAt)}` : null;
+  const by = revision.authorName ? ` par ${revision.authorName}` : '';
+  const note = s.backfilled ? ' (reconstitué : soumise avant l’enregistrement des soumissions)' : '';
+  return `Soumise${by} le ${formatTime(s.submittedAt)}${note}`;
+}
