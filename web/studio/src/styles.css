@@ -222,3 +222,5 @@ img.ProseMirror-separator { display: inline !important; border: none !important;
 .picker-results button { width: 100%; text-align: start; padding-block: var(--learnoo-space-1); overflow-wrap: anywhere; }
 .picked { margin-block-start: var(--learnoo-space-3); padding-block-start: var(--learnoo-space-3); border-block-start: 1px solid var(--learnoo-color-border); }
 .picked p { margin: 0; }
+/* Interface language switch (ui/LanguageSwitch.tsx): a full-size target, named in its own language. */
+.lang-switch { display: inline-flex; align-items: center; min-height: var(--learnoo-size-touch); padding-inline: var(--learnoo-space-2); }
