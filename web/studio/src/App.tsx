@@ -23,6 +23,8 @@ import { discoverSpaces, type Spaces } from './spaces';
 import { SpaceNav, StudioHome, editorialPage } from './editorial/spacesUi';
 import { isEditorialRoute } from './editorialRoutes';
 import './editorial/editorial.css';
+import { LanguageSwitch } from './ui/LanguageSwitch';
+import { t } from './i18n';
 
 /** The sign-in page accepts only /studio paths of plain segments as `next` (API.md). */
 export function loginURL(pathname: string): string {
@@ -85,14 +87,14 @@ export function App() {
     };
   }, [api]);
 
-  if (boot.state === 'loading') return <p className="loading" role="status">Chargement du Studio…</p>;
+  if (boot.state === 'loading') return <p className="loading" role="status">{t('shell.loading')}</p>;
   if (boot.state === 'error')
     return (
       <main className="page" id="main">
-        <h1 tabIndex={-1}>Studio indisponible</h1>
+        <h1 tabIndex={-1}>{t('shell.unavailable')}</h1>
         <p role="alert">{boot.message}</p>
         <button type="button" onClick={() => location.reload()}>
-          Réessayer
+          {t('shell.retry')}
         </button>
       </main>
     );
@@ -103,12 +105,12 @@ export function App() {
       <Shell onRenewed={() => setProblem(null)} />
       {leave && (
         <Dialog
-          title="Quitter sans enregistrer ?"
+          title={t('shell.leaveTitle')}
           onCancel={() => setLeave(null)}
-          cancelLabel="Rester sur la page"
+          cancelLabel={t('shell.leaveStay')}
           actions={[
             {
-              label: 'Quitter la page',
+              label: t('shell.leaveGo'),
               kind: 'danger',
               onClick: () => {
                 const proceed = leave;
@@ -118,7 +120,7 @@ export function App() {
             },
           ]}
         >
-          <p>Des modifications ne sont pas enregistrées sur le serveur. Une copie de secours reste sur cet appareil et vous sera proposée à la prochaine ouverture de la leçon ou du cours.</p>
+          <p>{t('shell.leaveText')}</p>
         </Dialog>
       )}
     </StudioContext.Provider>
@@ -150,7 +152,7 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
       // Another account's session is not ours to end; an expired one is already gone.
       if (!isApiError(error, 'unauthenticated') && !isApiError(error, ACCOUNT_CHANGED)) {
         setSigningOut(null);
-        setMessage(`Déconnexion impossible : ${describeError(error)}`);
+        setMessage(t('shell.signOutFailed', { error: describeError(error) }));
         return;
       }
     }
@@ -176,33 +178,34 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
   return (
     <div className="studio">
       <a className="skip" href="#main">
-        Aller au contenu
+        {t('shell.skip')}
       </a>
       <header className="studio-header">
         <p className="brand">
           LEARNOO <span>Studio</span>
         </p>
-        <nav aria-label="Studio">
+        <nav aria-label={t('shell.nav')}>
           {studio.isAuthor && (
             <Link to={`${BASE}/`} current={route.name === 'lessons'}>
-              Mes leçons
+              {t('shell.myLessons')}
             </Link>
           )}
           {studio.isAuthor && (
             <Link to={`${BASE}/courses`} current={route.name === 'courses' || route.name === 'newCourse' || route.name === 'course'}>
-              Mes cours
+              {t('shell.myCourses')}
             </Link>
           )}
           <SpaceNav spaces={studio.spaces} route={route} />
         </nav>
         <div className="account">
-          <span className="who">{studio.session.user.displayName}</span>
+          <LanguageSwitch />
+          <bdi className="who">{studio.session.user.displayName}</bdi>
           <button
             type="button"
             onClick={() => (hasBlockingGuard() || findUserRecovery(localStorage, userId).length > 0 || findUserCourseRecovery(localStorage, userId).length > 0 ? setSigningOut('ask') : void signOut())}
             disabled={signingOut === 'busy'}
           >
-            Se déconnecter
+            {t('shell.signOut')}
           </button>
         </div>
       </header>
@@ -220,14 +223,12 @@ function Shell({ onRenewed }: { onRenewed: () => void }) {
       {page}
       {signingOut === 'ask' && (
         <Dialog
-          title="Se déconnecter sans enregistrer ?"
+          title={t('shell.signOutTitle')}
           onCancel={() => setSigningOut(null)}
-          cancelLabel="Revenir à l’édition"
-          actions={[{ label: 'Se déconnecter quand même', kind: 'danger', onClick: () => void signOut() }]}
+          cancelLabel={t('shell.signOutBack')}
+          actions={[{ label: t('shell.signOutAnyway'), kind: 'danger', onClick: () => void signOut() }]}
         >
-          <p>
-            Des modifications ne sont pas enregistrées sur le serveur (dans cette page ou dans des copies de secours de cet appareil). Enregistrez-les d’abord : à la déconnexion, les copies de secours de votre compte sont effacées de cet appareil et ces modifications seront perdues.
-          </p>
+          <p>{t('shell.signOutText')}</p>
         </Dialog>
       )}
     </div>
@@ -253,9 +254,9 @@ function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
     } catch (e) {
       setError(
         isApiError(e, 'unauthenticated')
-          ? 'Toujours pas connecté. Connectez-vous dans l’autre onglet, puis réessayez.'
+          ? t('shell.stillSignedOut')
           : isApiError(e, ACCOUNT_CHANGED)
-            ? `Un autre compte est toujours connecté dans ce navigateur. Déconnectez-le dans l’autre onglet et reconnectez-vous avec ${studio.session.user.email}, puis réessayez.`
+            ? t('shell.stillOtherAccount', { email: studio.session.user.email })
             : describeError(e),
       );
     }
@@ -264,20 +265,20 @@ function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
     <div className="banner expired" role="alert" tabIndex={-1} ref={ref}>
       {studio.accountChanged ? (
         <p>
-          <strong>Un autre compte est connecté dans ce navigateur.</strong> Pour protéger vos leçons, cette page n’envoie plus rien au serveur. Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil. Reconnectez-vous avec {studio.session.user.email}, puis reprenez ici.
+          <strong>{t('shell.otherAccountTitle')}</strong> {t('shell.otherAccountText', { email: studio.session.user.email })}
         </p>
       ) : (
         <p>
-          <strong>Session expirée.</strong> Vos modifications sont conservées sur cette page et dans la copie de secours de cet appareil, mais rien ne peut être enregistré tant que vous n’êtes pas reconnecté.
+          <strong>{t('shell.expiredTitle')}</strong> {t('shell.expiredText')}
         </p>
       )}
       <p>
         <a href={loginURL(location.pathname)} target="_blank" rel="noopener">
-          Se reconnecter dans un nouvel onglet
+          {t('shell.signInAgain')}
         </a>
-        , puis{' '}
+        {t('shell.then')}{' '}
         <button type="button" onClick={() => void resume()}>
-          Reprendre ici
+          {t('shell.resume')}
         </button>
       </p>
       {error && <p className="error">{error}</p>}
@@ -288,9 +289,9 @@ function ExpiredBanner({ onRenewed }: { onRenewed: () => void }) {
 function NotFound() {
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Page introuvable</h1>
+      <h1 tabIndex={-1}>{t('shell.notFound')}</h1>
       <p>
-        <Link to={`${BASE}/`}>Revenir à l’accueil du Studio</Link>
+        <Link to={`${BASE}/`}>{t('shell.backHome')}</Link>
       </p>
     </main>
   );

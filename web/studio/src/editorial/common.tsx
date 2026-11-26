@@ -10,6 +10,7 @@ import { useStudio } from '../context';
 import { disableVideos, loadKatex, typeset } from '../preview';
 import { BASE } from '../router';
 import { Link } from '../ui/Link';
+import { locale, t } from '../i18n';
 
 export const dirOf = (language: string) => (language === 'ar' ? 'rtl' : 'ltr');
 
@@ -27,7 +28,7 @@ export function latestOnly() {
 
 export type Loaded<T> = { state: 'loading' } | { state: 'ready'; data: T } | { state: 'error'; message: string; notFound: boolean };
 
-/** Runs `load` on mount and whenever `reload` is called; errors become French messages. */
+/** Runs `load` on mount and whenever `reload` is called; errors become interface-language messages. */
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): [Loaded<T>, () => Promise<void>] {
   const [value, setValue] = useState<Loaded<T>>({ state: 'loading' });
   const run = useCallback(load, deps);
@@ -62,10 +63,10 @@ export function useSubjects(): Map<number, Subject> {
   return subjects;
 }
 
-/** A subject's name for the (French) editorial pages: French name, else Arabic, else code, else its ID. */
+/** A subject's name for the editorial pages: in the interface language, else the other, else code, else its ID. */
 export function subjectName(subjects: Map<number, Subject>, id: number): CatalogueLabel {
   const s = subjects.get(id);
-  return s ? entryLabel(s, 'fr') : { text: `matière n° ${id}`, lang: null };
+  return s ? entryLabel(s, locale()) : { text: t('shell.subjectNumber', { id }), lang: null };
 }
 
 export const subjectLabel = (subjects: Map<number, Subject>, id: number) => subjectName(subjects, id).text;
@@ -84,7 +85,7 @@ export function CanonicalPreview({ content, testId, mediaRoute }: { content: unk
   if (content === null || content === undefined)
     return (
       <p className="hint" data-testid={testId}>
-        Contenu indisponible (leçon retirée ou dépubliée).
+        {t('shell.contentUnavailable')}
       </p>
     );
   return <RenderedPreview content={content} testId={testId} mediaRoute={mediaRoute} />;
@@ -115,10 +116,10 @@ function RenderedPreview({ content, testId, mediaRoute }: { content: unknown; te
   }, [api, content, mediaRoute]);
   return (
     <>
-      {!ready && !error && <p role="status">Rendu de la leçon…</p>}
+      {!ready && !error && <p role="status">{t('shell.renderingLesson')}</p>}
       {error && (
         <p className="banner error" role="alert">
-          Aperçu impossible. {error}
+          {t('shell.previewFailed', { error })}
         </p>
       )}
       <div ref={ref} className="lesson-preview" data-testid={testId} />
@@ -126,7 +127,7 @@ function RenderedPreview({ content, testId, mediaRoute }: { content: unknown; te
   );
 }
 
-export function LoadingPage({ label = 'Chargement…' }: { label?: string }) {
+export function LoadingPage({ label = t('shell.loadingPage') }: { label?: string }) {
   return (
     <main className="page" id="main">
       <p role="status">{label}</p>
@@ -152,13 +153,10 @@ export function ErrorPage({ title, message, back }: { title: string; message: st
 export function NoAccess({ space }: { space: string }) {
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Accès refusé</h1>
+      <h1 tabIndex={-1}>{t('shell.accessDenied')}</h1>
+      <p>{t('shell.accessDeniedText', { space })}</p>
       <p>
-        Votre compte n’a pas accès à l’espace « {space} ». Le serveur refuse ces actions aux comptes qui n’ont pas la permission correspondante ; demandez-la à un administrateur si
-        vous en avez besoin.
-      </p>
-      <p>
-        <Link to={`${BASE}/`}>Revenir à l’accueil du Studio</Link>
+        <Link to={`${BASE}/`}>{t('shell.backHome')}</Link>
       </p>
     </main>
   );

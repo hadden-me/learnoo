@@ -8,6 +8,8 @@
 // in index.html (<meta name="learnoo-katex-js|css">); the unversioned
 // /static/ URLs (not cached) are the fallback, for the development server.
 
+import { t } from './i18n';
+
 interface Katex {
   render(source: string, element: HTMLElement, options: Record<string, unknown>): void;
 }
@@ -77,10 +79,10 @@ export function typeset(root: HTMLElement, katex: Katex | null): number {
 export function disableVideos(root: HTMLElement) {
   for (const button of root.querySelectorAll<HTMLButtonElement>('.video-load')) {
     button.disabled = true;
-    button.title = 'Les vidéos ne sont pas chargées dans l’aperçu.';
+    button.title = t('shell.previewVideoTitle');
     const note = document.createElement('p');
     note.className = 'preview-video-note';
-    note.textContent = 'Aperçu : la vidéo n’est pas chargée dans le Studio ; l’élève pourra la lancer depuis la leçon publiée.';
+    note.textContent = t('shell.previewVideoNote');
     button.after(note);
   }
 }

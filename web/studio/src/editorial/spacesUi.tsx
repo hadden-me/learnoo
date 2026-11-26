@@ -17,6 +17,7 @@ import { NoAccess } from './common';
 import { PublishQueuePage, PublishRevisionPage } from './PublishPages';
 import { ReportListPage, ReportPage } from './ReportPages';
 import { ReviewQueuePage, ReviewRevisionPage } from './ReviewPages';
+import { t } from '../i18n';
 
 interface SpaceLink {
   key: string;
@@ -28,10 +29,10 @@ interface SpaceLink {
 }
 
 export const SPACE_LINKS: SpaceLink[] = [
-  { key: 'review', label: 'Relecture', to: paths.reviewQueue, description: 'Relire les leçons et les cours soumis dans vos matières : approuver ou demander des modifications.', available: (s) => s.reviewer, routes: ['reviewQueue', 'reviewRevision', 'reviewCourse'] },
-  { key: 'publish', label: 'Publication', to: paths.publishQueue, description: 'Publier les leçons et les cours approuvés.', available: (s) => s.publisher, routes: ['publishQueue', 'publishRevision', 'publishCourse'] },
-  { key: 'reports', label: 'Signalements', to: paths.reports, description: 'Traiter les erreurs signalées par les lecteurs.', available: canHandleReports, routes: ['reports', 'report'] },
-  { key: 'admin', label: 'Administration', to: paths.adminLessons, description: 'Gérer les utilisateurs, leurs permissions et les invitations, le catalogue et les programmes ; leçons et cours : retraits, dépublication, suspension, archivage, restauration, transferts et relectures bloquées.', available: (s) => s.administrator, routes: ['adminLessons', 'adminCourses', 'adminCourse', 'adminUsers', 'adminUser', 'adminCatalogue', 'adminCurriculum', 'adminSection', 'adminEdition'] },
+  { key: 'review', label: t('shell.space.review'), to: paths.reviewQueue, description: t('shell.space.reviewText'), available: (s) => s.reviewer, routes: ['reviewQueue', 'reviewRevision', 'reviewCourse'] },
+  { key: 'publish', label: t('shell.space.publish'), to: paths.publishQueue, description: t('shell.space.publishText'), available: (s) => s.publisher, routes: ['publishQueue', 'publishRevision', 'publishCourse'] },
+  { key: 'reports', label: t('shell.space.reports'), to: paths.reports, description: t('shell.space.reportsText'), available: canHandleReports, routes: ['reports', 'report'] },
+  { key: 'admin', label: t('shell.space.admin'), to: paths.adminLessons, description: t('shell.space.adminText'), available: (s) => s.administrator, routes: ['adminLessons', 'adminCourses', 'adminCourse', 'adminUsers', 'adminUser', 'adminCatalogue', 'adminCurriculum', 'adminSection', 'adminEdition'] },
 ];
 
 /** Navigation links for the editorial spaces this account can use. */
@@ -49,9 +50,9 @@ export function SpaceNav({ spaces, route }: { spaces: Spaces; route: Route }) {
 
 /** Which space a route belongs to and whether the account can use it. */
 export function routeAccess(route: EditorialRoute, spaces: Spaces): { space: string; allowed: boolean } {
-  if (route.name === 'publication') return { space: 'Publication', allowed: spaces.publisher || spaces.administrator };
+  if (route.name === 'publication') return { space: t('shell.space.publish'), allowed: spaces.publisher || spaces.administrator };
   // Publishers and administrators read any submitted course revision (they never decide on it).
-  if (route.name === 'reviewCourse') return { space: 'Relecture', allowed: spaces.reviewer || spaces.publisher || spaces.administrator };
+  if (route.name === 'reviewCourse') return { space: t('shell.space.review'), allowed: spaces.reviewer || spaces.publisher || spaces.administrator };
   const link = SPACE_LINKS.find((l) => (l.routes as string[]).includes(route.name))!;
   return { space: link.label, allowed: link.available(spaces) };
 }
@@ -105,10 +106,10 @@ export function StudioHome({ spaces }: { spaces: Spaces }) {
   const available = SPACE_LINKS.filter((l) => l.available(spaces));
   return (
     <main className="page" id="main">
-      <h1 tabIndex={-1}>Studio</h1>
-      <p>Votre compte n’a pas la permission auteur : vous ne pouvez pas rédiger de leçons.</p>
+      <h1 tabIndex={-1}>{t('shell.home')}</h1>
+      <p>{t('shell.noAuthor')}</p>
       {available.length > 0 ? (
-        <ul className="lesson-list" aria-label="Vos espaces">
+        <ul className="lesson-list" aria-label={t('shell.yourSpaces')}>
           {available.map((l) => (
             <li key={l.key} className="lesson-card">
               <h2>
@@ -119,7 +120,7 @@ export function StudioHome({ spaces }: { spaces: Spaces }) {
           ))}
         </ul>
       ) : (
-        <p>Aucun espace du Studio n’est ouvert à votre compte.</p>
+        <p>{t('shell.noSpace')}</p>
       )}
     </main>
   );
