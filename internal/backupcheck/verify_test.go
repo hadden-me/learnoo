@@ -282,3 +282,37 @@ func TestVerifyDetectsInconsistentPointer(t *testing.T) {
 	}
 	wantProblem(t, f.verify(), "names a missing revision")
 }
+
+// A submission that bypassed the guards (triggers disabled, which only a
+// superuser or owner can do) is reported: a submitted revision without its
+// submission audit row (migrations/0011).
+func TestVerifyDetectsUnauditedSubmission(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	user := strconv.FormatInt(f.user, 10)
+	steps := []string{
+		`SET LOCAL session_replication_role = replica`,
+		`INSERT INTO subjects (code) VALUES ('test-math')`,
+		`INSERT INTO translation_groups (id, subject_id) SELECT gen_random_uuid(), id FROM subjects`,
+		`INSERT INTO lessons (translation_group_id, language, subject_id, created_at, created_by)
+		 SELECT g.id, 'fr', g.subject_id, now(), ` + user + ` FROM translation_groups g`,
+		`INSERT INTO lesson_revisions (lesson_id, revision_number, status, author_id, title, objectives, content,
+		     schema_version, language, subject_id, created_at, updated_at, submitted_at)
+		 SELECT id, 1, 'in_review', ` + user + `, 'TEST', '', '{"title": "TEST", "language": "fr", "schemaVersion": 1}',
+		     1, 'fr', subject_id, now(), now(), now() FROM lessons`,
+	}
+	for _, s := range steps {
+		if _, err := tx.Exec(ctx, s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantProblem(t, f.verify(), "has no submission audit row")
+}

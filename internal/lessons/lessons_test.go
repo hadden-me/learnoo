@@ -45,8 +45,13 @@ type env struct {
 }
 
 func newEnv(t *testing.T) *env {
-	db := dbtest.Migrated(t)
-	return &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db), store: lessons.NewStore(db, nil)}
+	return newEnvOn(t, dbtest.Migrated(t))
+}
+
+// newEnvOn builds an env on an already prepared schema (the upgrade test
+// starts from an older migration).
+func newEnvOn(t *testing.T, db *pgxpool.Pool) *env {
+	return &env{t: t, ctx: context.Background(), db: db, perms: permissions.NewStore(db), store: lessons.NewStore(db)}
 }
 
 func (e *env) user(name string) int64 {
@@ -194,7 +199,11 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) fixture {
-	e := newEnv(t)
+	return newFixtureOn(newEnv(t))
+}
+
+func newFixtureOn(e *env) fixture {
+	t := e.t
 	subject := e.newSubject("simulated-math")
 	reviewer := e.user("fixture-reviewer")
 	if _, err := e.perms.GrantReviewer(e.ctx, operator, reviewer, subject); err != nil {
@@ -529,7 +538,7 @@ func TestForeignKeysAndUniqueness(t *testing.T) {
 			language, subject, chapter)
 	}
 	other := f.lesson("Other lesson")
-	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
+	dbtest.Submit(t, f.db, rev.ID)
 	f.mustRequestChanges(rev.ID)
 	wantSQLState(t, "duplicate revision number", insert(rev.LessonID, 1, "fr", f.subject, nil, nil, "draft"), "23505")
 	wantSQLState(t, "chapter of another subject", insert(rev.LessonID, 2, "fr", f.subject, &foreignChapter, nil, "draft"), "23503")

@@ -1,7 +1,8 @@
 // Package backupcheck verifies a restored Learnoo database and media
 // directory (LRN-010): migrations are current, every media asset row has its
-// file with the recorded size and SHA-256, unexpected files are reported, and
-// publication pointers are consistent. It only reads; it never repairs or
+// file with the recorded size and SHA-256, unexpected files are reported,
+// publication pointers are consistent and every submitted revision has its
+// submission audit row. It only reads; it never repairs or
 // deletes anything.
 package backupcheck
 
@@ -82,6 +83,9 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, mediaDir string, migFS fs.F
 		return nil, err
 	}
 	if err := checkPublication(ctx, pool, r); err != nil {
+		return nil, err
+	}
+	if err := checkSubmissions(ctx, pool, r); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -266,6 +270,45 @@ func checkPublication(ctx context.Context, pool *pgxpool.Pool, r *Report) error 
 			rev = fmt.Sprint(*f.rev)
 		}
 		r.problem("lesson %d: published pointer (%s) %s", f.lesson, rev, *f.what)
+	}
+	return nil
+}
+
+// checkSubmissions verifies that every submitted revision (any status but
+// draft) has its submission audit row (migrations/0011), recording its
+// author and its submitted_at, and that no draft has one.
+func checkSubmissions(ctx context.Context, pool *pgxpool.Pool, r *Report) error {
+	rows, err := pool.Query(ctx, `
+		SELECT rv.id,
+		       CASE
+		         WHEN rv.status = 'draft' THEN 'is a draft with a submission audit row'
+		         WHEN a.id IS NULL THEN 'has no submission audit row'
+		         WHEN a.lesson_id <> rv.lesson_id OR a.actor_id <> rv.author_id OR a.submitted_at IS DISTINCT FROM rv.submitted_at
+		           THEN 'differs from its submission audit row'
+		       END
+		  FROM lesson_revisions rv
+		  LEFT JOIN submission_audit a ON a.revision_id = rv.id
+		 WHERE rv.status <> 'draft' OR a.id IS NOT NULL
+		 ORDER BY rv.id`)
+	if err != nil {
+		return fmt.Errorf("check submissions: %w", err)
+	}
+	type finding struct {
+		rev  int64
+		what *string
+	}
+	found, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (finding, error) {
+		var f finding
+		err := row.Scan(&f.rev, &f.what)
+		return f, err
+	})
+	if err != nil {
+		return fmt.Errorf("check submissions: %w", err)
+	}
+	for _, f := range found {
+		if f.what != nil {
+			r.problem("revision %d: %s", f.rev, *f.what)
+		}
 	}
 	return nil
 }

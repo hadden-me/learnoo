@@ -68,6 +68,11 @@ type lessonPublicationBody struct {
 			Reason          string `json:"reason"`
 			WithdrawnAt     string `json:"withdrawnAt"`
 		} `json:"withdrawal"`
+		Submission *struct {
+			SubmittedBy int64  `json:"submittedBy"`
+			SubmittedAt string `json:"submittedAt"`
+			Backfilled  bool   `json:"backfilled"`
+		} `json:"submission"`
 	} `json:"revisions"`
 	History []struct {
 		Action              string  `json:"action"`
@@ -299,6 +304,13 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 	if r1.ID != first.ID || !r1.EverPublished || r1.Withdrawn || r1.Withdrawal != nil || r1.AuthorName == nil || r1.ApproverName == nil || r1.ApprovedAt == nil || r1.SubmittedAt == nil {
 		t.Fatalf("first: %+v", r1)
 	}
+	// Each submitted revision carries its submission audit row (0011).
+	for _, r := range byID.Revisions {
+		if r.Submission == nil || r.Submission.SubmittedBy != f.author.id || r.Submission.Backfilled ||
+			r.SubmittedAt == nil || r.Submission.SubmittedAt != *r.SubmittedAt {
+			t.Fatalf("revision %d submission: %+v (submittedAt %v)", r.ID, r.Submission, r.SubmittedAt)
+		}
+	}
 	var actions []string
 	for _, e := range byID.History {
 		actions = append(actions, e.Action)
@@ -330,7 +342,7 @@ func TestLessonPublicationAndAdminList(t *testing.T) {
 		t.Fatalf("publisher view: %+v", pv)
 	}
 	p2, p1 := pv.Revisions[0], pv.Revisions[1]
-	if p2.ID != second.ID || !p2.Withdrawn || p2.Withdrawal != nil || p2.AuthorID != nil || p2.AuthorName != nil || p2.ApproverName != nil ||
+	if p2.ID != second.ID || !p2.Withdrawn || p2.Withdrawal != nil || p2.Submission != nil || p1.Submission != nil || p2.AuthorID != nil || p2.AuthorName != nil || p2.ApproverName != nil ||
 		p2.ApprovedBy != nil || p2.SubmittedAt != nil || p2.BaseRevisionID != nil || p2.ApprovedAt == nil || !p2.EverPublished ||
 		p1.ID != first.ID || p1.Withdrawn || !p1.EverPublished || p1.Title != "First edition" || p1.Candidate {
 		t.Fatalf("publisher revisions: %+v", pv.Revisions)

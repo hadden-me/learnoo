@@ -174,6 +174,19 @@ type LessonRevisionState struct {
 	Withdrawal *WithdrawalRecord
 	// WithdrawnByName is the withdrawing administrator's display name.
 	WithdrawnByName string
+	// Submission is the revision's submission audit row (migrations/0011):
+	// administrators only, nil for publishers.
+	Submission *SubmissionRecord
+}
+
+// SubmissionRecord is a revision's submission audit row. The submitter is
+// always the revision's author (database guard). Backfilled rows were
+// reconstructed by migration 0011 for revisions submitted before it, from
+// the revision's author and submitted_at.
+type SubmissionRecord struct {
+	ActorID     int64
+	SubmittedAt time.Time
+	Backfilled  bool
 }
 
 // PointerEvent is one audited change of the published pointer, with the
@@ -187,7 +200,7 @@ type PointerEvent struct {
 // administrators.
 //
 // Full (administrators) carries every submitted revision with author,
-// reviewer and withdrawal details and the pointer audit with actors and
+// submission, reviewer and withdrawal details and the pointer audit with actors and
 // reasons: the audit log is the administrator's (CAHIER_DES_CHARGES §2.2).
 // Callers without administrator (publishers) get only what restoration
 // needs: the current pointer and the approved revisions' ID, number, title,
@@ -261,13 +274,15 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 			       r.submitted_at, d.reviewer_id, rv.display_name, d.decided_at,
 			       EXISTS (SELECT 1 FROM publication_audit p WHERE p.revision_id = r.id AND p.action = 'publish'),
 			       r.status = 'approved' AND r.candidate_closed_at IS NULL,
-			       w.actor_id, w.reason, w.occurred_at, wu.display_name
+			       w.actor_id, w.reason, w.occurred_at, wu.display_name,
+			       sa.actor_id, sa.submitted_at, sa.backfilled
 			  FROM lesson_revisions r
 			  JOIN users au ON au.id = r.author_id
 			  LEFT JOIN review_decisions d ON d.revision_id = r.id AND d.action = 'approve'
 			  LEFT JOIN users rv ON rv.id = d.reviewer_id
 			  LEFT JOIN revision_withdrawals w ON w.revision_id = r.id
 			  LEFT JOIN users wu ON wu.id = w.actor_id
+			  LEFT JOIN submission_audit sa ON sa.revision_id = r.id
 			 WHERE r.lesson_id = $1 AND r.status <> 'draft' AND ($3 OR r.status = 'approved')
 			 ORDER BY r.revision_number DESC
 			 LIMIT $2`, out.LessonID, MaxLessonRevisions, out.Full)
@@ -280,9 +295,12 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 			var wActor *int64
 			var wReason, wName *string
 			var wAt *time.Time
+			var sActor *int64
+			var sAt *time.Time
+			var sBackfilled *bool
 			err := row.Scan(&r.ID, &r.Number, &status, &r.Title, &r.AuthorID, &r.AuthorName, &r.BaseRevisionID,
 				&r.SubmittedAt, &r.ApprovedBy, &r.ApproverName, &r.ApprovedAt, &r.EverPublished, &r.Candidate,
-				&wActor, &wReason, &wAt, &wName)
+				&wActor, &wReason, &wAt, &wName, &sActor, &sAt, &sBackfilled)
 			r.Status = lessons.Status(status)
 			if err != nil {
 				return r, err
@@ -292,6 +310,9 @@ func (s *Store) LessonPublication(ctx context.Context, actor int64, ref string) 
 				// Restoration needs no names, reasons or review details.
 				r.AuthorID, r.AuthorName, r.BaseRevisionID, r.SubmittedAt, r.ApprovedBy, r.ApproverName = 0, "", nil, nil, nil, nil
 				return r, nil
+			}
+			if sActor != nil && sAt != nil && sBackfilled != nil {
+				r.Submission = &SubmissionRecord{ActorID: *sActor, SubmittedAt: *sAt, Backfilled: *sBackfilled}
 			}
 			if wActor != nil {
 				r.Withdrawal = &WithdrawalRecord{LessonID: out.LessonID, RevisionID: r.ID, ActorID: *wActor, Reason: *wReason, WithdrawnAt: *wAt}

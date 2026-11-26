@@ -266,9 +266,9 @@ Saves the caller's own draft: content, prerequisites, chapter and media referenc
 
 ### `POST /api/revisions/{revisionId}/submit`
 
-Body `{"expectedVersion": 3}`. Moves the caller's own draft to `in_review`. From then on its content, metadata, exercises and media references are frozen by the database; corrections need a new draft.
+Body `{"expectedVersion": 3}`. Moves the caller's own draft to `in_review` and records the submission (author, revision, time) in the append-only submission audit in the same transaction (`migrations/0011_submission_audit.sql`). From then on its content, metadata, exercises and media references are frozen by the database; corrections need a new draft.
 
-- `200` revision object (`status` `in_review`, `submittedAt` set, `version` incremented).
+- `200` revision object (`status` `in_review`, `submittedAt` set to the transaction time, which is also the audit row's time, `version` incremented). The submitter is always the revision's `authorId` (enforced by the database), so the revision object has no separate submitter field. A refused request writes no audit row.
 - `409 version_conflict | not_draft | archived`, `404 not_found`, `422 invalid_content` (stored snapshot no longer validates).
 
 ### `DELETE /api/revisions/{revisionId}?expectedVersion=3`
@@ -605,17 +605,18 @@ Read-only endpoints the Studio's publisher and administrator views need ([DECISI
 `GET /api/lessons/{lesson}/publication`: `{lesson}` is the numeric lesson ID or its public ID (lower-case UUID, as in reader URLs); anything else is `404`. The lesson's publication state, its submitted revisions (drafts are never listed; newest first, at most 200) and the pointer audit (newest first, at most 100). Whether the caller is an administrator is decided inside the transaction:
 
 - `"view": "administrator"`: everything below.
-- `"view": "publisher"` (callers without `administrator`): only what restoration needs, since the audit log is the administrator's (CAHIER_DES_CHARGES §2.2). Only `approved` revisions are listed, with `id`, `number`, `status`, `title`, `approvedAt`, `everPublished`, `candidate` and `withdrawn`; `authorId`, `authorName`, `baseRevisionId`, `submittedAt`, `approvedBy`, `approverName` and `withdrawal` are `null`, and `history` is empty.
+- `"view": "publisher"` (callers without `administrator`): only what restoration needs, since the audit log is the administrator's (CAHIER_DES_CHARGES §2.2). Only `approved` revisions are listed, with `id`, `number`, `status`, `title`, `approvedAt`, `everPublished`, `candidate` and `withdrawn`; `authorId`, `authorName`, `baseRevisionId`, `submittedAt`, `approvedBy`, `approverName`, `withdrawal` and `submission` are `null`, and `history` is empty.
 
 ```json
 {"view": "administrator", "lessonId": 4, "publicId": "0b9c…", "subjectId": 1, "subjectCode": "maths", "language": "fr", "archived": false, "publishedRevisionId": 9,
  "revisions": [{"id": 12, "number": 2, "status": "approved", "title": "…", "authorId": 7, "authorName": "Amel", "baseRevisionId": 9,
    "submittedAt": "…", "approvedBy": 9, "approverName": "Karim", "approvedAt": "…", "everPublished": true, "candidate": false, "withdrawn": true,
-   "withdrawal": {"withdrawnBy": 1, "withdrawnByName": "Lina", "reason": "…", "withdrawnAt": "…"}}],
+   "withdrawal": {"withdrawnBy": 1, "withdrawnByName": "Lina", "reason": "…", "withdrawnAt": "…"},
+   "submission": {"submittedBy": 7, "submittedAt": "…", "backfilled": false}}],
  "history": [{"action": "unpublish", "publishedRevisionId": null, "previousRevisionId": 12, "actorId": 1, "actorName": "Lina", "reason": "…", "occurredAt": "…"}]}
 ```
 
-`everPublished`: a publication names the revision (restoration is limited to such revisions). `candidate`: approved and still blocking new drafts. `withdrawal` is `null` unless withdrawn. `history[].reason` is set for unpublication only.
+`everPublished`: a publication names the revision (restoration is limited to such revisions). `candidate`: approved and still blocking new drafts. `withdrawal` is `null` unless withdrawn. `submission` (added with the submission audit, administrators only) is the revision's submission audit row: `submittedBy` is always the author, `submittedAt` equals the revision's `submittedAt`, and `backfilled` is `true` for revisions submitted before migration 0011, whose row was reconstructed from the revision's author and `submittedAt` rather than recorded at submission ([DECISIONS.md](DECISIONS.md#submission-audit)). Submissions are not part of `history`, which stays the pointer audit. `history[].reason` is set for unpublication only.
 
 `GET /api/admin/lessons`: lessons with at least one approved revision (those withdrawal, unpublication and restoration act on), most recent approval or pointer change first, at most 200: `{"lessons": [{"lessonId", "publicId", "subjectCode", "language", "archived", "publishedRevisionId", "title", "pendingRevisionId", "lastChange"}]}`. `title` is the published revision's, else the latest approved one's; `pendingRevisionId` is the approved candidate awaiting publication, or `null`.
 

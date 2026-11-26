@@ -468,6 +468,16 @@ func TestStudioDraftLifecycle(t *testing.T) {
 		wantStatus(t, "resubmit", f.api(f.author, http.MethodPost, revPath(rev.ID)+"/submit",
 			map[string]any{"expectedVersion": v}), http.StatusConflict, "not_draft")
 	}
+	// Exactly one submission audit row, by the author, at the revision's
+	// submission time; the refused attempts wrote none (migrations/0011).
+	var audits int
+	var sameTime bool
+	if err := f.db.QueryRow(context.Background(), `
+		SELECT count(*), bool_and(a.actor_id = $2 AND a.submitted_at = r.submitted_at)
+		  FROM submission_audit a JOIN lesson_revisions r ON r.id = a.revision_id
+		 WHERE a.revision_id = $1`, rev.ID, f.author.id).Scan(&audits, &sameTime); err != nil || audits != 1 || !sameTime {
+		t.Fatalf("submission audit: %d rows, consistent %v, err %v", audits, sameTime, err)
+	}
 	if after := f.api(f.author, http.MethodGet, revPath(rev.ID), nil).Body.String(); after != frozen {
 		t.Fatalf("submitted revision changed:\n%s\n%s", frozen, after)
 	}

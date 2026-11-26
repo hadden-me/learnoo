@@ -15,6 +15,7 @@ import (
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/migrations"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -127,4 +128,36 @@ func AddChapter(t testing.TB, q Querier, subject int64, code string) int64 {
 		t.Fatal(err)
 	}
 	return id
+}
+
+// Executor runs a statement (a pool, connection or transaction).
+type Executor interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// SubmitTx moves draft revisionID into review with direct SQL inside tx,
+// writing first the submission_audit row the database requires in the same
+// transaction (migrations/0011), as lessons.Store.Submit does but without
+// its permission, version and content checks. tx must be a transaction:
+// the audit row is checked against the status at commit.
+func SubmitTx(ctx context.Context, tx Executor, revisionID int64) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO submission_audit (lesson_id, revision_id, actor_id)
+		SELECT lesson_id, id, author_id FROM lesson_revisions WHERE id = $1`, revisionID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE lesson_revisions
+		   SET status = 'in_review', submitted_at = now(), updated_at = now(), version = version + 1
+		 WHERE id = $1`, revisionID)
+	return err
+}
+
+// Submit runs SubmitTx in its own transaction and fails the test on error.
+func Submit(t testing.TB, db *pgxpool.Pool, revisionID int64) {
+	t.Helper()
+	ctx := context.Background()
+	if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error { return SubmitTx(ctx, tx, revisionID) }); err != nil {
+		t.Fatalf("submit revision %d: %v", revisionID, err)
+	}
 }

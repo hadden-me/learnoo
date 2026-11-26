@@ -434,6 +434,31 @@ func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
 		t.Fatal("runtime role may execute a SECURITY DEFINER function")
 	}
 
+	// Every submission of the flow was audited by the runtime role, by the
+	// revision's author, at its submission time (migrations/0011).
+	var submitted, audited int
+	if err := rt.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM lesson_revisions WHERE status <> 'draft'),
+		       (SELECT count(*) FROM submission_audit a JOIN lesson_revisions r ON r.id = a.revision_id
+		         WHERE r.status <> 'draft' AND a.actor_id = r.author_id AND a.submitted_at = r.submitted_at
+		           AND NOT a.backfilled)`).Scan(&submitted, &audited); err != nil {
+		t.Fatal(err)
+	}
+	if submitted == 0 || audited != submitted {
+		t.Fatalf("submission audit: %d of %d submitted revisions audited", audited, submitted)
+	}
+	draft := s.createLesson(s.author, "TEST Déploiement brouillon")
+	submissionState := func() string {
+		var st string
+		if err := rt.QueryRow(ctx, `
+			SELECT coalesce((SELECT jsonb_agg(a ORDER BY a.id)::text FROM submission_audit a), '') || '|' ||
+			       (SELECT status FROM lesson_revisions WHERE id = $1)`, draft.ID).Scan(&st); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	beforeSubmissions := submissionState()
+
 	// The editorial guards bind the runtime role.
 	before := s.withdrawState()
 	wantRefused(t, rt, "close a candidate directly", guardRefusal,
@@ -480,8 +505,24 @@ func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
 		`INSERT INTO chapters (subject_id, code) SELECT id, 'unaudited' FROM subjects WHERE code = 'test-deploy-math'`)
 	wantRefused(t, rt, "rename a subject", guardRefusal, `UPDATE subjects SET code = 'test-renamed' WHERE code = 'test-deploy-math'`)
 	wantRefused(t, rt, "rename a chapter", guardRefusal, `UPDATE chapters SET code = 'renamed' WHERE code = 'ch-1'`)
+	// Submission audit guards (migration 0011).
+	wantRefused(t, rt, "truncate submission audit", insufficientPrivilege, `TRUNCATE submission_audit`)
+	wantRefused(t, rt, "edit submission audit", guardRefusal, `UPDATE submission_audit SET submitted_at = submitted_at - interval '1 day'`)
+	wantRefused(t, rt, "delete submission audit", guardRefusal, `DELETE FROM submission_audit`)
+	wantRefused(t, rt, "submit without audit", guardRefusal,
+		`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, draft.ID)
+	wantRefused(t, rt, "submission audited for another user", guardRefusal,
+		`INSERT INTO submission_audit (lesson_id, revision_id, actor_id) VALUES ($1, $2, $3)`, draft.LessonID, draft.ID, s.publisher.id)
+	wantRefused(t, rt, "backdated submission audit", guardRefusal,
+		`INSERT INTO submission_audit (lesson_id, revision_id, actor_id, submitted_at) VALUES ($1, $2, $3, now() - interval '1 day')`,
+		draft.LessonID, draft.ID, s.author.id)
+	wantRefused(t, rt, "audit without submission", guardRefusal,
+		`INSERT INTO submission_audit (lesson_id, revision_id, actor_id) VALUES ($1, $2, $3)`, draft.LessonID, draft.ID, s.author.id)
 	if after := s.withdrawState(); after != before {
 		t.Fatalf("refused statements changed state:\n%s\n%s", before, after)
+	}
+	if after := submissionState(); after != beforeSubmissions {
+		t.Fatalf("refused statements changed submissions:\n%s\n%s", beforeSubmissions, after)
 	}
 }
 

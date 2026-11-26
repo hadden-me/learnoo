@@ -50,7 +50,7 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 		DB:        db,
 		Auth:      authH,
 		Perms:     permissions.NewMiddleware(permissions.NewStore(db), log),
-		Lessons:   lessons.NewStore(db, nil),
+		Lessons:   lessons.NewStore(db),
 		Media:     mediaStore,
 		Review:    review.NewStore(db),
 		Reports:   reports.NewStore(db),

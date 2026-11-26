@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/rendering"
@@ -205,7 +206,7 @@ func TestPublishedPointerRequiresApprovedRevision(t *testing.T) {
 	rev := f.lesson("Pointer")
 	wantSQLState(t, "draft", publish(rev.LessonID, rev.ID), "LRN01")
 	wantGuard(t, "draft, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
-	f.mustExec(`UPDATE lesson_revisions SET status = 'in_review', submitted_at = now() WHERE id = $1`, rev.ID)
+	dbtest.Submit(t, f.db, rev.ID)
 	wantSQLState(t, "in review", publish(rev.LessonID, rev.ID), "LRN01")
 	wantGuard(t, "in review, raw pointer", raw(rev.LessonID, rev.ID), approvedOnly)
 	f.mustRequestChanges(rev.ID)
@@ -294,7 +295,7 @@ func TestSubmissionAndMediaChangeAreSerialized(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(f.ctx) }()
-	if _, err := tx.Exec(f.ctx, `UPDATE lesson_revisions SET status = 'in_review', submitted_at = now(), version = version + 1 WHERE id = $1`, rev.ID); err != nil {
+	if err := dbtest.SubmitTx(f.ctx, tx, rev.ID); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
