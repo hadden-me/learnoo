@@ -22,6 +22,7 @@ import {
   adminCourseActions,
   changeSummary,
   describeBlocked,
+  diffSides,
   describeOwnProblem,
   filterQueue,
   holdsCandidate,
@@ -31,7 +32,7 @@ import {
   submissionAge,
   submissionProblems,
 } from '../src/courses/workflow';
-import { publishFacts } from '../src/editorial/CourseReviewPages';
+import { notFoundText, publishFacts, reviewStatus } from '../src/editorial/CourseReviewPages';
 import { routeAccess } from '../src/editorial/spacesUi';
 import { parseEditorialRoute, paths } from '../src/editorialRoutes';
 import { NO_SPACES } from '../src/spaces';
@@ -274,7 +275,8 @@ describe('course states', () => {
     expect(canStartDraft(course(), revision({ status: 'changes_requested' }))).toBe(true);
     expect(canStartDraft(course(), revision({ status: 'approved' }))).toBe(false);
     expect(canStartDraft(course({ publishedRevisionId: 10 }), revision({ status: 'approved' }))).toBe(true);
-    expect(canStartDraft(course({ suspended: true }), revision({ status: 'approved' }))).toBe(true);
+    const suspended = course({ suspended: true, latestRevision: { id: 10, number: 1, status: 'approved', title: 'T', version: 2, updatedAt: '', everPublished: true } });
+    expect(canStartDraft(suspended, revision({ status: 'approved' }))).toBe(true);
     expect(canStartDraft(course(), revision({ status: 'in_review', withdrawnAt: '2026-11-21T00:00:00Z' }))).toBe(true);
     expect(canStartDraft(course({ archived: true }), null)).toBe(false);
   });
@@ -345,5 +347,66 @@ describe('routes', () => {
     expect(routeAccess(route, { ...NO_SPACES, administrator: true }).allowed).toBe(true);
     expect(routeAccess({ name: 'adminCourse', courseId: 2 }, { ...NO_SPACES, publisher: true }).allowed).toBe(false);
     expect(routeAccess({ name: 'publishCourse', revisionId: 5 }, { ...NO_SPACES, publisher: true }).allowed).toBe(true);
+  });
+});
+
+describe('diff sides', () => {
+  const diff = {
+    fields: [{ name: 'title', old: 'Ancien', new: 'Nouveau' }],
+    blocks: [
+      { op: 'equal' as const, block: { type: 'paragraph' } },
+      { op: 'removed' as const, block: { type: 'paragraph', n: 1 } },
+      { op: 'added' as const, block: { type: 'paragraph', n: 2 } },
+    ],
+  };
+  it('shows both sides when the server sent them', () => {
+    const s = diffSides(diff, true);
+    expect(s.removed).toEqual([{ type: 'paragraph', n: 1 }]);
+    expect(s.added).toEqual([{ type: 'paragraph', n: 2 }]);
+    expect(s.equal).toBe(1);
+    expect(s.fields[0]).toMatchObject({ old: 'Ancien', new: 'Nouveau', oldShown: true, newShown: true });
+  });
+  it('never renders a side marked unavailable, in either spelling, or a pinned revision no longer eligible', () => {
+    const old = diffSides({ fields: diff.fields, oldUnavailable: true, blocks: [{ op: 'added', block: { n: 2 } }] }, true);
+    expect(old.removed).toBeNull();
+    expect(old.added).toEqual([{ n: 2 }]);
+    expect(old.fields[0]).toMatchObject({ old: null, oldShown: false, new: 'Nouveau' });
+    const both = diffSides({ ...diff, unavailable: { old: true, new: true } }, true);
+    expect(both.removed).toBeNull();
+    expect(both.added).toBeNull();
+    expect(both.fields[0]).toMatchObject({ old: null, new: null });
+    const withdrawn = diffSides(diff, false);
+    expect(withdrawn.added).toBeNull();
+    expect(withdrawn.fields[0].new).toBeNull();
+    expect(diffSides(null, true)).toMatchObject({ removed: null, added: null, fields: [] });
+  });
+  it('ignores blocks the server did not send', () => {
+    expect(diffSides({ blocks: [{ op: 'removed', block: null }] }, true).removed).toEqual([]);
+  });
+});
+
+describe('read-only review page', () => {
+  it('derives the state from the status and the withdrawal', () => {
+    expect(reviewStatus({ status: 'in_review', withdrawnAt: null })).toMatchObject({ label: 'En relecture', inReview: true });
+    expect(reviewStatus({ status: 'approved', withdrawnAt: null })).toMatchObject({ label: 'Approuvée', inReview: false });
+    expect(reviewStatus({ status: 'changes_requested', withdrawnAt: null }).label).toBe('Modifications demandées');
+    expect(reviewStatus({ status: 'in_review', withdrawnAt: '2026-11-21T00:00:00Z' })).toMatchObject({ label: 'Retirée par un administrateur', inReview: false });
+  });
+  it('explains a 404 by the space', () => {
+    expect(notFoundText({ ...NO_SPACES, reviewer: true })).toContain('pas en relecture dans l’une de vos matières');
+    expect(notFoundText({ ...NO_SPACES, administrator: true })).toContain('n’a jamais été soumise');
+    expect(notFoundText({ ...NO_SPACES, publisher: true, reviewer: true })).toContain('n’a jamais été soumise');
+  });
+});
+
+describe('a revision published before', () => {
+  it('lets the owner start a new version after a restore and says so', () => {
+    const c: Course = {
+      id: 2, publicId: 'p', ownerId: 7, subjectId: 1, language: 'fr', publishedRevisionId: 8, archived: false, suspended: false, createdAt: '',
+      latestRevision: { id: 10, number: 3, status: 'approved', title: 'T', version: 2, updatedAt: '', everPublished: true },
+    };
+    expect(courseState(c).label).toBe('Publié auparavant ; une autre version est lue');
+    expect(canStartDraft(c, revision({ id: 10, status: 'approved' }))).toBe(true);
+    expect(canStartDraft({ ...c, latestRevision: { ...c.latestRevision!, everPublished: false } }, revision({ id: 10, status: 'approved' }))).toBe(false);
   });
 });

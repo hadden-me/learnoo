@@ -93,6 +93,21 @@ export interface BlockChange {
   block: unknown;
 }
 
+/**
+ * The content diff of a replaced step. A side the server may not show (its
+ * lesson revision withdrawn, or its lesson unpublished) is marked
+ * unavailable and its content is not sent; the Studio shows only what was
+ * sent. Both spellings of the marker are accepted: per side
+ * (`oldUnavailable` / `newUnavailable`) or `unavailable: {old, new}`.
+ */
+export interface ContentDiff {
+  fields?: FieldChange[];
+  blocks?: BlockChange[];
+  oldUnavailable?: boolean;
+  newUnavailable?: boolean;
+  unavailable?: { old?: boolean; new?: boolean } | null;
+}
+
 export interface StepChange {
   moduleKey: string;
   position: number;
@@ -107,7 +122,7 @@ export interface StepChange {
   previousPosition: number | null;
   previousTitle: string | null;
   structureChanged: boolean;
-  diff: { fields: FieldChange[]; blocks: BlockChange[] } | null;
+  diff: ContentDiff | null;
   /** The pinned lesson revision is eligible now; only then is its document sent. */
   eligible: boolean;
   content: unknown | null;

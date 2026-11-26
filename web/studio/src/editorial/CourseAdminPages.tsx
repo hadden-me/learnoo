@@ -12,6 +12,7 @@ import { courseReviewApi, type AdminCourse, type AdminCourseDetail, type AdminCo
 import { describeCourseWorkflowError } from '../api/courseReviewMessages';
 import { useStudio } from '../context';
 import { courseState, courseTitle } from '../courses/courseLabels';
+import { fold } from '../courses/outline';
 import { adminCourseActions, describeBlocked, lifecycleLabel, pointerLabel } from '../courses/workflow';
 import { COURSE_STATUS_LABELS } from '../courses/courseLabels';
 import { paths } from '../editorialRoutes';
@@ -222,14 +223,21 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
   const cr = useCourseAdmin();
   const [loadedAt, setLoadedAt] = useState(() => new Date());
   const [loaded, reload] = useLoad(async () => {
-    const [detail, newer] = await Promise.all([cr.adminCourse(courseId), cr.newerRevisions(courseId).catch(() => null)]);
+    const [detail, newer] = await Promise.all([
+      cr.adminCourse(courseId),
+      cr.newerRevisions(courseId).then(
+        (n) => ({ ok: true as const, n }),
+        () => ({ ok: false as const, n: null }),
+      ),
+    ]);
     setLoadedAt(new Date());
-    return { detail, newer };
+    return { detail, newer: newer.n, newerFailed: !newer.ok };
   }, [cr, courseId]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [target, setTarget] = useState('');
+  const [authorQuery, setAuthorQuery] = useState('');
   const [targetError, setTargetError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -249,18 +257,21 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
   if (loaded.state === 'loading') return <LoadingPage label="Chargement du cours…" />;
   if (loaded.state === 'error')
     return <ErrorPage title="Cours introuvable" message={loaded.notFound ? 'Aucun cours ne correspond à ce numéro.' : loaded.message} back={{ to: paths.adminCourses, label: 'Revenir à l’administration des cours' }} />;
-  const { detail, newer } = loaded.data;
+  const { detail, newer, newerFailed } = loaded.data;
   const c = detail.course;
   const actions = adminCourseActions(detail);
   const byId = new Map(detail.revisions.map((r) => [r.id, r]));
   const numberOf = (id: number | null) => (id === null ? '—' : byId.has(id) ? `version ${byId.get(id)!.number}` : `version n° ${id}`);
   const needsReason = (k: ActionKind) => k !== 'restore';
+  const q = fold(authorQuery.trim());
+  const matchingAuthors = detail.authors.filter((a) => q === '' || fold(a.displayName).includes(q) || String(a.id) === target);
 
   const open = (p: Pending) => {
     setPending(p);
     setReason('');
     setReasonError(null);
     setTarget('');
+    setAuthorQuery('');
     setTargetError(null);
     setError(null);
     setDone(null);
@@ -402,6 +413,14 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
         )}
       </div>
 
+      {newerFailed && (
+        <div className="banner error" role="alert">
+          <p>Impossible de vérifier si des leçons du cours ont des révisions plus récentes.</p>
+          <button type="button" onClick={() => void reload()}>
+            Réessayer
+          </button>
+        </div>
+      )}
       {newer && newer.steps.length > 0 && (
         <section className="status-card warning" aria-labelledby="newer-heading">
           <h2 id="newer-heading">Des leçons du cours publié ont une révision plus récente</h2>
@@ -457,6 +476,12 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
             <p>{ACTION_EFFECTS[pending.kind]}</p>
             {pending.kind === 'transfer' && (
               <div className="fields">
+                <label htmlFor={`${formId}-search`}>Rechercher un auteur</label>
+                <input id={`${formId}-search`} type="search" value={authorQuery} onChange={(e) => setAuthorQuery(e.target.value)} aria-describedby={`${formId}-count`} />
+                <p className="hint" id={`${formId}-count`} role="status">
+                  {matchingAuthors.length} auteur{matchingAuthors.length > 1 ? 's' : ''} actif{matchingAuthors.length > 1 ? 's' : ''}
+                  {detail.authors.length >= 200 ? ' (200 premiers par nom : précisez la recherche)' : ''}
+                </p>
                 <label htmlFor={`${formId}-target`}>Nouveau propriétaire</label>
                 {targetError && (
                   <p className="field-error" id={`${formId}-target-error`}>
@@ -474,7 +499,7 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
                   }}
                 >
                   <option value="">Choisir un auteur…</option>
-                  {detail.authors.map((a) => (
+                  {matchingAuthors.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.displayName}
                     </option>
@@ -543,7 +568,7 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
         ) : (
           <ul className="history" aria-label="Historique du cours">
             {[
-              ...detail.history.map((e) => ({ at: e.occurredAt, key: `p-${e.occurredAt}-${e.action}`, label: `${pointerLabel(e.action)}${e.publishedRevisionId !== null ? ` de la ${numberOf(e.publishedRevisionId)}` : ''}`, actor: e.actorName, reason: e.reason })),
+              ...detail.history.map((e, i) => ({ at: e.occurredAt, key: `p-${i}`, label: `${pointerLabel(e.action)}${e.publishedRevisionId !== null ? ` de la ${numberOf(e.publishedRevisionId)}` : ''}`, actor: e.actorName, reason: e.reason })),
               ...detail.lifecycle.map((e) => ({ at: e.occurredAt, key: `l-${e.id}`, label: lifecycleLabel(e.action), actor: e.actorName, reason: e.reason })),
             ]
               .sort((a, b) => b.at.localeCompare(a.at))

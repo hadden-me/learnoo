@@ -609,7 +609,13 @@ type RevisionSummary struct {
 	UpdatedAt time.Time
 	// Withdrawn by an administrator (LMS-B04).
 	Withdrawn bool
+	// EverPublished: a publish or restore row names the revision, so it
+	// no longer holds the candidate slot even when it is not current.
+	EverPublished bool
 }
+
+// everPublishedSQL computes RevisionSummary.EverPublished for the revision row r.
+const everPublishedSQL = `EXISTS (SELECT 1 FROM course_publication_audit a WHERE a.course_id = r.course_id AND a.revision_id = r.id)`
 
 // Owned pages through the courses actor owns, newest first (by course
 // ID): before is the last course ID of the previous page (0 for the
@@ -620,9 +626,10 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 	err := s.read(ctx, actor, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
-			       `+suspendedSQL+`, r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL
+			       `+suspendedSQL+`, r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL,
+			       `+everPublishedSQL+`
 			  FROM courses c
-			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
+			  LEFT JOIN LATERAL (SELECT id, course_id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
 			                      WHERE course_id = c.id ORDER BY revision_number DESC LIMIT 1) r ON true
 			 WHERE c.owner_id = $1 AND ($2 = 0 OR c.id < $2)
 			 ORDER BY c.id DESC
@@ -636,11 +643,12 @@ func (s *Store) Owned(ctx context.Context, actor, before int64) ([]OwnedCourse, 
 			var number, version *int
 			var status, title *string
 			var updated *time.Time
-			var withdrawn *bool
+			var withdrawn, ever *bool
 			err := row.Scan(&o.ID, &o.PublicID, &o.OwnerID, &o.SubjectID, &o.Language, &o.PublishedRevisionID, &o.ArchivedAt,
-				&o.CreatedAt, &o.Suspended, &id, &number, &status, &title, &version, &updated, &withdrawn)
+				&o.CreatedAt, &o.Suspended, &id, &number, &status, &title, &version, &updated, &withdrawn, &ever)
 			if err == nil && id != nil {
-				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated, Withdrawn: *withdrawn}
+				o.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version, UpdatedAt: *updated,
+					Withdrawn: *withdrawn, EverPublished: *ever}
 			}
 			return o, err
 		})

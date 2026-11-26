@@ -52,6 +52,8 @@ type courseRevisionSummaryJSON struct {
 	Version   int            `json:"version"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	Withdrawn bool           `json:"withdrawn"`
+	// EverPublished: a publication or restoration named the revision.
+	EverPublished bool `json:"everPublished"`
 }
 
 type courseJSON struct {
@@ -310,7 +312,7 @@ func (h *Handlers) listCourses(w http.ResponseWriter, r *http.Request) {
 		if c.Latest != nil {
 			l := c.Latest
 			out[i].LatestRevision = &courseRevisionSummaryJSON{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title,
-				Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn}
+				Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn, EverPublished: l.EverPublished}
 		}
 	}
 	var cursor *string

@@ -74,6 +74,8 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const ids = { title: useId(), summary: useId(), objectives: useId(), prerequisites: useId(), cover: useId(), coverAlt: useId(), save: useId(), overview: useId() };
 
   const [server, setServer] = useState({ id: props.revision.id, version: props.revision.version, number: props.revision.number });
+  /** The kind the server derived at the last save (an amendment edited beyond replacements becomes ordinary, and back). */
+  const [kind, setKind] = useState(props.revision.kind);
   const [draft, setDraft] = useState<CourseDraft>(() => withTitles(fromRevision(props.revision), props.lessonTitles));
   const [baseline, setBaseline] = useState(() => snapshot(fromRevision(props.revision)));
   const [placements, setPlacements] = useState<Record<number, PlacementInfo>>(() => placementsOf(props.revision));
@@ -273,6 +275,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
         setRestoredKey(null);
         const next = { id: revision.id, version: revision.version, number: revision.number };
         setServer(next);
+        setKind(revision.kind);
         setPlacements((p) => ({ ...p, ...placementsOf(revision) }));
         const facts = new Map(revision.modules.flatMap((m) => m.steps).map((s) => [s.lessonId, s]));
         setDraft((d) =>
@@ -335,6 +338,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       }
       const next = { id: revision.id, version: revision.version, number: revision.number };
       setServer(next);
+      setKind(revision.kind);
       setPlacements(placementsOf(revision));
       const fresh = withTitles(fromRevision(revision), props.lessonTitles);
       setDraft(fresh);
@@ -561,7 +565,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
     <div className="editor-page course-editor">
       <div className="editor-bar">
         <p className="revision-label">
-          Brouillon · version {server.number} du cours{props.revision.kind === 'amendment' ? ' · amendement (remplacement de révisions de leçons)' : ''}
+          Brouillon · version {server.number} du cours{kind === 'amendment' ? ' · amendement (remplacement de révisions de leçons)' : ''}
         </p>
         <p id={ids.save} className={dirty ? 'save-state dirty' : 'save-state'} role="status" aria-live="polite">
           {saveState}

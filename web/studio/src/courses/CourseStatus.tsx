@@ -21,8 +21,12 @@ export function canStartDraft(course: Course, revision: ReviewedRevision | null)
   if (course.archived) return false;
   if (!revision || revision.withdrawnAt) return true;
   if (revision.status === 'changes_requested') return true;
-  return revision.status === 'approved' && (course.publishedRevisionId === revision.id || !!course.suspended);
+  return revision.status === 'approved' && (course.publishedRevisionId === revision.id || everPublished(course, revision));
 }
+
+/** The revision was published at some point (the owner's list says so for the latest revision). */
+export const everPublished = (course: Course, revision: ReviewedRevision) =>
+  course.publishedRevisionId === revision.id || (course.latestRevision?.id === revision.id && !!course.latestRevision.everPublished);
 
 /** Archive and suspension, which decide whether students can read the course whatever revision is in progress. */
 export function CourseStateNotice({ course }: { course: Course }) {
@@ -143,9 +147,17 @@ export function CourseStatusView({
   } else if (revision.status === 'approved' && published) {
     heading = `Version ${revision.number} · Publiée`;
     body = <p>Les élèves lisent cette version. Une nouvelle version ne remplacera celle-ci qu’après sa relecture et sa publication.</p>;
-  } else if (revision.status === 'approved' && (course.suspended || course.archived)) {
+  } else if (revision.status === 'approved' && everPublished(course, revision)) {
     heading = `Version ${revision.number} · Approuvée, publiée auparavant`;
-    body = <p>Cette version n’est plus lue par les élèves depuis {course.archived ? 'l’archivage' : 'la suspension'} du cours.</p>;
+    body = (
+      <p>
+        {course.archived
+          ? 'Cette version n’est plus lue par les élèves depuis l’archivage du cours.'
+          : course.suspended
+            ? 'Cette version n’est plus lue par les élèves depuis la suspension du cours.'
+            : 'Les élèves lisent maintenant une autre version, restaurée par un administrateur ou un éditeur. Une nouvelle version passera par la relecture.'}
+      </p>
+    );
   } else if (revision.status === 'approved') {
     heading = `Version ${revision.number} · Approuvée, en attente de publication`;
     body = <p>Un relecteur a approuvé cette version. Un éditeur doit maintenant la publier ; jusque-là, les élèves lisent la version publiée précédente, s’il y en a une.</p>;

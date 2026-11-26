@@ -35,10 +35,10 @@ func (s *Store) AdminCourses(ctx context.Context, actor, before int64) ([]AdminC
 		rows, err := tx.Query(ctx, `
 			SELECT c.id, c.public_id::text, c.owner_id, c.subject_id, c.language, c.published_revision_id, c.archived_at, c.created_at,
 			       `+suspendedSQL+`, u.display_name,
-			       r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL
+			       r.id, r.revision_number, r.status, r.title, r.version, r.updated_at, r.withdrawn_at IS NOT NULL, `+everPublishedSQL+`
 			  FROM courses c
 			  JOIN users u ON u.id = c.owner_id
-			  LEFT JOIN LATERAL (SELECT id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
+			  LEFT JOIN LATERAL (SELECT id, course_id, revision_number, status, title, version, updated_at, withdrawn_at FROM course_revisions
 			                      WHERE course_id = c.id ORDER BY revision_number DESC LIMIT 1) r ON true
 			 WHERE $1 = 0 OR c.id < $1
 			 ORDER BY c.id DESC
@@ -52,13 +52,13 @@ func (s *Store) AdminCourses(ctx context.Context, actor, before int64) ([]AdminC
 			var number, version *int
 			var status, title *string
 			var updated *time.Time
-			var withdrawn *bool
+			var withdrawn, ever *bool
 			err := row.Scan(&a.ID, &a.PublicID, &a.OwnerID, &a.SubjectID, &a.Language, &a.PublishedRevisionID, &a.ArchivedAt,
-				&a.CreatedAt, &a.Suspended, &a.OwnerName, &id, &number, &status, &title, &version, &updated, &withdrawn)
+				&a.CreatedAt, &a.Suspended, &a.OwnerName, &id, &number, &status, &title, &version, &updated, &withdrawn, &ever)
 			if err == nil && id != nil {
 				a.Title = *title
 				a.Latest = &RevisionSummary{ID: *id, Number: *number, Status: Status(*status), Title: *title, Version: *version,
-					UpdatedAt: *updated, Withdrawn: *withdrawn}
+					UpdatedAt: *updated, Withdrawn: *withdrawn, EverPublished: *ever}
 			}
 			return a, err
 		})
@@ -86,6 +86,7 @@ type AdminRevision struct {
 	Status        Status
 	Kind          string
 	Title         string
+	Version       int
 	AuthorID      int64
 	AuthorName    string
 	UpdatedAt     time.Time
@@ -144,7 +145,7 @@ func (s *Store) AdminCourseByID(ctx context.Context, actor, courseID int64) (Adm
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.revision_number, r.status, r.kind, r.title, r.author_id, u.display_name, r.updated_at, r.submitted_at,
+			SELECT r.id, r.revision_number, r.status, r.kind, r.title, r.version, r.author_id, u.display_name, r.updated_at, r.submitted_at,
 			       r.withdrawn_at,
 			       EXISTS (SELECT 1 FROM course_publication_audit a WHERE a.course_id = r.course_id AND a.revision_id = r.id),
 			       d.action, d.reviewer_id, ru.display_name, d.comment, d.decided_at
@@ -164,7 +165,7 @@ func (s *Store) AdminCourseByID(ctx context.Context, actor, courseID int64) (Adm
 			var reviewer *int64
 			var comment *string
 			var decided *time.Time
-			err := row.Scan(&r.ID, &r.Number, &status, &r.Kind, &r.Title, &r.AuthorID, &r.AuthorName, &r.UpdatedAt, &r.SubmittedAt,
+			err := row.Scan(&r.ID, &r.Number, &status, &r.Kind, &r.Title, &r.Version, &r.AuthorID, &r.AuthorName, &r.UpdatedAt, &r.SubmittedAt,
 				&r.WithdrawnAt, &r.EverPublished, &action, &reviewer, &reviewerName, &comment, &decided)
 			r.Status = Status(status)
 			if err == nil && action != nil {
@@ -178,8 +179,8 @@ func (s *Store) AdminCourseByID(ctx context.Context, actor, courseID int64) (Adm
 		if len(d.Revisions) > 0 {
 			l := d.Revisions[0]
 			d.Title = l.Title
-			d.Latest = &RevisionSummary{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title, UpdatedAt: l.UpdatedAt,
-				Withdrawn: l.WithdrawnAt != nil}
+			d.Latest = &RevisionSummary{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title, Version: l.Version,
+				UpdatedAt: l.UpdatedAt, Withdrawn: l.WithdrawnAt != nil, EverPublished: l.EverPublished}
 		}
 		rows, err = tx.Query(ctx, `
 			SELECT a.action, a.revision_id, a.previous_revision_id, a.actor_id, u.display_name, a.reason, a.occurred_at

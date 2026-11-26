@@ -79,6 +79,8 @@ export interface CourseRevisionSummary {
   updatedAt: string;
   /** Withdrawn by an administrator (LMS-B04): it no longer counts as the course's candidate. */
   withdrawn?: boolean;
+  /** A publication or restoration named it: it no longer holds the candidate slot, even when not current. */
+  everPublished?: boolean;
 }
 
 export interface Course {

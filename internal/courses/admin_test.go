@@ -90,7 +90,7 @@ func TestAdminReadsAndReviewContext(t *testing.T) {
 		t.Fatal("no transfer target")
 	}
 	owned, _, err := e.store.Owned(e.ctx, e.owner, 0)
-	if err != nil || len(owned) == 0 || !owned[0].Suspended {
+	if err != nil || len(owned) == 0 || !owned[0].Suspended || owned[0].Latest == nil || !owned[0].Latest.EverPublished {
 		t.Fatalf("owned: %+v %v", owned, err)
 	}
 	_, err = e.store.AdminCourseByID(e.ctx, admin, r.course.ID+1000)

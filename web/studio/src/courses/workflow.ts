@@ -4,7 +4,7 @@
 // course review queue (filters, pages, submission age), change labels, and
 // which administrator recovery actions apply to a course. The server checks
 // everything again; these only explain and offer.
-import type { AdminCourseDetail, AdminCourseRevision, Blocked, CourseReviewItem, ReviewerProblem, StepChange, StepRef } from '../api/courseReview';
+import type { AdminCourseDetail, AdminCourseRevision, Blocked, ContentDiff, FieldChange, CourseReviewItem, ReviewerProblem, StepChange, StepRef } from '../api/courseReview';
 import type { ReviewQueueItem } from '../api/editorial';
 import type { CourseDraft, Problem } from './outline';
 
@@ -169,6 +169,35 @@ export function changeSummary(steps: StepChange[], removed: number): string {
     .filter(([count]) => count > 0)
     .map(([count, one, many]) => `${count} étape${count > 1 ? 's' : ''} ${count > 1 ? many : one}`)
     .join(' · ');
+}
+
+export interface DiffSides {
+  /** Blocks only the previous revision had; null when that side is unavailable (nothing of it is shown). */
+  removed: unknown[] | null;
+  /** Blocks only the pinned revision has; null when that side is unavailable. */
+  added: unknown[] | null;
+  equal: number;
+  /** Changed fields, with the value of an unavailable side left out. */
+  fields: Array<{ name: string; old: unknown; new: unknown; oldShown: boolean; newShown: boolean }>;
+}
+
+/**
+ * What a replaced step's diff may show: only what the server sent. A side
+ * marked unavailable, or a pinned revision that is no longer eligible
+ * (`stepEligible` false), is never rendered.
+ */
+export function diffSides(diff: ContentDiff | null, stepEligible: boolean): DiffSides {
+  const oldGone = !diff || !!diff.oldUnavailable || !!diff.unavailable?.old;
+  const newGone = !diff || !stepEligible || !!diff.newUnavailable || !!diff.unavailable?.new;
+  const blocks = Array.isArray(diff?.blocks) ? diff!.blocks : [];
+  const fields: FieldChange[] = Array.isArray(diff?.fields) ? diff!.fields : [];
+  const sent = (op: string) => blocks.filter((b) => b.op === op && b.block !== undefined && b.block !== null).map((b) => b.block);
+  return {
+    removed: oldGone ? null : sent('removed'),
+    added: newGone ? null : sent('added'),
+    equal: oldGone || newGone ? 0 : blocks.filter((b) => b.op === 'equal').length,
+    fields: fields.map((f) => ({ name: f.name, old: oldGone ? null : f.old, new: newGone ? null : f.new, oldShown: !oldGone, newShown: !newGone })),
+  };
 }
 
 /** A lesson document holding only some blocks, for the canonical preview of a diff side. */

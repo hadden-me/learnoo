@@ -12,11 +12,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isApiError } from '../api/client';
 import { courseApi, type Edition, type Level } from '../api/courses';
-import { courseReviewApi, ineligibleSteps, reviewerReasons, type CoursePointerChange, type CoursePublishItem, type CourseReview, type ReviewerProblem, type StepChange, type StepRef } from '../api/courseReview';
+import {
+  courseReviewApi,
+  ineligibleSteps,
+  reviewerReasons,
+  type CoursePointerChange,
+  type CoursePublishItem,
+  type CourseReview,
+  type ReviewedRevision,
+  type ReviewerProblem,
+  type StepChange,
+  type StepRef,
+} from '../api/courseReview';
+import type { Spaces } from '../spaces';
 import { describeCourseWorkflowError } from '../api/courseReviewMessages';
 import { catalogueLabel, CatalogueName } from '../catalogue';
 import { setFlash, useStudio } from '../context';
-import { CHANGE_LABELS, changeSummary, describeBlocked, describeOwnProblem, partialDocument } from '../courses/workflow';
+import { CHANGE_LABELS, changeSummary, describeBlocked, describeOwnProblem, diffSides, partialDocument } from '../courses/workflow';
 import { paths } from '../editorialRoutes';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { navigate } from '../router';
@@ -79,16 +91,21 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
-/** A replaced step's content diff: changed fields, then removed and added blocks through the canonical preview. */
+export const UNAVAILABLE_CONTENT = 'Contenu indisponible (leçon retirée ou dépubliée)';
+
+/**
+ * A replaced step's content diff: changed fields, then removed and added
+ * blocks through the canonical preview. Only what the server sent is shown;
+ * a side it marked unavailable says so instead (diffSides).
+ */
 function StepDiff({ step, language }: { step: StepChange; language: 'fr' | 'ar' }) {
-  const diff = step.diff!;
-  const removed = diff.blocks.filter((b) => b.op === 'removed').map((b) => b.block);
-  const added = diff.blocks.filter((b) => b.op === 'added').map((b) => b.block);
-  const equal = diff.blocks.length - removed.length - added.length;
+  const sides = diffSides(step.diff, step.eligible);
   const [shown, setShown] = useState(false);
+  const cell = (value: unknown, visible: boolean) => (visible ? text(value) : UNAVAILABLE_CONTENT);
+  const hasBlocks = (sides.removed?.length ?? 0) > 0 || (sides.added?.length ?? 0) > 0;
   return (
     <div className="step-diff">
-      {diff.fields.length > 0 && (
+      {sides.fields.length > 0 && (
         <table>
           <caption>Champs modifiés</caption>
           <thead>
@@ -99,36 +116,41 @@ function StepDiff({ step, language }: { step: StepChange; language: 'fr' | 'ar' 
             </tr>
           </thead>
           <tbody>
-            {diff.fields.map((f) => (
+            {sides.fields.map((f) => (
               <tr key={f.name}>
                 <th scope="row">{FIELD_NAMES[f.name] ?? f.name}</th>
-                <td dir="auto">{text(f.old)}</td>
-                <td dir="auto">{text(f.new)}</td>
+                <td dir="auto">{cell(f.old, f.oldShown)}</td>
+                <td dir="auto">{cell(f.new, f.newShown)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      <p>
-        Blocs du contenu : {removed.length} retiré{removed.length > 1 ? 's' : ''}, {added.length} ajouté{added.length > 1 ? 's' : ''}, {equal} inchangé{equal > 1 ? 's' : ''}.
-      </p>
-      {(removed.length > 0 || added.length > 0) && (
+      {sides.removed === null && <p className="step-warning">Révision {step.previousRevisionNumber} : {UNAVAILABLE_CONTENT}.</p>}
+      {sides.added === null && <p className="step-warning">Révision {step.revisionNumber} : {UNAVAILABLE_CONTENT}.</p>}
+      {sides.removed !== null && sides.added !== null && (
+        <p>
+          Blocs du contenu : {sides.removed.length} retiré{sides.removed.length > 1 ? 's' : ''}, {sides.added.length} ajouté{sides.added.length > 1 ? 's' : ''}, {sides.equal} inchangé
+          {sides.equal > 1 ? 's' : ''}.
+        </p>
+      )}
+      {hasBlocks && (
         <button type="button" aria-expanded={shown} onClick={() => setShown((v) => !v)}>
           {shown ? 'Masquer les blocs modifiés' : 'Afficher les blocs modifiés'}
         </button>
       )}
       {shown && (
         <div className="diff-sides">
-          {removed.length > 0 && (
+          {sides.removed && sides.removed.length > 0 && (
             <section className="diff-removed" aria-label={`Blocs retirés (révision ${step.previousRevisionNumber})`}>
               <h5>Retiré (révision {step.previousRevisionNumber})</h5>
-              <CanonicalPreview content={partialDocument(step.content, removed, language)} testId={`diff-removed-${step.lessonId}`} mediaRoute="review" />
+              <CanonicalPreview content={partialDocument(step.content, sides.removed, language)} testId={`diff-removed-${step.lessonId}`} mediaRoute="review" />
             </section>
           )}
-          {added.length > 0 && (
+          {sides.added && sides.added.length > 0 && (
             <section className="diff-added" aria-label={`Blocs ajoutés (révision ${step.revisionNumber})`}>
               <h5>Ajouté (révision {step.revisionNumber})</h5>
-              <CanonicalPreview content={partialDocument(step.content, added, language)} testId={`diff-added-${step.lessonId}`} mediaRoute="review" />
+              <CanonicalPreview content={partialDocument(step.content, sides.added, language)} testId={`diff-added-${step.lessonId}`} mediaRoute="review" />
             </section>
           )}
         </div>
@@ -166,7 +188,9 @@ function StepRow({ step, language, moduleTitle }: { step: StepChange; language: 
         )}
       </p>
       {step.change === 'replaced' && step.diff && <StepDiff step={step} language={language} />}
-      {step.content !== null && (
+      {step.content === null || step.content === undefined ? (
+        <p className="hint">{UNAVAILABLE_CONTENT} : la leçon ne peut pas être lue ici.</p>
+      ) : (
         <>
           <button type="button" aria-expanded={preview} onClick={() => setPreview((v) => !v)}>
             {preview ? 'Masquer la leçon' : `Lire la révision ${step.revisionNumber} de la leçon`}
@@ -295,25 +319,66 @@ function EarlierFeedback({ review }: { review: CourseReview }) {
 
 /* ---------- review page ---------- */
 
+/** The revision's state on the read-only review page, from its status and withdrawal (publishers and administrators read any submitted revision). */
+export function reviewStatus(r: Pick<ReviewedRevision, 'status' | 'withdrawnAt'>): { label: string; tone: string; inReview: boolean } {
+  if (r.withdrawnAt) return { label: 'Retirée par un administrateur', tone: 'state-withdrawn', inReview: false };
+  switch (r.status) {
+    case 'in_review':
+      return { label: 'En relecture', tone: 'state-review', inReview: true };
+    case 'approved':
+      return { label: 'Approuvée', tone: 'state-approved', inReview: false };
+    case 'changes_requested':
+      return { label: 'Modifications demandées', tone: 'state-changes', inReview: false };
+    default:
+      return { label: 'Brouillon', tone: '', inReview: false };
+  }
+}
+
+/** The 404 text: reviewers see only revisions in review of their subjects; publishers and administrators any submitted revision. */
+export function notFoundText(spaces: Spaces): string {
+  if (spaces.publisher || spaces.administrator)
+    return spaces.reviewer
+      ? 'Cette version de cours est introuvable : elle n’existe pas ou n’a jamais été soumise (un brouillon ne se relit pas).'
+      : 'Cette version de cours est introuvable : elle n’existe pas ou n’a jamais été soumise. Un brouillon n’est visible que de son auteur.';
+  return 'Cette version de cours n’est pas en relecture dans l’une de vos matières : elle n’existe pas, a déjà été décidée, ou relève d’une matière que vous ne relisez pas.';
+}
+
+function ReadOnlyStatus({ revision, label }: { revision: ReviewedRevision; label: string }) {
+  const d = revision.review;
+  return (
+    <section className="status-card" aria-labelledby="readonly-heading">
+      <h2 id="readonly-heading">Version {label.toLowerCase()}</h2>
+      <p>
+        {revision.withdrawnAt
+          ? `Un administrateur a retiré cette version le ${formatDateTime(revision.withdrawnAt)} : elle ne sera ni relue, ni publiée, ni restaurée.`
+          : 'Cette version n’est plus en relecture : vous la lisez sans pouvoir en décider.'}
+      </p>
+      {d && (
+        <p>
+          {d.action === 'approve' ? 'Approuvée' : 'Modifications demandées'} par {d.reviewerName}, le {formatDateTime(d.decidedAt)}.
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function CourseReviewPage({ revisionId }: { revisionId: number }) {
   const cr = useCourseReview();
+  const { spaces } = useStudio();
   const [loaded] = useLoad(() => cr.review(revisionId), [cr, revisionId]);
   if (loaded.state === 'loading') return <LoadingPage label="Chargement de la version du cours…" />;
   if (loaded.state === 'error')
     return (
       <ErrorPage
         title="Version de cours indisponible"
-        message={
-          loaded.notFound
-            ? 'Cette version de cours n’est pas en relecture dans l’une de vos matières : elle n’existe pas, a déjà été décidée, ou relève d’une matière que vous ne relisez pas.'
-            : loaded.message
-        }
-        back={{ to: paths.reviewQueue, label: 'Revenir à la file de relecture' }}
+        message={loaded.notFound ? notFoundText(spaces) : loaded.message}
+        back={spaces.reviewer ? { to: paths.reviewQueue, label: 'Revenir à la file de relecture' } : spaces.administrator ? { to: paths.adminCourses, label: 'Revenir à l’administration des cours' } : { to: paths.publishQueue, label: 'Revenir aux contenus à publier' }}
       />
     );
   const review = loaded.data;
   const r = review.revision;
   const blocked = r.blocked ? describeBlocked(r.blocked) : null;
+  const status = reviewStatus(r);
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
@@ -324,7 +389,7 @@ export function CourseReviewPage({ revisionId }: { revisionId: number }) {
       </h1>
       <p className="lesson-meta">
         <span className="state kind-label">{r.kind === 'amendment' ? 'Cours · amendement' : 'Cours'}</span>
-        <span className="state state-review">En relecture</span>
+        <span className={`state ${status.tone}`}>{status.label}</span>
       </p>
       {blocked && (
         <section className="status-card warning" aria-labelledby="blocked-heading">
@@ -339,7 +404,7 @@ export function CourseReviewPage({ revisionId }: { revisionId: number }) {
           )}
         </section>
       )}
-      {review.eligible ? <CourseDecisionForm review={review} /> : <NotEligible problems={review.problems} />}
+      {review.eligible ? <CourseDecisionForm review={review} /> : status.inReview ? <NotEligible problems={review.problems} /> : <ReadOnlyStatus revision={r} label={status.label} />}
       <EarlierFeedback review={review} />
       <CourseSnapshot review={review} />
     </main>

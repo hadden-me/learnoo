@@ -32,7 +32,11 @@ export function courseState(course: Course): { label: string; tone: 'draft' | 'r
   if (course.suspended) return { label: 'Suspendu par un administrateur', tone: 'withdrawn' };
   if (!latest) return { label: 'Aucune version en cours', tone: 'empty' };
   if (latest.withdrawn) return { label: 'Version retirée par un administrateur', tone: 'withdrawn' };
-  if (latest.status === 'approved') return course.publishedRevisionId === latest.id ? { label: 'Publié', tone: 'published' } : { label: 'Approuvé, en attente de publication', tone: 'approved' };
+  if (latest.status === 'approved') {
+    if (course.publishedRevisionId === latest.id) return { label: 'Publié', tone: 'published' };
+    if (latest.everPublished) return { label: 'Publié auparavant ; une autre version est lue', tone: 'approved' };
+    return { label: 'Approuvé, en attente de publication', tone: 'approved' };
+  }
   const tone = latest.status === 'draft' ? 'draft' : latest.status === 'in_review' ? 'review' : 'changes';
   return { label: COURSE_STATUS_LABELS[latest.status], tone };
 }

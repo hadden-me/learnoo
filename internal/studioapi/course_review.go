@@ -811,7 +811,7 @@ func toAdminCourseJSON(a courses.AdminCourse) adminCourseJSON {
 	out := adminCourseJSON{courseJSON: toCourseJSON(a.Course), OwnerName: a.OwnerName, Title: a.Title}
 	if l := a.Latest; l != nil {
 		out.LatestRevision = &courseRevisionSummaryJSON{ID: l.ID, Number: l.Number, Status: l.Status, Title: l.Title,
-			Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn}
+			Version: l.Version, UpdatedAt: l.UpdatedAt, Withdrawn: l.Withdrawn, EverPublished: l.EverPublished}
 	}
 	return out
 }
