@@ -68,6 +68,9 @@ func TestBrowserReaderServer(t *testing.T) {
 	f.setName(f.newUser("test-reviewer-physique", other, permissions.Reviewer).id, "TEST Relecteur Physique")
 	f.setName(f.newUser("test-author-reviewer", f.subject, permissions.Author, permissions.Reviewer).id, "TEST Autrice relectrice")
 	ch := f.chapter(f.subject, "test-chapter")
+	// A second chapter with no lessons, retired by the course chapter
+	// retirement spec without affecting the specs that use test-chapter.
+	f.chapter(f.subject, "test-chapter-retirable")
 	// TEST display names (LRN-014) through the audited operator path:
 	// test-math and test-chapter are named in both languages; test-physique
 	// keeps its code (the fallback).
