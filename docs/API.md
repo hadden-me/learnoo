@@ -81,7 +81,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `invalid_input` | A curriculum code, name, label or display order, a catalogue display name or order, an invitation email or lifetime, or a user search is malformed (`message` says which rule) |
 | 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
 | 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft created, saved with a chapter change, or submitted with a retired chapter other than the chapter of its published base revision |
-| 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
+| 429 | `rate_limited` | Login throttled, or an administrator's invitation budget spent; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |
 | 503 | `unavailable` | Health check could not reach the database |
@@ -749,7 +749,7 @@ Rules on top of the stores:
 {"invitation": {"id": 9, "email": "student@example.test", "createdAt": "…", "expiresAt": "…"}, "path": "/invite/<token>"}
 ```
 
-The token is shown once and never stored (only its hash); the client builds the link from its own origin. Nothing is emailed: the administrator passes the link on. `409 account_exists`; `422 invalid_input` for a malformed email or lifetime. Teachers are onboarded with the same flow: invite, then grant `author` (and `reviewer` or `publisher` as needed) once the account exists. There is no self-registration and no teacher invitation type.
+Each administrator may issue at most 30 invitations per sliding 15-minute window; every well-formed request counts, issued or refused, and past the limit the answer is `429 rate_limited` with `Retry-After` (seconds). The token is shown once and never stored (only its hash); the client builds the link from its own origin. Nothing is emailed: the administrator passes the link on. `409 account_exists`; `422 invalid_input` for a malformed email or lifetime. Teachers are onboarded with the same flow: invite, then grant `author` (and `reviewer` or `publisher` as needed) once the account exists. There is no self-registration and no teacher invitation type.
 
 ### Catalogue display names and order
 
