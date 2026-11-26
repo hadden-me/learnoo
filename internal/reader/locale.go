@@ -26,8 +26,8 @@ func localeFuncs(l i18n.Locale, public bool) template.FuncMap {
 			return htmlMessage(i18n.Message(l, key), args...)
 		},
 		"tn": func(key string, n int, args ...any) template.HTML {
-			s := htmlMessage(i18n.Message(l, i18n.PluralKey(l, key, n)), args...)
-			return template.HTML(strings.ReplaceAll(string(s), "{n}", fmt.Sprint(n)))
+			// The count first, so that an argument containing "{n}" is never rewritten.
+			return htmlMessage(strings.ReplaceAll(i18n.Message(l, i18n.PluralKey(l, key, n)), "{n}", fmt.Sprint(n)), args...)
 		},
 		// pick chooses between a French and an Arabic catalogue name
 		// (levels, sections, editions: both are required).
@@ -76,9 +76,9 @@ var markupFuncs = template.FuncMap{
 	"langspan": func(text, lang string) template.HTML {
 		return template.HTML(`<span lang="` + template.HTMLEscapeString(lang) + `" dir="` + Dir(lang) + `">` + template.HTMLEscapeString(text) + `</span>`)
 	},
-	// link is a same-site link; href must be a local path.
+	// link is a same-site link; href must be a plain local path.
 	"link": func(href string, text any) template.HTML {
-		if !strings.HasPrefix(href, "/") || strings.HasPrefix(href, "//") {
+		if !strings.HasPrefix(href, "/") || strings.HasPrefix(href, "//") || strings.Contains(href, `\`) {
 			href = "/"
 		}
 		return template.HTML(`<a href="` + template.HTMLEscapeString(href) + `">` + htmlArg(text) + `</a>`)

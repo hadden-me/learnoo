@@ -320,9 +320,11 @@ func (h *Handlers) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	email, password := r.PostForm.Get("email"), r.PostForm.Get("password")
 	data := loginData{Email: email, Next: safeNext(r.PostForm.Get("next"))}
+	// The language switch of a refused sign-in keeps the return path.
+	self := "/login?next=" + url.QueryEscape(data.Next)
 	if email == "" || password == "" {
 		data.Error = msg(r, "login.missing")
-		h.render(w, r, http.StatusBadRequest, "login", view{Title: msg(r, "login.title"), Data: data})
+		h.render(w, r, http.StatusBadRequest, "login", view{Title: msg(r, "login.title"), Data: data, Self: self})
 		return
 	}
 	var previous string
@@ -335,11 +337,11 @@ func (h *Handlers) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &limited):
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(limited.RetryAfter.Seconds()))))
 		data.Error = msg(r, "login.tooMany")
-		h.render(w, r, http.StatusTooManyRequests, "login", view{Title: msg(r, "login.title"), Data: data})
+		h.render(w, r, http.StatusTooManyRequests, "login", view{Title: msg(r, "login.title"), Data: data, Self: self})
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		data.Error = msg(r, "login.invalid")
-		h.render(w, r, http.StatusUnauthorized, "login", view{Title: msg(r, "login.title"), Data: data})
+		h.render(w, r, http.StatusUnauthorized, "login", view{Title: msg(r, "login.title"), Data: data, Self: self})
 		return
 	case err != nil:
 		h.internal(w, r, "login", err)
