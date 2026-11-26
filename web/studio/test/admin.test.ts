@@ -208,3 +208,19 @@ describe('administration helpers', () => {
     expect(entryFields('A', 'B', '1.5')).toHaveProperty('error');
   });
 });
+
+describe('revoking your own administrator permission', () => {
+  it('leaves administration for the Studio home with a notice, and only then', async () => {
+    const { leavesAdministration, adminRevokedHome, noticeFrom } = await import('../src/api/admin');
+    const { parseRoute } = await import('../src/router');
+    expect(leavesAdministration(true, { kind: 'revoke', permission: 'administrator' })).toBe(true);
+    expect(leavesAdministration(true, { kind: 'revoke', permission: 'author' })).toBe(false);
+    expect(leavesAdministration(false, { kind: 'revoke', permission: 'administrator' })).toBe(false);
+    expect(leavesAdministration(true, { kind: 'disable' })).toBe(false);
+    const url = new URL(adminRevokedHome, 'http://learnoo.test');
+    expect(parseRoute(url.pathname)).toEqual({ name: 'lessons' });
+    expect(noticeFrom(url.search)).toContain('retiré votre propre permission administrateur');
+    expect(noticeFrom('')).toBeNull();
+    expect(noticeFrom('?notice=other')).toBeNull();
+  });
+});

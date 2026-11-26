@@ -243,6 +243,27 @@ export function selfRules(isSelf: boolean) {
   return { canGrant: !isSelf, canDisable: !isSelf, canRevoke: true };
 }
 
+/** The notice the Studio home shows after an administrator revoked their own administrator permission. */
+export const ADMIN_REVOKED_NOTICE = 'admin-revoked';
+
+/**
+ * Revoking one's own administrator permission ends access to every administration page: the page does not
+ * reload the account (the server would refuse it) but reloads the Studio home, which rediscovers the spaces
+ * the account still has and explains what happened.
+ */
+export const leavesAdministration = (isSelf: boolean, p: { kind: string; permission?: string }) =>
+  isSelf && p.kind === 'revoke' && p.permission === 'administrator';
+
+export const adminRevokedHome = `/studio/?notice=${ADMIN_REVOKED_NOTICE}`;
+
+/** The French message for a notice in the Studio home's query string, or null. */
+export function noticeFrom(search: string): string | null {
+  const notice = new URLSearchParams(search).get('notice');
+  return notice === ADMIN_REVOKED_NOTICE
+    ? 'Vous avez retiré votre propre permission administrateur : les pages d’administration ne vous sont plus accessibles. Un autre administrateur peut vous la rendre.'
+    : null;
+}
+
 /** Moves the item at `index` by `delta` (−1 up, +1 down); out-of-range moves return the list unchanged. */
 export function move<T>(list: T[], index: number, delta: -1 | 1): T[] {
   const target = index + delta;

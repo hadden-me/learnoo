@@ -9,6 +9,8 @@ import {
   PERMISSION_LABELS,
   describeAdminError,
   invitationLink,
+  adminRevokedHome,
+  leavesAdministration,
   selfRules,
   type AdminSubject,
   type AdminUser,
@@ -18,7 +20,7 @@ import {
   type UserFilter,
 } from '../api/admin';
 import { CatalogueName, entryLabel } from '../catalogue';
-import { useStudio } from '../context';
+import { allowUnload, useStudio } from '../context';
 import { paths } from '../editorialRoutes';
 import { formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
@@ -323,6 +325,12 @@ export function UserPage({ userId }: { userId: number }) {
           res = await admin.enable(user.id);
           done = 'Compte réactivé.';
           break;
+      }
+      if (res.changed && leavesAdministration(isSelf, p)) {
+        // No reload: this account can no longer read administration pages.
+        allowUnload();
+        location.assign(adminRevokedHome);
+        return;
       }
       setOutcome({ kind: 'success', message: res.changed ? done : 'Aucun changement : c’était déjà le cas.' });
       await reload();
