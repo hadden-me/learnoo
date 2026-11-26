@@ -330,6 +330,8 @@ func checkCourses(ctx context.Context, pool *pgxpool.Pool, r *Report) error {
 		         WHEN rv.id IS NULL THEN 'names a missing revision or one of another course'
 		         WHEN rv.status <> 'approved' THEN 'names a revision with status ' || rv.status
 		         WHEN rv.withdrawn_at IS NOT NULL THEN 'names a withdrawn revision'
+		         -- Unreachable while the CHECK courses_archived_unpublished
+		         -- (0015) holds; kept in case that constraint is ever dropped.
 		         ELSE 'is set on an archived course'
 		       END
 		  FROM courses c
