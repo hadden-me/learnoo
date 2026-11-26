@@ -176,3 +176,31 @@ func TestMakeCurrentRefusesRetiredSelections(t *testing.T) {
 		t.Fatalf("%d current editions", n)
 	}
 }
+
+// A draft whose chapter is retired after it was chosen can still be saved
+// without changing the chapter, but cannot be submitted with it: a retired
+// chapter never reaches review unless it is kept from the base revision.
+func TestDraftWithChapterRetiredLaterCannotBeSubmitted(t *testing.T) {
+	e := newEnv(t)
+	ls := lessons.NewStore(e.db)
+	ch := e.chapter(e.math, "ch-later")
+	draft, err := ls.CreateLesson(e.ctx, e.authorID, lessons.NewLesson{SubjectID: e.math, Language: "fr",
+		Fields: lessons.Fields{Content: lessonDoc("TEST brouillon"), ChapterID: &ch}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.RetireChapter(e.ctx, e.admin, ch); err != nil {
+		t.Fatal(err)
+	}
+	if draft, err = ls.SaveDraft(e.ctx, e.authorID, draft.ID, draft.Version, lessons.Fields{Content: lessonDoc("TEST brouillon 2"), ChapterID: &ch}); err != nil {
+		t.Fatalf("save leaving the retired chapter unchanged: %v", err)
+	}
+	_, err = ls.Submit(e.ctx, e.authorID, draft.ID, draft.Version)
+	wantErr(t, "submission with a chapter retired after it was chosen", err, lessons.ErrRetiredChapter)
+	if draft, err = ls.SaveDraft(e.ctx, e.authorID, draft.ID, draft.Version, lessons.Fields{Content: lessonDoc("TEST brouillon 3")}); err != nil {
+		t.Fatalf("save clearing the chapter: %v", err)
+	}
+	if _, err := ls.Submit(e.ctx, e.authorID, draft.ID, draft.Version); err != nil {
+		t.Fatalf("submission without a chapter: %v", err)
+	}
+}

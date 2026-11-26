@@ -75,7 +75,7 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
 | 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
 | 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
-| 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft (created or saved) that sets a retired chapter other than the chapter of its published base revision |
+| 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft created, saved with a chapter change, or submitted with a retired chapter other than the chapter of its published base revision |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |

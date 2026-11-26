@@ -728,16 +728,26 @@ CREATE TRIGGER zz_guard_lessons_subject_not_retired
     BEFORE INSERT ON lessons
     FOR EACH ROW EXECUTE FUNCTION lessons_guard_subject_not_retired();
 
--- A draft (created or saved) cannot set a retired chapter unless it is the
--- chapter of the draft's base revision. Status changes (submission, review)
--- are not saves and are not checked.
+-- A draft cannot be created with, saved with a change to, or submitted with
+-- a retired chapter unless it is the chapter of the draft's base revision.
+-- A save that leaves the chapter unchanged is not checked (the author can
+-- still edit the text); submission is checked, so a retired chapter never
+-- reaches review. Later status changes (review, approval) are not checked.
 CREATE FUNCTION lesson_revisions_guard_chapter_not_retired() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
     chapter_retired timestamptz;
     base_chapter bigint;
 BEGIN
-    IF NEW.chapter_id IS NULL OR NEW.status <> 'draft' OR (TG_OP = 'UPDATE' AND OLD.status <> 'draft') THEN
+    IF NEW.chapter_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status <> 'draft' THEN
+            RETURN NEW;
+        END IF;
+    ELSIF OLD.status <> 'draft'
+       OR (NEW.status = 'draft' AND NEW.chapter_id IS NOT DISTINCT FROM OLD.chapter_id) THEN
         RETURN NEW;
     END IF;
     EXECUTE format('SELECT retired_at FROM %I.chapters WHERE id = $1 FOR SHARE', TG_TABLE_SCHEMA)
