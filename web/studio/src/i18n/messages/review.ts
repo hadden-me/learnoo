@@ -360,7 +360,7 @@ export const ar: ArTable<typeof fr> = {
   'review.fact.subject': 'المادة',
   'review.fact.language': 'اللغة',
   'review.fact.revision': 'النسخة',
-  'review.fact.version': 'النسخة',
+  'review.fact.version': 'رقم الحفظ',
   'review.fact.prerequisites': 'المكتسبات القبلية',
   'review.fact.effect': 'الأثر',
   'review.fact.lesson': 'الدرس',
@@ -410,7 +410,7 @@ export const ar: ArTable<typeof fr> = {
   'review.queue.decision.all': 'الكلّ',
   'review.queue.decision.mine': 'يمكنني اتخاذ القرار',
   'review.queue.decision.other': 'على مراجِع آخر اتخاذ القرار',
-  'review.queue.decision.blocked': 'محظورة: لا يوجد مراجِع مؤهَّل',
+  'review.queue.decision.blocked': 'معلّقة: لا يوجد مراجِع مؤهَّل',
   'review.queue.noMatch': 'لا يوجد عنصر يطابق هذه المرشّحات.',
   'review.queue.results': {
     zero: 'لا توجد عناصر.',
