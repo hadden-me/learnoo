@@ -327,7 +327,7 @@ test('unauthorized accounts see no editorial controls, and the server refuses th
 
   // An author (no reviewer assignment) has no review space.
   const a = await signedIn(browser, baseURL, author);
-  await expect(nav(a.page).getByRole('link')).toHaveText(['Mes leçons']);
+  await expect(nav(a.page).getByRole('link')).toHaveText(['Mes leçons', 'Mes cours']);
   const lessonId = await writeAndSubmit(a.page, { title: 'TEST Hors de portée', text: 'Texte relu par personne ici.' });
   const inReview = await latestRevision(a.page, lessonId);
   await a.page.goto('/studio/review');
@@ -352,7 +352,7 @@ test('unauthorized accounts see no editorial controls, and the server refuses th
 
   // An author who reviews the subject cannot review their own revision.
   const ar = await signedIn(browser, baseURL, authorReviewer);
-  await expect(nav(ar.page).getByRole('link')).toHaveText(['Mes leçons', 'Relecture', 'Signalements']);
+  await expect(nav(ar.page).getByRole('link')).toHaveText(['Mes leçons', 'Mes cours', 'Relecture', 'Signalements']);
   const ownLesson = await writeAndSubmit(ar.page, { title: 'TEST Ma propre leçon', text: 'Texte de l’autrice relectrice.' });
   const own = await latestRevision(ar.page, ownLesson);
   await nav(ar.page).getByRole('link', { name: 'Relecture' }).click();
