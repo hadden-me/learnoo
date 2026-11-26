@@ -28,7 +28,7 @@
 --     pointer changes only with a course_publication_audit row of this
 --     transaction (new guard).
 --   * course_revisions_guard_insert is replaced: compare_revision_id is the
---     comparison revision of contract §5 (the pointer, else the revision of
+--     comparison revision of contract §5 (the pointer, else the non-withdrawn revision of
 --     the last publish or restore row, else NULL), and an amendment may be
 --     inserted when it has one.
 --   * course_children_guard is replaced: its eligibility check for another
@@ -54,7 +54,8 @@
 -- ---- shared definitions ----
 
 -- Comparison revision (contract §5): the course's published pointer, or if
--- it is NULL the revision of the last publish or restore row, or NULL.
+-- it is NULL the revision of the last publish or restore row that is not
+-- withdrawn, or NULL.
 CREATE TABLE course_publication_audit (
     id                   bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     course_id            bigint      NOT NULL REFERENCES courses (id),
@@ -84,6 +85,9 @@ CREATE INDEX course_publication_audit_course_idx ON course_publication_audit (co
 CREATE INDEX course_publication_audit_revision_idx ON course_publication_audit (revision_id) WHERE action = 'publish';
 CREATE INDEX course_publication_audit_actor_idx ON course_publication_audit (actor_id);
 
+-- Withdrawn revisions are skipped: once the last published revision is
+-- withdrawn, the comparison is the previous published or restored revision
+-- that is not withdrawn (the pointer never names a withdrawn revision).
 CREATE FUNCTION course_comparison_revision(cid bigint) RETURNS bigint
 LANGUAGE sql STABLE PARALLEL SAFE
 SET search_path = pg_catalog, pg_temp
@@ -91,6 +95,7 @@ BEGIN ATOMIC
     SELECT coalesce(
         (SELECT c.published_revision_id FROM courses c WHERE c.id = course_comparison_revision.cid),
         (SELECT a.revision_id FROM course_publication_audit a
+           JOIN course_revisions r ON r.id = a.revision_id AND r.withdrawn_at IS NULL
           WHERE a.course_id = course_comparison_revision.cid AND a.action IN ('publish', 'restore')
           ORDER BY a.id DESC LIMIT 1));
 END;
@@ -256,8 +261,9 @@ BEGIN
     END IF;
     comparison := published;
     IF comparison IS NULL THEN
-        EXECUTE format('SELECT revision_id FROM %I.course_publication_audit
-                         WHERE course_id = $1 AND action IN (''publish'', ''restore'') ORDER BY id DESC LIMIT 1', TG_TABLE_SCHEMA)
+        EXECUTE format('SELECT a.revision_id FROM %1$I.course_publication_audit a
+                          JOIN %1$I.course_revisions r ON r.id = a.revision_id AND r.withdrawn_at IS NULL
+                         WHERE a.course_id = $1 AND a.action IN (''publish'', ''restore'') ORDER BY a.id DESC LIMIT 1', TG_TABLE_SCHEMA)
            INTO comparison USING NEW.course_id;
     END IF;
     IF NEW.compare_revision_id IS DISTINCT FROM comparison THEN
@@ -851,6 +857,16 @@ BEGIN
                 RAISE EXCEPTION 'course revision % was drafted against another published revision (stale base)', NEW.revision_id
                     USING ERRCODE = 'LRN01';
             END IF;
+            -- The comparison the review was made against must still be the
+            -- course's: a restore or withdrawal since the draft changed it
+            -- (reviewer rule 3 and the amendment kind depend on it).
+            EXECUTE format('SELECT r.compare_revision_id IS NOT DISTINCT FROM %1$I.course_comparison_revision(r.course_id)
+                              FROM %1$I.course_revisions r WHERE r.id = $1', TG_TABLE_SCHEMA)
+               INTO flag USING NEW.revision_id;
+            IF flag IS NOT TRUE THEN
+                RAISE EXCEPTION 'course revision % was compared with another revision than the course''s comparison revision (stale base)', NEW.revision_id
+                    USING ERRCODE = 'LRN01';
+            END IF;
             EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.course_review_decisions WHERE revision_id = $1 AND action = ''approve'')',
                            TG_TABLE_SCHEMA) INTO flag USING NEW.revision_id;
             IF NOT flag THEN
@@ -1097,14 +1113,20 @@ DECLARE
     owner    bigint;
     archived boolean;
     present  boolean;
+    active   boolean;
 BEGIN
     EXECUTE format('SELECT owner_id, archived_at IS NOT NULL FROM %I.courses WHERE id = $1', TG_TABLE_SCHEMA)
        INTO owner, archived USING NEW.course_id;
+    -- A transfer leaves no open candidate behind at commit either.
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.course_revisions
+                     WHERE course_id = $1 AND withdrawn_at IS NULL
+                       AND (status IN (''draft'', ''in_review'') OR (status = ''approved'' AND candidate_closed_at IS NULL)))',
+                   TG_TABLE_SCHEMA) INTO active USING NEW.course_id;
     EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.course_revisions WHERE id = $1)', TG_TABLE_SCHEMA)
        INTO present USING NEW.revision_id;
     IF (NEW.action = 'archive' AND archived IS NOT TRUE)
        OR (NEW.action = 'unarchive' AND archived IS NOT FALSE)
-       OR (NEW.action = 'transfer' AND owner IS DISTINCT FROM NEW.to_owner_id)
+       OR (NEW.action = 'transfer' AND (owner IS DISTINCT FROM NEW.to_owner_id OR active))
        OR (NEW.action = 'discard_draft' AND present) THEN
         RAISE EXCEPTION 'course lifecycle audit row % (%) was not applied to course %', NEW.id, NEW.action, NEW.course_id
             USING ERRCODE = 'LRN01';

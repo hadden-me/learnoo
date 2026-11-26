@@ -338,6 +338,10 @@ type stepChangeJSON struct {
 	Change                 string           `json:"change"`
 	PreviousRevisionID     *int64           `json:"previousRevisionId"`
 	PreviousRevisionNumber *int             `json:"previousRevisionNumber"`
+	PreviousModuleKey      *string          `json:"previousModuleKey"`
+	PreviousPosition       *int             `json:"previousPosition"`
+	PreviousTitle          *string          `json:"previousTitle"`
+	StructureChanged       bool             `json:"structureChanged"`
 	Diff                   *contentDiffJSON `json:"diff"`
 }
 
@@ -355,7 +359,9 @@ func (h *Handlers) reviewCourseRevision(w http.ResponseWriter, r *http.Request) 
 	for i, s := range p.Steps {
 		steps[i] = stepChangeJSON{ModuleKey: s.ModuleKey, Position: s.Position, Title: s.Title, LessonID: s.LessonID,
 			RevisionID: s.RevisionID, RevisionNumber: s.RevisionNumber, Change: s.Change,
-			PreviousRevisionID: s.PreviousRevisionID, PreviousRevisionNumber: s.PreviousRevisionNumber}
+			PreviousRevisionID: s.PreviousRevisionID, PreviousRevisionNumber: s.PreviousRevisionNumber,
+			PreviousModuleKey: s.PreviousModuleKey, PreviousPosition: s.PreviousPosition, PreviousTitle: s.PreviousTitle,
+			StructureChanged: s.StructureChanged}
 		if d := s.Diff; d != nil {
 			dj := &contentDiffJSON{Fields: []fieldChangeJSON{}, Blocks: []blockChangeJSON{}}
 			for _, f := range d.Fields {
@@ -448,15 +454,31 @@ func (h *Handlers) courseReviewQueue(w http.ResponseWriter, r *http.Request, sub
 }
 
 func (h *Handlers) blockedReviews(w http.ResponseWriter, r *http.Request) {
-	if !noQuery(w, r) {
-		return
+	q := r.URL.Query()
+	var after int64
+	for key, vals := range q {
+		if key != "cursor" || len(vals) != 1 {
+			badRequest(w, "The only query parameter is an optional cursor (the nextCursor of a previous page).")
+			return
+		}
+		c, ok := parseID(vals[0])
+		if !ok {
+			badRequest(w, "cursor must be the nextCursor of a previous page.")
+			return
+		}
+		after = c
 	}
-	items, err := h.Courses.BlockedReviews(r.Context(), actor(r))
+	items, next, err := h.Courses.BlockedReviews(r.Context(), actor(r), after)
 	if err != nil {
 		h.writeCourseError(w, "blocked reviews", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revisions": toReviewItemsJSON(items)})
+	var cursor *string
+	if next != nil {
+		c := strconv.FormatInt(*next, 10)
+		cursor = &c
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revisions": toReviewItemsJSON(items), "nextCursor": cursor})
 }
 
 // ---- publication ----

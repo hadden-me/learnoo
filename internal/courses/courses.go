@@ -676,8 +676,9 @@ func (s *Store) DeleteCourse(ctx context.Context, actor, courseID int64) error {
 // CreateDraft starts a new draft of actor's course. It copies the course's
 // latest revision (overview, cover if actor uploaded it, placements, modules
 // and the steps still attachable, the others listed in DroppedSteps) or,
-// without one, starts empty. Its base and comparison are the
-// published pointer. While the course has an active candidate it returns
+// without one, starts empty. Its base is the published pointer and its
+// comparison course_comparison_revision (the pointer, or while suspended or
+// archived the last published or restored revision not withdrawn). While the course has an active candidate it returns
 // ErrActiveCandidateExists. The copy is not validated: a step or placement
 // that is no longer allowed is reported by the next save.
 func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revision, error) {
@@ -736,7 +737,7 @@ func (s *Store) CreateDraft(ctx context.Context, actor, courseID int64) (Revisio
 			INSERT INTO course_revisions (course_id, subject_id, language, revision_number, author_id,
 				base_revision_id, compare_revision_id, title, summary, objectives, prerequisites,
 				cover_media_id, cover_alt, created_at, updated_at)
-			SELECT $1, $2, $3, $4, $5, $6, $6,
+			SELECT $1, $2, $3, $4, $5, $6, course_comparison_revision($1),
 			       coalesce(src.title, ''), coalesce(src.summary, ''), coalesce(src.objectives, ''), coalesce(src.prerequisites, ''),
 			       CASE WHEN up.user_id IS NOT NULL THEN src.cover_media_id END,
 			       CASE WHEN up.user_id IS NOT NULL THEN src.cover_alt END,
