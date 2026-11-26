@@ -30,8 +30,9 @@ import (
 //go:embed templates/*.html static/*
 var files embed.FS
 
-// CacheControl is sent on every reader response: pages depend on the
-// session and must never be stored by a shared cache (or by the browser).
+// CacheControl is sent on every reader response but fingerprinted assets
+// (AssetCacheControl): pages depend on the session and must never be stored
+// by a shared cache (or by the browser).
 const CacheControl = "private, no-store"
 
 // Content security policies. Forms (sign-in, invitation, navigation) load
