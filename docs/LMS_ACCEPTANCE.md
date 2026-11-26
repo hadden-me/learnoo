@@ -11,7 +11,7 @@ The branch starts from B09 (`feat/lms-b09-i18n-a11y`), which sits on the integra
 | Formatting, vet | `gofmt -l .`, `go vet ./...` | clean |
 | Go tests | `go test -count=1 -p 4 ./...` | 24 packages passed |
 | Race detector | `go test -race -count=1 -p 4 ./internal/courses ./internal/reader ./internal/reports ./internal/server` | passed (no race reported) |
-| Studio | `npm run typecheck`, `npm test`, `npm run build` in `web/studio` | typecheck clean; 282 tests in 16 files passed; build passed |
+| Studio | `npm run typecheck`, `npm test`, `npm run build` in `web/studio` | typecheck clean; 282 tests in 16 files passed at c4d0e53, 284 at 01b0794 (after B09's copy fix); build passed |
 | Browser suite, including this acceptance | `npm ci --ignore-scripts`, `npm run assets`, `npm run test:reader` | 49 tests passed (45 earlier tests, including `course-admin.spec.mjs`, the 2 acceptance journeys and the 2 regression tests of `acceptance-regressions.spec.mjs`), in 1.1 min, after rebuilding the Studio; run three times in a row, all passed |
 | Upgrade from the develop schema | `TestUpgradeFrom0012KeepsLessonsBookmarksAndHistory` (default and C locale), and a binary-to-binary rehearsal (below) | passed |
 | Backup, restore into isolation, verify-restore with courses | `TestBackupRestoreRehearsal` (real `deploy/backup.sh` and `deploy/restore.sh`, runtime role) | passed |
@@ -34,10 +34,10 @@ Each slice's pull request carries the full list of findings. "Reviewed head" is 
 | B07 | #115 | 6cab30e; `6cab30e..dbaab55` | 4 of 5; the sign-in dependency is resolved by merging after #117 | 85d0637, 0b5874d and 2ef035e, audited ok |
 | B08 | #117 | first round; 37aa758 | 4, plus nits | none |
 | B10 | #114 | 4bc6140; `4bc6140..d2766a2` | 6 | a7494b9, 98bdfce, de1a364 and f53f610, audited ok; CI green on f53f610 |
-| B09 | #118 | cc09d1f; `cc09d1f..31da8ef` | 8, plus Arabic wording | 701116e (merge), audited: it adds one fr/ar message, which joins the native-speaker list |
-| B12 | #119 | 688bab8; `688bab8..c4d0e53` | 7, plus a nit | d30edf4 audited (should-fix: the revoke could mask failures), fixed in 99aa671; 086023c to 5c0bdc7 under review |
+| B09 | #118 | cc09d1f; `cc09d1f..31da8ef` | 8, plus Arabic wording | 701116e (merge), audited: it adds one fr/ar message, which joins the native-speaker list; 856168b ("nothing was saved" instead of "nothing was sent" after an account switch), reviewed |
+| B12 | #119 | 688bab8; `688bab8..c4d0e53` | 7, plus a nit | d30edf4 audited (should-fix: the revoke could mask failures), fixed in 99aa671 and f0d9d5d; regression tests 086023c to 5c0bdc7 reviewed (no blockers, three should-fix items), fixed in acf711d, f0d9d5d and 01b0794 and re-reviewed |
 
-The browser runs above were made at c4d0e53 (47 tests) and again at 5c0bdc7 (49 tests, three runs). The Go, Studio, upgrade, backup and Docker results are from c4d0e53; later commits change only browser specs and this document.
+The browser suite ran at c4d0e53 (47 tests), at 5c0bdc7 (49 tests, three runs) and at 01b0794 (49 tests, two runs). The Go, race, upgrade, backup and Docker results are from c4d0e53. Between c4d0e53 and 01b0794 no Go, migration or deployment file changed: only browser specs, these documents and one Studio message (`shell.error.account_changed`), for which the Studio checks were rerun.
 
 ## Status per acceptance journey
 
