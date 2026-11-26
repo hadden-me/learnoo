@@ -2,7 +2,7 @@
 
 Contract home for Studio ↔ server and reader ↔ server endpoints ([CAHIER_DES_CHARGES.md §5.4](CAHIER_DES_CHARGES.md#54-shared-contracts-agree-first-then-build-in-parallel)). Changes used by another open task are agreed on its issue first.
 
-Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports and the Studio integration (issue #65).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
+Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the LRN-006 Studio API, LRN-007 review and publication, LRN-009 withdrawal, unpublication and restoration, the LRN-008 reader, LRN-015 error reports, the Studio integration (issue #65) and the [curriculum](#curriculum-lms-b02) hierarchy and administration (LMS-B02).** Authentication endpoints, the server-side permission check every protected endpoint uses, the [Studio endpoints](#studio-lesson-drafts-and-media-lrn-006) for lesson drafts and media, the [review and publication endpoints](#review-and-publication-lrn-007), [withdrawal, unpublication and restoration](#withdrawal-unpublication-and-restoration-lrn-009), the server-rendered [student reader](#student-reader-lrn-008) (HTML pages, not JSON), [error reports](#error-reports-lrn-015) filed from the reader and handled through the review API, and the [Studio integration](#studio-integration-issue-65): catalogue, owned lessons, canonical preview and the served Studio bundle.
 
 ## Conventions
 
@@ -50,6 +50,12 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 409 | `already_current` | Restoration of the revision that is already published |
 | 409 | `not_open` | Resolution or dismissal of an error report that was already resolved or dismissed (for example by a concurrent reviewer). Nothing was written |
 | 409 | `ineligible` | Restoration of a revision whose content no longer passes the current schema v1 validator, or whose media references do not resolve |
+| 409 | `edition_not_draft` | A curriculum edition left draft: its assignments and chapter lists are immutable and it cannot be made current again. Nothing was written |
+| 409 | `state_conflict` | A curriculum edition state change that is not allowed now: retiring a draft, or making an edition current when the section's current edition is not `expectedCurrentEditionId` (for example after a concurrent make-current). Nothing was written |
+| 409 | `code_exists` | A level, section or edition code is already used in its scope (codes are never reused) |
+| 409 | `already_retired` | Retirement of a curriculum entry, subject or chapter that is already retired |
+| 409 | `parent_retired` | A section under a retired level, or an edition created or made current under a retired section or level |
+| 409 | `assignment_exists` | The edition already assigns the subject |
 | 413 | `too_large` | JSON body over 256 KiB, or image over 5 MiB |
 | 415 | `unsupported_media_type` | Request body is not `application/json`; upload is not a PNG, JPEG or WebP image (SVG, GIF and everything else are refused) |
 | 415 | `type_mismatch` | Uploaded bytes do not match the declared image `Content-Type` |
@@ -67,6 +73,8 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `comment_required` | A change request without a comment (missing, null or only whitespace) |
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
+| 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
+| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, or a chapter listed twice |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |
@@ -637,6 +645,56 @@ Read-only endpoints the Studio's publisher and administrator views need ([DECISI
 `GET /api/admin/lessons`: lessons with at least one approved revision (those withdrawal, unpublication and restoration act on), most recent approval or pointer change first, at most 200: `{"lessons": [{"lessonId", "publicId", "subjectCode", "language", "archived", "publishedRevisionId", "title", "pendingRevisionId", "lastChange"}]}`. `title` is the published revision's, else the latest approved one's; `pendingRevisionId` is the approved candidate awaiting publication, or `null`.
 
 Display names of authors, reviewers and administrators are returned to staff only (reviewers through `authorName` in the review queue, publishers and administrators here); readers already see author and approving-reviewer credits.
+
+## Curriculum (LMS-B02)
+
+Levels, academic sections, curriculum editions and their subject assignments with ordered official chapters ([LMS_CONTRACT.md §3](LMS_CONTRACT.md#3-curriculum-b02-migration-0013), data model in [DECISIONS.md](DECISIONS.md#curriculum-lms-b02)). Every endpoint needs a session (`401 unauthenticated`), runs the permission check before any lookup and answers `Cache-Control: private, no-store`. Unsafe methods need the CSRF token and a same-origin request. Request bodies follow the [strict JSON rules](#conventions); every field below is required unless marked optional, and `null` is refused except for `expectedCurrentEditionId`.
+
+| Endpoint | Who may call it |
+| --- | --- |
+| `GET /api/catalogue/levels`, `GET /api/catalogue/sections/{sectionId}/editions`, `GET /api/catalogue/editions/{editionId}` | Signed-in staff: `author`, `publisher`, `administrator`, or a reviewer of any subject. Students: `403 forbidden` |
+| `POST`/`PUT`/`DELETE /api/admin/curriculum/…` | `administrator`, checked by the middleware (`403 forbidden` before any lookup) and again inside the write's transaction, which also writes its `curriculum_audit` row |
+
+Codes: 1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen; unique per scope (level codes globally, section codes per level, edition codes per section) and never reused or changed. Names and labels (`nameFr`, `nameAr`, `labelFr`, `labelAr`): 1 to 200 characters, no surrounding white space, no control, invisible-format or line/paragraph separator characters; Arabic text is allowed. `displayOrder`: 0 to 9999 (optional on creation, default 0). Lists sort by `displayOrder`, then code in byte order, whatever the database locale. Levels, sections and editions carry a `version`; every write names it as `expectedVersion` (`409 version_conflict` otherwise, nothing written) and increments it. Assignment and chapter-list edits increment the edition's version.
+
+### Objects
+
+Level: `{"id", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version", "createdAt", "sections": [section…]}`. Section: `{"id", "levelId", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version", "createdAt"}`. Edition:
+
+```json
+{"id": 7, "sectionId": 3, "code": "test-2026", "labelFr": "TEST 2026", "labelAr": "اختبار", "state": "current",
+ "currentSince": "2026-11-26T10:00:00Z", "supersededAt": null, "retiredAt": null, "version": 4, "createdAt": "2026-11-26T09:00:00Z",
+ "assignments": [{"id": 11, "subjectId": 1, "subjectCode": "test-math", "selectable": true,
+                  "chapters": [{"chapterId": 4, "code": "ch-02", "position": 1, "retired": false}]}]}
+```
+
+`state` is `draft`, `current`, `superseded` or `retired`. `selectable` is `curriculum_assignment_selectable`: the edition is current and neither its section, its level nor the subject is retired (what course placement will be allowed to newly select). `position` orders the edition's chapters independently of the catalogue display order. Lists are always arrays.
+
+### Reads
+
+- `GET /api/catalogue/levels`: `{"levels": [level…]}`, retired entries included (`retiredAt` set).
+- `GET /api/catalogue/sections/{sectionId}/editions`: `{"section": section, "editions": [edition without "assignments"…]}`, newest first. `404` for an unknown section.
+- `GET /api/catalogue/editions/{editionId}`: the edition with its assignments and chapter lists. `404` for an unknown edition.
+
+### Administration (`/api/admin/curriculum`)
+
+| Request | Body | Success |
+| --- | --- | --- |
+| `POST /levels` | `code`, `nameFr`, `nameAr`, `displayOrder` (optional) | `201` level |
+| `PUT /levels/{levelId}` | `expectedVersion`, `nameFr`, `nameAr`, `displayOrder` | `200` level (`sections` empty); an unchanged request writes nothing |
+| `POST /levels/{levelId}/retire` | `expectedVersion` | `200` level |
+| `POST /levels/{levelId}/sections` | as for a level | `201` section; `409 parent_retired` under a retired level |
+| `PUT /sections/{sectionId}`, `POST /sections/{sectionId}/retire` | as for a level | `200` section |
+| `POST /sections/{sectionId}/editions` | `code`, `labelFr`, `labelAr` | `201` draft edition; `409 parent_retired` |
+| `PUT /editions/{editionId}` | `expectedVersion`, `labelFr`, `labelAr` | `200` edition (labels are display metadata, changeable in any state) |
+| `POST /editions/{editionId}/assignments` | `expectedVersion`, `subjectId` | `201` edition; `409 edition_not_draft`, `409 assignment_exists`, `422 unknown_subject`, `422 placement_invalid` (retired subject) |
+| `DELETE /editions/{editionId}/assignments/{assignmentId}?expectedVersion=N` | none | `200` edition (the chapter list goes with it); `409 edition_not_draft` |
+| `PUT /editions/{editionId}/assignments/{assignmentId}/chapters` | `expectedVersion`, `chapterIds` (ordered, at most 500, may be empty) | `200` edition; replaces the list; `409 edition_not_draft`, `422 placement_invalid` |
+| `POST /editions/{editionId}/make-current` | `expectedVersion`, `expectedCurrentEditionId` (the section's current edition ID, or `null` if it has none) | `200` `{"edition": edition, "supersededEditionId": id or null}`; the previous current edition becomes `superseded` in the same transaction. `409 edition_not_draft`, `409 state_conflict` (the current edition is not the expected one; of two racing requests one wins), `409 parent_retired` |
+| `POST /editions/{editionId}/retire` | `expectedVersion` | `200` edition; only `current` or `superseded` editions (`409 state_conflict` for a draft, `409 already_retired`). Retiring the current edition leaves the section without one |
+| `POST /subjects/{subjectId}/retire`, `POST /chapters/{chapterId}/retire` | `{}` | `204`; `409 already_retired`. The entry stays readable and keeps every reference; it can no longer be newly assigned or listed |
+
+Retirement is never undone. Nothing deletes a level, section, edition, subject or chapter. A `409 retry` may answer any write that collided with a concurrent one.
 
 ## Not yet defined
 
