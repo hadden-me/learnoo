@@ -78,7 +78,11 @@ SELECT lesson_id, id, author_id, submitted_at, pg_current_xact_id(), true
 
 -- Lock order: the lesson (FOR SHARE, so it cannot be archived meanwhile),
 -- then the revision FOR UPDATE, because the same transaction then updates
--- its status (as Submit already does, and as the decision guard of 0006).
+-- its status (as Submit already does, and as the decision guard of 0006):
+-- a share lock would have to be upgraded and two concurrent submitters
+-- would deadlock. The lock also makes a concurrent direct-SQL submitter of
+-- the same draft wait, then re-read the revision and get "is not a draft"
+-- (LRN01); the unique revision_id would otherwise only refuse it with 23505.
 CREATE FUNCTION submission_audit_guard_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -154,8 +158,12 @@ CREATE CONSTRAINT TRIGGER zz_guard_submission_audit_applied
 -- A revision leaves draft only with a submission audit row of this
 -- transaction, at the transaction time. The audit row can exist only while
 -- the revision is a draft and must be applied by its own transaction
--- (deferred check above); matching xact_id rules out a row of an earlier
--- transaction in any case.
+-- (deferred check above), so a committed row of an earlier transaction
+-- always names a revision that already left draft: the commit-time check is
+-- what rules such a row out, and no test can reach this guard with one. The
+-- xact_id match is a backup to it, kept so that this guard alone (should the
+-- deferred check ever be dropped or weakened) still refuses a status change
+-- based on another transaction's row, as the pointer guards of 0006/0007 do.
 CREATE FUNCTION lesson_revisions_guard_submission() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE

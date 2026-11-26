@@ -508,3 +508,66 @@ func TestUpgradeBackfillsSubmissionAudit(t *testing.T) {
 	// The upgraded workflow continues: the in-review revision can be decided.
 	f.mustApprove(inReview.ID)
 }
+
+// Two direct-SQL submitters of the same draft (audit row, then status, as
+// dbtest.SubmitTx does): the second waits on the first's revision lock taken
+// by the insert guard, then sees the revision in review and is refused by the
+// guard ("is not a draft"), not merely by the unique revision_id.
+func TestConcurrentDirectSubmissionsWriteOneAudit(t *testing.T) {
+	f := newFixture(t)
+	rev := f.lesson("Raced direct submission")
+	first, err := f.db.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Rollback(f.ctx) }()
+	if err := dbtest.SubmitTx(f.ctx, first, rev.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- pgx.BeginFunc(context.Background(), f.db, func(tx pgx.Tx) error {
+			return dbtest.SubmitTx(context.Background(), tx, rev.ID)
+		})
+	}()
+	f.waitBlockedBy(first.Conn().PgConn().PID())
+	if err := first.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantGuard(t, "second direct submission", <-done, "is not a draft")
+	if n := f.submissionRows(rev.ID); n != 1 {
+		t.Fatalf("%d submission rows, want 1", n)
+	}
+}
+
+// Every timestamp the store writes is the transaction time of its write, so
+// the times written together agree with each other and with the audit row.
+func TestStoreWritesTransactionTimes(t *testing.T) {
+	f := newFixture(t)
+	rev := f.lesson("Transaction times")
+	same := func(what, sql string, args ...any) {
+		t.Helper()
+		var ok bool
+		if err := f.db.QueryRow(f.ctx, sql, args...).Scan(&ok); err != nil || !ok {
+			t.Fatalf("%s: %v %v", what, ok, err)
+		}
+	}
+	same("creation", `SELECT l.created_at = r.created_at AND r.created_at = r.updated_at
+		FROM lessons l JOIN lesson_revisions r ON r.lesson_id = l.id WHERE r.id = $1`, rev.ID)
+	saved, err := f.store.SaveDraft(f.ctx, f.author, rev.ID, rev.Version, lessons.Fields{Content: doc("Transaction times, saved", "fr")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.UpdatedAt.After(saved.CreatedAt) {
+		t.Fatalf("save: updated_at %v not after created_at %v", saved.UpdatedAt, saved.CreatedAt)
+	}
+	sub, err := f.store.Submit(f.ctx, f.author, saved.ID, saved.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub.SubmittedAt == nil || !sub.UpdatedAt.Equal(*sub.SubmittedAt) || !sub.SubmittedAt.After(saved.UpdatedAt) {
+		t.Fatalf("submission times: %+v after save at %v", sub, saved.UpdatedAt)
+	}
+	same("submission audit", `SELECT a.submitted_at = r.submitted_at
+		FROM submission_audit a JOIN lesson_revisions r ON r.id = a.revision_id WHERE r.id = $1`, rev.ID)
+}
