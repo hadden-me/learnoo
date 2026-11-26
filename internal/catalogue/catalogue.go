@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -52,6 +53,9 @@ var (
 	ErrChapterNotFound = errors.New("chapter not found")
 	// ErrInvalidCode means a code does not match ValidCode.
 	ErrInvalidCode = errors.New("invalid code: use 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit")
+	// ErrSubjectRetired means the subject is retired: no chapter can be
+	// added to it (migrations/0013).
+	ErrSubjectRetired = errors.New("subject is retired; no chapter can be added to it")
 	// ErrNotFound means the subject does not exist.
 	ErrNotFound = errors.New("subject not found")
 	// ErrOperatorOnly means a non-operator actor tried to change the catalogue.
@@ -115,6 +119,9 @@ type Subject struct {
 	Code      string
 	Names     Names
 	SortOrder int
+	// RetiredAt is set once the subject is retired (migrations/0013): it
+	// keeps resolving but cannot be newly selected.
+	RetiredAt *time.Time
 }
 
 // Chapter is a chapter inside a subject.
@@ -123,19 +130,21 @@ type Chapter struct {
 	Code      string
 	Names     Names
 	SortOrder int
+	// RetiredAt is set once the chapter is retired (migrations/0013).
+	RetiredAt *time.Time
 }
 
-const entryColumns = `id, code, name_fr, name_ar, sort_order`
+const entryColumns = `id, code, name_fr, name_ar, sort_order, retired_at`
 
 func scanSubject(r pgx.Row) (Subject, error) {
 	var sj Subject
-	err := r.Scan(&sj.ID, &sj.Code, &sj.Names.Fr, &sj.Names.Ar, &sj.SortOrder)
+	err := r.Scan(&sj.ID, &sj.Code, &sj.Names.Fr, &sj.Names.Ar, &sj.SortOrder, &sj.RetiredAt)
 	return sj, err
 }
 
 func scanChapter(r pgx.Row) (Chapter, error) {
 	var c Chapter
-	err := r.Scan(&c.ID, &c.Code, &c.Names.Fr, &c.Names.Ar, &c.SortOrder)
+	err := r.Scan(&c.ID, &c.Code, &c.Names.Fr, &c.Names.Ar, &c.SortOrder, &c.RetiredAt)
 	return c, err
 }
 
@@ -250,6 +259,14 @@ func (s *Store) AddChapter(ctx context.Context, actor permissions.Actor, subject
 		}
 		if err != nil {
 			return fmt.Errorf("load subject: %w", err)
+		}
+		if sj.RetiredAt != nil {
+			ch, err = scanChapter(tx.QueryRow(ctx, `SELECT `+entryColumns+` FROM chapters WHERE subject_id = $1 AND code = $2`,
+				sj.ID, code))
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrSubjectRetired
+			}
+			return err
 		}
 		ch, err = scanChapter(tx.QueryRow(ctx, `
 			INSERT INTO chapters (subject_id, code) VALUES ($1, $2)

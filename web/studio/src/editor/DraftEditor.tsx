@@ -677,7 +677,7 @@ export function DraftEditor(props: DraftEditorProps) {
             <label htmlFor={ids.chapter}>Chapitre</label>
             <select id={ids.chapter} value={chapterId ?? ''} onChange={(e) => setChapterId(e.target.value ? Number(e.target.value) : null)}>
               <option value="">Sans chapitre</option>
-              {chapters.map((c) => {
+              {chapters.filter((c) => !c.retiredAt || c.id === chapterId).map((c) => {
                 const label = entryLabel(c, language);
                 return (
                   <option key={c.id} value={c.id} {...labelAttrs(label)}>

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hadden-me/learnoo/internal/auth"
 	"github.com/hadden-me/learnoo/internal/catalogue"
+	"github.com/hadden-me/learnoo/internal/curriculum"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/lessons"
 	"github.com/hadden-me/learnoo/internal/media"
@@ -47,15 +48,16 @@ func New(db *pgxpool.Pool, svc *auth.Service, mediaStore *media.Store, log *slog
 	authH := auth.NewHandlers(svc, log)
 	authH.Register(mux)
 	studioapi.New(studioapi.Config{
-		DB:        db,
-		Auth:      authH,
-		Perms:     permissions.NewMiddleware(permissions.NewStore(db), log),
-		Lessons:   lessons.NewStore(db),
-		Media:     mediaStore,
-		Review:    review.NewStore(db),
-		Reports:   reports.NewStore(db),
-		Catalogue: catalogue.NewStore(db),
-		Log:       log,
+		DB:         db,
+		Auth:       authH,
+		Perms:      permissions.NewMiddleware(permissions.NewStore(db), log),
+		Lessons:    lessons.NewStore(db),
+		Media:      mediaStore,
+		Review:     review.NewStore(db),
+		Reports:    reports.NewStore(db),
+		Catalogue:  catalogue.NewStore(db),
+		Curriculum: curriculum.NewStore(db),
+		Log:        log,
 	}).Register(mux)
 	readerH := reader.New(reader.Config{
 		Auth:        authH,

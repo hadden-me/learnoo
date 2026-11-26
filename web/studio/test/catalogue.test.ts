@@ -7,9 +7,9 @@ import { SubjectName, subjectLabel } from '../src/editorial/common';
 import { ownedLessonPlace } from '../src/labels';
 
 // Catalogue display names (LRN-014). TEST fixtures, not curriculum data.
-const named = { id: 1, code: 'test-math', nameFr: 'TEST Mathématiques', nameAr: 'TEST رياضيات', sortOrder: 0 };
-const arabicOnly = { id: 2, code: 'test-physique', nameFr: null, nameAr: 'TEST فيزياء', sortOrder: 1 };
-const unnamed = { id: 3, code: 'test-chimie', nameFr: null, nameAr: null, sortOrder: 2 };
+const named = { id: 1, code: 'test-math', nameFr: 'TEST Mathématiques', nameAr: 'TEST رياضيات', sortOrder: 0, retiredAt: null };
+const arabicOnly = { id: 2, code: 'test-physique', nameFr: null, nameAr: 'TEST فيزياء', sortOrder: 1, retiredAt: null };
+const unnamed = { id: 3, code: 'test-chimie', nameFr: null, nameAr: null, sortOrder: 2, retiredAt: null };
 
 describe('catalogue names', () => {
   it('prefers the lesson language, then the other language, then the code', () => {

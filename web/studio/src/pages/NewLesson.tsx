@@ -31,9 +31,10 @@ export function NewLesson() {
   useEffect(() => {
     Promise.all([api.subjects(), api.myLessons()]).then(
       ([s, mine]) => {
-        setSubjects(s);
+        const open = s.filter((x) => !x.retiredAt);
+        setSubjects(open);
         setOwned(mine);
-        if (s.length > 0) setSubjectId(s[0].id);
+        if (open.length > 0) setSubjectId(open[0].id);
       },
       (e) => setError(describeError(e)),
     );
@@ -46,7 +47,7 @@ export function NewLesson() {
     setTranslationOf(null);
     if (!subject) return;
     api.chapters(subject.code).then(
-      (r) => setChapters(r.chapters),
+      (r) => setChapters(r.chapters.filter((c) => !c.retiredAt)),
       (e) => setError(describeError(e)),
     );
   }, [api, subject]);

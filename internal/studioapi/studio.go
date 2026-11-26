@@ -59,14 +59,17 @@ type entryJSON struct {
 	NameFr    *string `json:"nameFr"`
 	NameAr    *string `json:"nameAr"`
 	SortOrder int     `json:"sortOrder"`
+	// RetiredAt is set for a retired entry (LMS-B02): it keeps resolving
+	// but cannot be newly selected.
+	RetiredAt *time.Time `json:"retiredAt"`
 }
 
 func subjectEntry(s catalogue.Subject) entryJSON {
-	return entryJSON{ID: s.ID, Code: s.Code, NameFr: s.Names.Fr, NameAr: s.Names.Ar, SortOrder: s.SortOrder}
+	return entryJSON{ID: s.ID, Code: s.Code, NameFr: s.Names.Fr, NameAr: s.Names.Ar, SortOrder: s.SortOrder, RetiredAt: s.RetiredAt}
 }
 
 func chapterEntry(c catalogue.Chapter) entryJSON {
-	return entryJSON{ID: c.ID, Code: c.Code, NameFr: c.Names.Fr, NameAr: c.Names.Ar, SortOrder: c.SortOrder}
+	return entryJSON{ID: c.ID, Code: c.Code, NameFr: c.Names.Fr, NameAr: c.Names.Ar, SortOrder: c.SortOrder, RetiredAt: c.RetiredAt}
 }
 
 func (h *Handlers) listSubjects(w http.ResponseWriter, r *http.Request) {
