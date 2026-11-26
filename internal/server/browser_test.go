@@ -73,6 +73,10 @@ func TestBrowserReaderServer(t *testing.T) {
 	svt := f.newSubject("test-svt")
 	f.setName(f.newUser("test-svt-a", svt, permissions.Author, permissions.Reviewer).id, "TEST Auteur SVT Anis")
 	f.setName(f.newUser("test-svt-b", svt, permissions.Author, permissions.Reviewer).id, "TEST Autrice SVT Bochra")
+	// The course lifecycle spec (tests/browser-reader/course-admin.spec.mjs):
+	// an owner whose course is archived, restored and transferred to an heir.
+	f.setName(f.newUser("test-lifecycle-owner", 0, permissions.Author).id, "TEST Propriétaire Hédi")
+	f.setName(f.newUser("test-lifecycle-heir", 0, permissions.Author).id, "TEST Héritière Ines")
 	ch := f.chapter(f.subject, "test-chapter")
 	// A second chapter with no lessons, retired by the course chapter
 	// retirement spec without affecting the specs that use test-chapter.

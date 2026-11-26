@@ -337,7 +337,13 @@ export function AdminCoursePage({ courseId }: { courseId: number }) {
       await reload();
     } catch (e) {
       setConfirming(false);
-      setError({ text: describeCourseWorkflowError(e), stale: isApiError(e, 'stale_pointer') });
+      setError({
+        text:
+          pending.kind === 'transfer' && isApiError(e, 'active_candidate_exists')
+            ? 'Transfert refusé : le cours a une version en cours (brouillon, en relecture ou approuvée non publiée). Supprimez le brouillon ou retirez la version, puis recommencez. Rien n’a été modifié.'
+            : describeCourseWorkflowError(e),
+        stale: isApiError(e, 'stale_pointer') || isApiError(e, 'active_candidate_exists'),
+      });
     } finally {
       setBusy(false);
     }
