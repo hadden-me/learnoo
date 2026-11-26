@@ -39,6 +39,14 @@ test('student reader at mobile width with RTL and math', async ({ page, baseURL,
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('p[lang="ar"] .math')).direction)).toBe('ltr');
   await expect(page.locator('.credit')).toContainText('TEST Autrice Amel');
   await expect(page.locator('.credit')).toContainText('TEST Relecteur Karim');
+  // Printed lessons keep the content and credit, not the student's controls.
+  await page.emulateMedia({ media: 'print' });
+  await expect(page.locator('.bookmark')).toBeHidden();
+  await expect(page.locator('.report')).toBeHidden();
+  await expect(page.locator('header nav')).toBeHidden();
+  await expect(page.getByText('Solution de test.')).toBeVisible();
+  await expect(page.locator('.credit')).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
   await page.getByText('Voir la solution expliquée').click();
   await expect(page.getByText('Solution de test.')).toBeVisible();
   expect(await noOverflow(page)).toBe(true);
