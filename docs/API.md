@@ -74,7 +74,8 @@ Served by `cmd/server` (not `cmd/renderer`). Status: **LRN-005 foundation, the L
 | 422 | `invalid_comment` | A review comment over 5000 characters or containing a NUL character |
 | 422 | `note_required` / `invalid_note` | Error report resolution without a note (missing, null or only whitespace), or with one over 2000 characters or containing control (other than line feeds) or bidirectional formatting characters |
 | 422 | `invalid_input` | A curriculum code, name, label or display order is malformed (`message` says which rule) |
-| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, or a chapter listed twice |
+| 422 | `placement_invalid` | A curriculum selection the rules refuse: a retired subject or chapter, a chapter that is not in the assignment's subject, a chapter listed twice, or making current an edition that assigns a retired subject or chapter (`message` names them) |
+| 422 | `retired_subject` / `retired_chapter` | A new lesson in a retired subject, or a draft (created or saved) that sets a retired chapter other than the chapter of its published base revision |
 | 429 | `rate_limited` | Login throttled; see `Retry-After` (seconds) |
 | 500 | `internal` | Unexpected server error (details only in server logs, never secrets) |
 | 503 | `busy` | Too many uploads in progress: no upload slot freed within 5 seconds. Retry after `Retry-After` seconds |
@@ -544,9 +545,11 @@ Subjects and chapters are identified by immutable codes (1 to 63 lower-case ASCI
 `GET /api/catalogue/subjects` (illustrative values):
 
 ```json
-{"subjects": [{"id": 2, "code": "physique", "nameFr": null, "nameAr": null, "sortOrder": 0},
-              {"id": 1, "code": "maths", "nameFr": "Mathématiques", "nameAr": "رياضيات", "sortOrder": 1}]}
+{"subjects": [{"id": 2, "code": "physique", "nameFr": null, "nameAr": null, "sortOrder": 0, "retiredAt": null},
+              {"id": 1, "code": "maths", "nameFr": "Mathématiques", "nameAr": "رياضيات", "sortOrder": 1, "retiredAt": null}]}
 ```
+
+Subjects and chapters also carry `retiredAt` (LMS-B02), `null` unless an administrator [retired](#curriculum-lms-b02) the entry. A retired entry stays listed and keeps resolving, but cannot be newly selected: no new lesson in a retired subject (`422 retired_subject`), no draft setting a retired chapter other than its published base revision's (`422 retired_chapter`), no new reviewer grant or chapter on a retired subject, no new curriculum assignment of either (`422 placement_invalid`).
 
 `GET /api/catalogue/subjects/{code}/chapters`: `404 not_found` for an unknown or malformed code.
 
@@ -655,7 +658,7 @@ Levels, academic sections, curriculum editions and their subject assignments wit
 | `GET /api/catalogue/levels`, `GET /api/catalogue/sections/{sectionId}/editions`, `GET /api/catalogue/editions/{editionId}` | Signed-in staff: `author`, `publisher`, `administrator`, or a reviewer of any subject. Students: `403 forbidden` |
 | `POST`/`PUT`/`DELETE /api/admin/curriculum/…` | `administrator`, checked by the middleware (`403 forbidden` before any lookup) and again inside the write's transaction, which also writes its `curriculum_audit` row |
 
-Codes: 1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen; unique per scope (level codes globally, section codes per level, edition codes per section) and never reused or changed. Names and labels (`nameFr`, `nameAr`, `labelFr`, `labelAr`): 1 to 200 characters, no surrounding white space, no control, invisible-format or line/paragraph separator characters; Arabic text is allowed. `displayOrder`: 0 to 9999 (optional on creation, default 0). Lists sort by `displayOrder`, then code in byte order, whatever the database locale. Levels, sections and editions carry a `version`; every write names it as `expectedVersion` (`409 version_conflict` otherwise, nothing written) and increments it. Assignment and chapter-list edits increment the edition's version.
+Codes: 1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen; unique per scope (level codes globally, section codes per level, edition codes per section) and never reused or changed. Names and labels (`nameFr`, `nameAr`, `labelFr`, `labelAr`) follow the catalogue display-name rule: surrounding white space is trimmed, then 1 to 200 characters, no control, invisible-format or line/paragraph separator characters; Arabic text is allowed. `displayOrder`: 0 to 9999 (optional on creation, default 0). Lists sort by `displayOrder`, then code in byte order, whatever the database locale. Levels, sections and editions carry a `version`; every write names it as `expectedVersion` (`409 version_conflict` otherwise, nothing written) and increments it. Assignment and chapter-list edits increment the edition's version.
 
 ### Objects
 
@@ -672,7 +675,7 @@ Level: `{"id", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version
 
 ### Reads
 
-- `GET /api/catalogue/levels`: `{"levels": [level…]}`, retired entries included (`retiredAt` set).
+- `GET /api/catalogue/levels`: `{"levels": [level…]}`, retired entries included (`retiredAt` set). More than 1000 levels or sections is a `500 internal` error rather than a truncated list (the curriculum is far smaller).
 - `GET /api/catalogue/sections/{sectionId}/editions`: `{"section": section, "editions": [edition without "assignments"…]}`, newest first. `404` for an unknown section.
 - `GET /api/catalogue/editions/{editionId}`: the edition with its assignments and chapter lists. `404` for an unknown edition.
 
@@ -688,9 +691,9 @@ Level: `{"id", "code", "nameFr", "nameAr", "displayOrder", "retiredAt", "version
 | `POST /sections/{sectionId}/editions` | `code`, `labelFr`, `labelAr` | `201` draft edition; `409 parent_retired` |
 | `PUT /editions/{editionId}` | `expectedVersion`, `labelFr`, `labelAr` | `200` edition (labels are display metadata, changeable in any state) |
 | `POST /editions/{editionId}/assignments` | `expectedVersion`, `subjectId` | `201` edition; `409 edition_not_draft`, `409 assignment_exists`, `422 unknown_subject`, `422 placement_invalid` (retired subject) |
-| `DELETE /editions/{editionId}/assignments/{assignmentId}?expectedVersion=N` | none | `200` edition (the chapter list goes with it); `409 edition_not_draft` |
+| `DELETE /editions/{editionId}/assignments/{assignmentId}?expectedVersion=N` | none (a body is `400 invalid_request`) | `200` edition (the chapter list goes with it); `409 edition_not_draft` |
 | `PUT /editions/{editionId}/assignments/{assignmentId}/chapters` | `expectedVersion`, `chapterIds` (ordered, at most 500, may be empty) | `200` edition; replaces the list; `409 edition_not_draft`, `422 placement_invalid` |
-| `POST /editions/{editionId}/make-current` | `expectedVersion`, `expectedCurrentEditionId` (the section's current edition ID, or `null` if it has none) | `200` `{"edition": edition, "supersededEditionId": id or null}`; the previous current edition becomes `superseded` in the same transaction. `409 edition_not_draft`, `409 state_conflict` (the current edition is not the expected one; of two racing requests one wins), `409 parent_retired` |
+| `POST /editions/{editionId}/make-current` | `expectedVersion`, `expectedCurrentEditionId` (the section's current edition ID, or `null` if it has none) | `200` `{"edition": edition, "supersededEditionId": id or null}`; the previous current edition becomes `superseded` in the same transaction. `409 edition_not_draft`, `409 state_conflict` (the current edition is not the expected one; of two racing requests one wins), `409 parent_retired`, `422 placement_invalid` (the edition assigns a retired subject or chapter; the message names them) |
 | `POST /editions/{editionId}/retire` | `expectedVersion` | `200` edition; only `current` or `superseded` editions (`409 state_conflict` for a draft, `409 already_retired`). Retiring the current edition leaves the section without one |
 | `POST /subjects/{subjectId}/retire`, `POST /chapters/{chapterId}/retire` | `{}` | `204`; `409 already_retired`. The entry stays readable and keeps every reference; it can no longer be newly assigned or listed |
 
