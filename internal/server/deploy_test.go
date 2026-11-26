@@ -329,7 +329,25 @@ func runFlow(t *testing.T, e *env) seeded {
 	if _, _, _, err := cat.AddChapter(context.Background(), testOperator, "test-deploy-math", "ch-1"); err != nil {
 		t.Fatal(err)
 	}
-	wantStatus(t, "catalogue", f.api(f.reviewer, http.MethodGet, "/api/catalogue/subjects/test-deploy-math/chapters", nil), http.StatusOK, "")
+	// Display names and order (LRN-014): audited changes under this role.
+	nameFr, nameAr := "TEST Mathématiques", "TEST رياضيات"
+	if _, changed, err := cat.SetSubjectNames(context.Background(), testOperator, "test-deploy-math", &nameFr, &nameAr); err != nil || !changed {
+		t.Fatalf("name subject: %v %v", changed, err)
+	}
+	if _, _, changed, err := cat.SetChapterNames(context.Background(), testOperator, "test-deploy-math", "ch-1", &nameFr, nil); err != nil || !changed {
+		t.Fatalf("name chapter: %v %v", changed, err)
+	}
+	if _, _, changed, err := cat.SetChapterOrder(context.Background(), testOperator, "test-deploy-math", "ch-1", 3); err != nil || !changed {
+		t.Fatalf("order chapter: %v %v", changed, err)
+	}
+	if _, changed, err := cat.SetSubjectOrder(context.Background(), testOperator, "test-deploy-physics", 1); err != nil || !changed {
+		t.Fatalf("order subject: %v %v", changed, err)
+	}
+	w = f.api(f.reviewer, http.MethodGet, "/api/catalogue/subjects/test-deploy-math/chapters", nil)
+	wantStatus(t, "catalogue", w, http.StatusOK, "")
+	if !strings.Contains(w.Body.String(), `"nameAr":"TEST رياضيات"`) || !strings.Contains(w.Body.String(), `"sortOrder":3`) {
+		t.Fatalf("catalogue: %s", w.Body)
+	}
 	w = f.api(f.author, http.MethodGet, "/api/lessons/mine", nil)
 	wantStatus(t, "owned lessons", w, http.StatusOK, "")
 	if !strings.Contains(w.Body.String(), "TEST Déploiement candidate") {
@@ -518,6 +536,17 @@ func TestRuntimeRoleRunsTheAppAndGuardsBindIt(t *testing.T) {
 		draft.LessonID, draft.ID, s.author.id)
 	wantRefused(t, rt, "audit without submission", guardRefusal,
 		`INSERT INTO submission_audit (lesson_id, revision_id, actor_id) VALUES ($1, $2, $3)`, draft.LessonID, draft.ID, s.author.id)
+	// Catalogue name and order guards (migration 0012).
+	wantRefused(t, rt, "unaudited subject name", guardRefusal, `UPDATE subjects SET name_fr = 'TEST forged' WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "unaudited chapter name", guardRefusal, `UPDATE chapters SET name_ar = 'TEST forged' WHERE code = 'ch-1'`)
+	wantRefused(t, rt, "unaudited subject order", guardRefusal, `UPDATE subjects SET sort_order = 9 WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "unaudited chapter order", guardRefusal, `UPDATE chapters SET sort_order = 9 WHERE code = 'ch-1'`)
+	wantRefused(t, rt, "audited rename not applied", guardRefusal, `INSERT INTO catalogue_audit (operator_label, action, subject_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
+		SELECT 'TEST forged', 'rename_subject', id, name_fr, name_ar, 'TEST forged', name_ar FROM subjects WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "rename with forged old values", guardRefusal, `INSERT INTO catalogue_audit (operator_label, action, subject_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
+		SELECT 'TEST forged', 'rename_subject', id, 'TEST other', NULL, 'TEST forged', NULL FROM subjects WHERE code = 'test-deploy-math'`)
+	wantRefused(t, rt, "named new subject", guardRefusal, `WITH s AS (INSERT INTO subjects (code, name_fr) VALUES ('test-named', 'TEST forged') RETURNING id)
+		INSERT INTO catalogue_audit (operator_label, action, subject_id) SELECT 'TEST forged', 'add_subject', id FROM s`)
 	if after := s.withdrawState(); after != before {
 		t.Fatalf("refused statements changed state:\n%s\n%s", before, after)
 	}
