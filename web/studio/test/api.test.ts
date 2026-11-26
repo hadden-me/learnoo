@@ -130,7 +130,7 @@ describe('API client', () => {
 
   it('explains CMYK JPEGs and images that need too much memory', () => {
     expect(describeError(new ApiError(415, 'unsupported_cmyk', 'x'))).toMatch(/CMJN.*RVB.*JPEG ou en PNG/);
-    expect(describeError(new ApiError(422, 'image_too_complex', 'x'))).toMatch(/trop de mémoire.*JPEG standard.*PNG 8 bits/);
+    expect(describeError(new ApiError(422, 'image_too_complex', 'x'))).toMatch(/trop de mémoire.*WebP.*JPEG standard.*PNG 8 bits/);
   });
 
   it('explains HEIC photos and recognizes them before uploading', () => {

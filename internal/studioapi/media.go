@@ -202,8 +202,10 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 			fmt.Sprintf("Images may be at most %d pixels per side and %d megapixels.", media.MaxSide, media.MaxPixels/1_000_000))
 	case errors.Is(err, media.ErrTooComplex):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "image_too_complex",
-			"The image needs too much memory to process (for example a large progressive JPEG without chroma subsampling, "+
-				"or a large interlaced 16-bit PNG). Export it as a standard JPEG or an 8-bit PNG, or reduce its size.")
+			"The image needs too much memory to process, or would be too large once converted for storage "+
+				"(for example a large progressive JPEG without chroma subsampling, a large lossless or transparent WebP, "+
+				"a large interlaced 16-bit PNG, or a big detailed WebP photo, which is stored as PNG). "+
+				"Export photos as standard JPEG and screenshots or drawings as 8-bit PNG, or reduce the image size.")
 	case errors.Is(err, media.ErrTrailingData):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "trailing_data",
 			"The file has data after the end of the image that is not a recognized phone-photo structure. "+

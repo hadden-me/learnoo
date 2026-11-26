@@ -25,7 +25,7 @@ func TestWriteMediaErrorCodes(t *testing.T) {
 	}{
 		"heic":          {fmt.Errorf("process: %w", media.ErrUnsupportedHEIC), http.StatusUnsupportedMediaType, "unsupported_heic", "JPEG"},
 		"cmyk":          {fmt.Errorf("process: %w", media.ErrUnsupportedCMYK), http.StatusUnsupportedMediaType, "unsupported_cmyk", "RGB"},
-		"too complex":   {fmt.Errorf("%w: decoding needs 300 MiB", media.ErrTooComplex), http.StatusUnprocessableEntity, "image_too_complex", "memory"},
+		"too complex":   {fmt.Errorf("%w: decoding needs 300 MiB", media.ErrTooComplex), http.StatusUnprocessableEntity, "image_too_complex", "WebP"},
 		"other type":    {fmt.Errorf("%w: only PNG", media.ErrUnsupportedType), http.StatusUnsupportedMediaType, "unsupported_media_type", "PNG"},
 		"trailing data": {fmt.Errorf("%w: undeclared data", media.ErrTrailingData), http.StatusUnprocessableEntity, "trailing_data", "PNG"},
 		"dimensions":    {media.ErrDimensions, http.StatusUnprocessableEntity, "invalid_dimensions", "4096"},

@@ -37,7 +37,7 @@ const MESSAGES: Record<string, string> = {
   invalid_image: 'Image illisible : le fichier est corrompu ou tronqué.',
   invalid_dimensions: 'Image trop grande : 4 096 pixels par côté et 16 mégapixels au maximum.',
   image_too_complex:
-    'Cette image demande trop de mémoire au serveur pour être traitée (par exemple un grand JPEG progressif sans sous-échantillonnage des couleurs, ou un grand PNG entrelacé en 16 bits). Exportez-la en JPEG standard ou en PNG 8 bits, ou réduisez sa taille, puis réessayez.',
+    'Cette image demande trop de mémoire au serveur pour être traitée, ou serait trop lourde une fois convertie pour le stockage (par exemple un grand JPEG progressif sans sous-échantillonnage des couleurs, un grand WebP sans perte ou avec transparence, un grand PNG entrelacé en 16 bits, ou une grande photo WebP très détaillée, enregistrée en PNG). Exportez les photos en JPEG standard et les captures d’écran ou dessins en PNG 8 bits, ou réduisez la taille de l’image, puis réessayez.',
   trailing_data:
     'L’image contient des données après sa fin que Learnoo ne reconnaît pas (fichier modifié ou format de photo non pris en charge). Ré-exportez-la depuis un éditeur d’images ou enregistrez-la en PNG, puis réessayez.',
   upload_timeout: 'Le téléversement a pris trop de temps (15 secondes maximum). Réessayez avec une meilleure connexion ou une image plus légère.',
