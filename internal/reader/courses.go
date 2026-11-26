@@ -40,9 +40,12 @@ type CourseSummary struct {
 
 // Placement is one curriculum placement of a published course revision.
 type Placement struct {
-	Level   string
-	Section string
-	Edition string
+	Level     string
+	LevelAr   string
+	Section   string
+	SectionAr string
+	Edition   string
+	EditionAr string
 	// Earlier is true for a superseded or retired edition.
 	Earlier bool
 }
@@ -174,7 +177,7 @@ func coursePlacements(ctx context.Context, q interface {
 		return out, nil
 	}
 	rows, err := q.Query(ctx, `
-		SELECT cra.course_revision_id, lv.name_fr, sec.name_fr, e.label_fr, e.state <> 'current'
+		SELECT cra.course_revision_id, lv.name_fr, lv.name_ar, sec.name_fr, sec.name_ar, e.label_fr, e.label_ar, e.state <> 'current'
 		  FROM course_revision_assignments cra
 		  JOIN curriculum_assignments a ON a.id = cra.assignment_id
 		  JOIN curriculum_editions e ON e.id = a.edition_id
@@ -189,7 +192,7 @@ func coursePlacements(ctx context.Context, q interface {
 	for rows.Next() {
 		var rev int64
 		var p Placement
-		if err := rows.Scan(&rev, &p.Level, &p.Section, &p.Edition, &p.Earlier); err != nil {
+		if err := rows.Scan(&rev, &p.Level, &p.LevelAr, &p.Section, &p.SectionAr, &p.Edition, &p.EditionAr, &p.Earlier); err != nil {
 			return nil, fmt.Errorf("course placements: %w", err)
 		}
 		out[rev] = append(out[rev], p)

@@ -22,26 +22,15 @@ type Edition struct {
 	ID      int64
 	Code    string
 	LabelFr string
+	LabelAr string
 	State   string // current, superseded or retired
 }
 
 // Current reports whether the edition is the section's current one.
 func (e Edition) Current() bool { return e.State == "current" }
 
-// StateLabel is the edition's state in the interface.
-func (e Edition) StateLabel() string { return editionStateLabel(e.State) }
-
-func editionStateLabel(state string) string {
-	switch state {
-	case "current":
-		return "en vigueur"
-	case "superseded":
-		return "remplacée"
-	case "retired":
-		return "retirée"
-	}
-	return ""
-}
+// StateKey is the message key of the edition's state.
+func (e Edition) StateKey() string { return stateKey(e.State) }
 
 // SubjectAvailability is a subject of an edition with what is readable in
 // it: published courses placed in the edition's assignment and published
@@ -53,8 +42,8 @@ type SubjectAvailability struct {
 	Lessons int
 }
 
-// Label is the subject's name in the French interface.
-func (s SubjectAvailability) Label() catalogue.Label { return s.Names.Label(s.Code, "fr") }
+// Label is the subject's name in the interface locale ui.
+func (s SubjectAvailability) Label(ui string) catalogue.Label { return s.Names.Label(s.Code, ui) }
 
 // Empty reports whether nothing is readable in the subject.
 func (s SubjectAvailability) Empty() bool { return s.Courses == 0 && s.Lessons == 0 }
@@ -62,12 +51,14 @@ func (s SubjectAvailability) Empty() bool { return s.Courses == 0 && s.Lessons =
 // PublicSection is an academic section in the catalogue with its current
 // edition (nil when none) and that edition's subjects.
 type PublicSection struct {
-	LevelCode string
-	LevelName string
-	Code      string
-	Name      string
-	Current   *Edition
-	Subjects  []SubjectAvailability
+	LevelCode   string
+	LevelName   string
+	LevelNameAr string
+	Code        string
+	Name        string
+	NameAr      string
+	Current     *Edition
+	Subjects    []SubjectAvailability
 }
 
 // Path is the section's catalogue URL (current edition).
@@ -88,6 +79,7 @@ func (s PublicSection) Available() []SubjectAvailability {
 type PublicLevel struct {
 	Code     string
 	Name     string
+	NameAr   string
 	Sections []PublicSection
 }
 
@@ -107,8 +99,8 @@ type UnplacedSubject struct {
 	Lessons []PublicLesson
 }
 
-// Label is the subject's name in the French interface.
-func (s UnplacedSubject) Label() catalogue.Label { return s.Names.Label(s.Code, "fr") }
+// Label is the subject's name in the interface locale ui.
+func (s UnplacedSubject) Label(ui string) catalogue.Label { return s.Names.Label(s.Code, ui) }
 
 // readOnly runs fn in one read-only repeatable-read snapshot, so that a page
 // assembled from several queries is consistent.
@@ -153,7 +145,7 @@ func (s *Store) CatalogueIndex(ctx context.Context) ([]PublicLevel, []UnplacedSu
 
 func (s *Store) curriculum(ctx context.Context, q querier) ([]PublicLevel, error) {
 	rows, err := q.Query(ctx, `
-		SELECT lv.code, lv.name_fr, sc.code, sc.name_fr, e.id, e.code, e.label_fr
+		SELECT lv.code, lv.name_fr, lv.name_ar, sc.code, sc.name_fr, sc.name_ar, e.id, e.code, e.label_fr, e.label_ar
 		  FROM education_levels lv
 		  JOIN academic_sections sc ON sc.level_id = lv.id
 		  LEFT JOIN curriculum_editions e ON e.section_id = sc.id AND e.state = 'current'
@@ -168,10 +160,11 @@ func (s *Store) curriculum(ctx context.Context, q querier) ([]PublicLevel, error
 		editionID *int64
 		code      *string
 		label     *string
+		labelAr   *string
 	}
 	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
 		var x row
-		err := r.Scan(&x.sec.LevelCode, &x.sec.LevelName, &x.sec.Code, &x.sec.Name, &x.editionID, &x.code, &x.label)
+		err := r.Scan(&x.sec.LevelCode, &x.sec.LevelName, &x.sec.LevelNameAr, &x.sec.Code, &x.sec.Name, &x.sec.NameAr, &x.editionID, &x.code, &x.label, &x.labelAr)
 		return x, err
 	})
 	if err != nil {
@@ -180,7 +173,7 @@ func (s *Store) curriculum(ctx context.Context, q querier) ([]PublicLevel, error
 	var ids []int64
 	for i := range list {
 		if list[i].editionID != nil {
-			list[i].sec.Current = &Edition{ID: *list[i].editionID, Code: *list[i].code, LabelFr: *list[i].label, State: "current"}
+			list[i].sec.Current = &Edition{ID: *list[i].editionID, Code: *list[i].code, LabelFr: *list[i].label, LabelAr: *list[i].labelAr, State: "current"}
 			ids = append(ids, *list[i].editionID)
 		}
 	}
@@ -194,7 +187,7 @@ func (s *Store) curriculum(ctx context.Context, q querier) ([]PublicLevel, error
 			x.sec.Subjects = subjects[x.sec.Current.ID]
 		}
 		if n := len(levels); n == 0 || levels[n-1].Code != x.sec.LevelCode {
-			levels = append(levels, PublicLevel{Code: x.sec.LevelCode, Name: x.sec.LevelName})
+			levels = append(levels, PublicLevel{Code: x.sec.LevelCode, Name: x.sec.LevelName, NameAr: x.sec.LevelNameAr})
 		}
 		levels[len(levels)-1].Sections = append(levels[len(levels)-1].Sections, x.sec)
 	}
@@ -286,11 +279,13 @@ func (s *Store) unplaced(ctx context.Context, q querier) ([]UnplacedSubject, err
 // SectionPage is a section in one edition: the current one by default, or
 // an earlier one named explicitly.
 type SectionPage struct {
-	LevelCode string
-	LevelName string
-	Code      string
-	Name      string
-	Retired   bool
+	LevelCode   string
+	LevelName   string
+	LevelNameAr string
+	Code        string
+	Name        string
+	NameAr      string
+	Retired     bool
 	// Edition is the edition shown; nil when the section has no current
 	// edition and none was named.
 	Edition  *Edition
@@ -354,10 +349,10 @@ func (s *Store) section(ctx context.Context, q querier, levelCode, sectionCode, 
 	var p SectionPage
 	var sectionID int64
 	err := q.QueryRow(ctx, `
-		SELECT sc.id, lv.code, lv.name_fr, sc.code, sc.name_fr, lv.retired_at IS NOT NULL OR sc.retired_at IS NOT NULL
+		SELECT sc.id, lv.code, lv.name_fr, lv.name_ar, sc.code, sc.name_fr, sc.name_ar, lv.retired_at IS NOT NULL OR sc.retired_at IS NOT NULL
 		  FROM education_levels lv JOIN academic_sections sc ON sc.level_id = lv.id
 		 WHERE lv.code = $1 AND sc.code = $2`, levelCode, sectionCode).Scan(
-		&sectionID, &p.LevelCode, &p.LevelName, &p.Code, &p.Name, &p.Retired)
+		&sectionID, &p.LevelCode, &p.LevelName, &p.LevelNameAr, &p.Code, &p.Name, &p.NameAr, &p.Retired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SectionPage{}, 0, ErrNotFound
 	}
@@ -365,7 +360,7 @@ func (s *Store) section(ctx context.Context, q querier, levelCode, sectionCode, 
 		return SectionPage{}, 0, fmt.Errorf("section: %w", err)
 	}
 	rows, err := q.Query(ctx, `
-		SELECT id, code, label_fr, state FROM curriculum_editions
+		SELECT id, code, label_fr, label_ar, state FROM curriculum_editions
 		 WHERE section_id = $1 AND state <> 'draft'
 		 ORDER BY current_since DESC NULLS LAST, id DESC
 		 LIMIT $2`, sectionID, maxListed)
@@ -374,7 +369,7 @@ func (s *Store) section(ctx context.Context, q querier, levelCode, sectionCode, 
 	}
 	editions, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Edition, error) {
 		var e Edition
-		err := r.Scan(&e.ID, &e.Code, &e.LabelFr, &e.State)
+		err := r.Scan(&e.ID, &e.Code, &e.LabelFr, &e.LabelAr, &e.State)
 		return e, err
 	})
 	if err != nil {
@@ -413,7 +408,7 @@ type SubjectPage struct {
 }
 
 // Label is the subject's name in the French interface.
-func (p SubjectPage) Label() catalogue.Label { return p.Names.Label(p.Code, "fr") }
+func (p SubjectPage) Label(ui string) catalogue.Label { return p.Names.Label(p.Code, ui) }
 
 // PublicCourseSummary is a readable course in a list.
 type PublicCourseSummary struct {
@@ -432,7 +427,7 @@ type PublicChapter struct {
 }
 
 // Label is the chapter's name in the French interface.
-func (c PublicChapter) Label() catalogue.Label { return c.Names.Label(c.Code, "fr") }
+func (c PublicChapter) Label(ui string) catalogue.Label { return c.Names.Label(c.Code, ui) }
 
 // Subject loads a subject's page in the edition named by editionCode (""
 // for the current one). A subject the edition does not assign, a section
@@ -538,37 +533,39 @@ type CourseOverview struct {
 	Modules       []PublicModule
 }
 
-// SubjectLabel is the subject's name in the French interface.
-func (c CourseOverview) SubjectLabel() catalogue.Label {
-	return c.SubjectNames.Label(c.SubjectCode, "fr")
+// SubjectLabel is the subject's name in the interface locale ui.
+func (c CourseOverview) SubjectLabel(ui string) catalogue.Label {
+	return c.SubjectNames.Label(c.SubjectCode, ui)
 }
 
-// LanguageName is the course language in the interface.
-func (c CourseOverview) LanguageName() string { return languageName(c.Language) }
-
-func languageName(lang string) string {
-	switch lang {
-	case "fr":
-		return "Français"
-	case "ar":
-		return "Arabe"
-	}
-	return lang
-}
+// LanguageKey is the message key of the course language's name.
+func (c CourseOverview) LanguageKey() string { return languageKey(c.Language) }
 
 // PublicPlacement is one curriculum assignment of the published revision.
 type PublicPlacement struct {
-	LevelCode    string
-	LevelName    string
-	SectionCode  string
-	SectionName  string
-	EditionCode  string
-	EditionLabel string
-	EditionState string
+	LevelCode      string
+	LevelName      string
+	LevelNameAr    string
+	SectionCode    string
+	SectionName    string
+	SectionNameAr  string
+	EditionCode    string
+	EditionLabel   string
+	EditionLabelAr string
+	EditionState   string
 }
 
-// StateLabel is the edition's state in the interface.
-func (p PublicPlacement) StateLabel() string { return editionStateLabel(p.EditionState) }
+// StateKey is the message key of the edition's state.
+func (p PublicPlacement) StateKey() string { return stateKey(p.EditionState) }
+
+// EditionQuery names an earlier edition in a catalogue link ("" for the
+// current one).
+func (p PublicPlacement) EditionQuery() string {
+	if p.Current() {
+		return ""
+	}
+	return "?edition=" + p.EditionCode
+}
 
 // Current reports whether the placement's edition is current.
 func (p PublicPlacement) Current() bool { return p.EditionState == "current" }
@@ -628,7 +625,7 @@ func (s *Store) PublicCourse(ctx context.Context, publicID string) (CourseOvervi
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT lv.code, lv.name_fr, sc.code, sc.name_fr, e.code, e.label_fr, e.state
+		SELECT lv.code, lv.name_fr, lv.name_ar, sc.code, sc.name_fr, sc.name_ar, e.code, e.label_fr, e.label_ar, e.state
 		  FROM course_revision_assignments cra
 		  JOIN curriculum_assignments a ON a.id = cra.assignment_id
 		  JOIN curriculum_editions e ON e.id = a.edition_id
@@ -641,7 +638,7 @@ func (s *Store) PublicCourse(ctx context.Context, publicID string) (CourseOvervi
 	}
 	if c.Placements, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (PublicPlacement, error) {
 		var p PublicPlacement
-		err := r.Scan(&p.LevelCode, &p.LevelName, &p.SectionCode, &p.SectionName, &p.EditionCode, &p.EditionLabel, &p.EditionState)
+		err := r.Scan(&p.LevelCode, &p.LevelName, &p.LevelNameAr, &p.SectionCode, &p.SectionName, &p.SectionNameAr, &p.EditionCode, &p.EditionLabel, &p.EditionLabelAr, &p.EditionState)
 		return p, err
 	}); err != nil {
 		return CourseOverview{}, fmt.Errorf("course placement: %w", err)

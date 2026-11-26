@@ -1,11 +1,11 @@
-{{define "content"}}{{with .Data}}<h1>Activer votre compte</h1>
-<p>Vous avez été invité·e au pilote Learnoo.</p>
-{{if .Errors}}<div class="form-error" role="alert"><p>Corrigez les champs indiqués.</p></div>{{end}}
+{{define "content"}}{{with .Data}}<h1>{{t "invite.title"}}</h1>
+<p>{{t "invite.intro"}}</p>
+{{if .Errors}}<div class="form-error" role="alert"><p>{{t "form.fixFields"}}</p></div>{{end}}
 <form method="post" action="/invite" class="form" novalidate>
 <input type="hidden" name="token" value="{{.Token}}">
-<div class="field"><span class="label">Adresse e-mail</span><span class="value" dir="ltr">{{.Email}}</span><span class="hint">Fixée par l’invitation. Elle sert à vous connecter.</span></div>
-<div class="field"><label for="display_name">Prénom ou pseudonyme</label><span class="hint" id="display_name_hint">Pas de profil public.</span>{{with index .Errors "display_name"}}<span class="error" id="display_name_error">{{.}}</span>{{end}}<input id="display_name" name="display_name" type="text" dir="auto" autocomplete="nickname" maxlength="100" required value="{{.DisplayName}}" aria-describedby="display_name_hint{{if index .Errors "display_name"}} display_name_error{{end}}"></div>
-<div class="field"><label for="password">Mot de passe</label><span class="hint" id="password_hint">Au moins {{.MinPassword}} caractères.</span>{{with index .Errors "password"}}<span class="error" id="password_error">{{.}}</span>{{end}}<input id="password" name="password" type="password" dir="ltr" autocomplete="new-password" required aria-describedby="password_hint{{if index .Errors "password"}} password_error{{end}}"></div>
-<div class="field"><label for="password_confirm">Confirmer le mot de passe</label>{{with index .Errors "password_confirm"}}<span class="error" id="password_confirm_error">{{.}}</span>{{end}}<input id="password_confirm" name="password_confirm" type="password" dir="ltr" autocomplete="new-password" required{{if index .Errors "password_confirm"}} aria-describedby="password_confirm_error"{{end}}></div>
-<button type="submit">Activer mon compte</button>
+<div class="field"><span class="label">{{t "field.email"}}</span><span class="value" dir="ltr">{{.Email}}</span><span class="hint">{{t "invite.emailHint"}}</span></div>
+<div class="field"><label for="display_name">{{t "invite.displayName"}}</label><span class="hint" id="display_name_hint">{{t "invite.displayNameHint"}}</span>{{with index .Errors "display_name"}}<span class="error" id="display_name_error">{{.}}</span>{{end}}<input id="display_name" name="display_name" type="text" dir="auto" autocomplete="nickname" maxlength="100" required value="{{.DisplayName}}" aria-describedby="display_name_hint{{if index .Errors "display_name"}} display_name_error{{end}}"{{if index .Errors "display_name"}} aria-invalid="true"{{end}}></div>
+<div class="field"><label for="password">{{t "field.password"}}</label><span class="hint" id="password_hint">{{t "invite.passwordHint" .MinPassword}}</span>{{with index .Errors "password"}}<span class="error" id="password_error">{{.}}</span>{{end}}<input id="password" name="password" type="password" dir="ltr" autocomplete="new-password" required aria-describedby="password_hint{{if index .Errors "password"}} password_error{{end}}"{{if index .Errors "password"}} aria-invalid="true"{{end}}></div>
+<div class="field"><label for="password_confirm">{{t "invite.passwordConfirm"}}</label>{{with index .Errors "password_confirm"}}<span class="error" id="password_confirm_error">{{.}}</span>{{end}}<input id="password_confirm" name="password_confirm" type="password" dir="ltr" autocomplete="new-password" required{{if index .Errors "password_confirm"}} aria-describedby="password_confirm_error" aria-invalid="true"{{end}}></div>
+<button type="submit">{{t "invite.submit"}}</button>
 </form>{{end}}{{end}}

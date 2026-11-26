@@ -1,8 +1,8 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <a href="/catalogue">Catalogue</a> › <span>{{.LevelName}}</span> › <span aria-current="page">{{.Name}}</span></nav>
-<p class="eyebrow">{{.LevelName}}</p>
-<h1>{{.Name}}</h1>
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="{{t "breadcrumb"}}"><a href="{{href "/"}}">{{t "nav.publicHome"}}</a> › <a href="{{href "/catalogue"}}">{{t "nav.catalogue"}}</a> › <span>{{pick .LevelName .LevelNameAr}}</span> › <span aria-current="page">{{pick .Name .NameAr}}</span></nav>
+<p class="eyebrow">{{pick .LevelName .LevelNameAr}}</p>
+<h1>{{pick .Name .NameAr}}</h1>
 {{template "edition" .}}
-{{if .Edition}}<section aria-labelledby="subjects-heading"><h2 id="subjects-heading">Matières</h2>
-{{if .Subjects}}{{$q := .EditionQuery}}{{$base := .Path}}<ul class="cards">{{range .Subjects}}<li class="card"><a href="{{$base}}/{{.Code}}{{$q}}">{{template "catname" .Label}}</a><span class="context">{{if .Empty}}Aucun contenu relu pour l’instant{{else}}{{.Courses}} cours, {{.Lessons}} leçon{{if gt .Lessons 1}}s{{end}}{{end}}</span></li>{{end}}</ul>
-{{else}}<p>Cette édition ne contient encore aucune matière.</p>{{end}}</section>{{end}}
+{{if .Edition}}<section aria-labelledby="subjects-heading"><h2 id="subjects-heading">{{t "pub.subjects"}}</h2>
+{{if .Subjects}}{{$q := .EditionQuery}}{{$base := .Path}}<ul class="cards">{{range .Subjects}}<li class="card"><a href="{{href $base "/" .Code $q}}">{{template "catname" (.Label ui)}}</a><span class="context">{{if .Empty}}{{t "pub.sec.subjectEmpty"}}{{else}}{{t "pub.counts" (tn "count.courses" .Courses) (tn "count.lessons" .Lessons)}}{{end}}</span></li>{{end}}</ul>
+{{else}}<p>{{t "pub.sec.noSubject"}}</p>{{end}}</section>{{end}}
 {{template "earlier" .}}{{end}}{{end}}

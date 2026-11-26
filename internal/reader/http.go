@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/i18n"
 	"github.com/hadden-me/learnoo/internal/invitations"
 	"github.com/hadden-me/learnoo/internal/media"
 	"github.com/hadden-me/learnoo/internal/rendering"
@@ -70,7 +71,7 @@ type Config struct {
 // Handlers serves the reader pages.
 type Handlers struct {
 	Config
-	pages  map[string]*template.Template
+	pages  map[string]map[i18n.Locale]*template.Template
 	assets manifest
 }
 
@@ -81,20 +82,22 @@ func New(cfg Config) *Handlers {
 	if err != nil {
 		panic(err)
 	}
-	base := template.Must(template.New("").Funcs(template.FuncMap{"dir": Dir, "asset": assets.url}).ParseFS(files, "templates/layout.html"))
-	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "reported", "search", "error"} {
-		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(files, "templates/"+name+".html"))
+	funcs := template.FuncMap{"dir": Dir, "asset": assets.url}
+	pages := map[string]map[i18n.Locale]*template.Template{}
+	for _, name := range append([]string{"login", "invite", "dashboard", "subject", "lesson", "reported", "search", "error"}, coursePages...) {
+		set, err := localized(funcs, false, []string{"templates/layout.html"}, name)
+		if err != nil {
+			panic(err)
+		}
+		pages[name] = set
 	}
-	h := &Handlers{Config: cfg, pages: pages, assets: assets}
-	h.parseCoursePages(base, pages)
-	return h
+	return &Handlers{Config: cfg, pages: pages, assets: assets}
 }
 
 // Register mounts the reader routes documented in docs/API.md.
 func (h *Handlers) Register(mux *http.ServeMux) {
 	page := func(pattern string, fn http.HandlerFunc) {
-		mux.Handle(pattern, headers(h.Auth.Middleware(fn)))
+		mux.Handle(pattern, headers(i18n.Middleware(h.Auth.Middleware(fn))))
 	}
 	page("GET /login", h.loginPage)
 	page("POST /login", h.loginSubmit)
@@ -153,7 +156,7 @@ func (h *Handlers) requireUser(next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(r.URL.Path)), http.StatusSeeOther)
 			return
 		}
-		h.errorPage(w, r, http.StatusUnauthorized, "Connexion requise", "Connectez-vous pour continuer.")
+		h.errorPage(w, r, http.StatusUnauthorized, "error.signInRequired", "error.signInRequiredText")
 	}
 }
 
@@ -200,7 +203,7 @@ func (h *Handlers) requireCSRFBody(limit int64, next, tooLarge http.HandlerFunc)
 			return
 		}
 		if !ok || err != nil || !validCSRF(r.PostForm.Get(csrfField), sess.CSRFToken) {
-			h.errorPage(w, r, http.StatusForbidden, "Requête refusée", "La requête n’a pas pu être vérifiée. Rechargez la page et réessayez.")
+			h.errorPage(w, r, http.StatusForbidden, "error.refused", "error.refusedText")
 			return
 		}
 		next(w, r)
@@ -224,6 +227,11 @@ type view struct {
 	Heading   string
 	Message   string
 	BackLink  string
+	// SwitchURL is the language switch's target (render sets it).
+	SwitchURL string
+	// Self is the page the language switch returns to when the response
+	// answers a form (POST); GET pages switch in place.
+	Self string
 }
 
 func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, name string, v view) {
@@ -232,12 +240,21 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, na
 		v.User = &u
 		v.CSRF = sess.CSRFToken
 	}
+	loc := locale(r)
+	fallback := v.Self
+	if fallback == "" {
+		fallback = "/login"
+		if v.User != nil {
+			fallback = "/learn"
+		}
+	}
+	v.SwitchURL = i18n.SwitchURL(r, loc, fallback)
 	var buf bytes.Buffer
-	if err := h.pages[name].ExecuteTemplate(&buf, "layout", v); err != nil {
+	if err := h.pages[name][loc].ExecuteTemplate(&buf, "layout", v); err != nil {
 		h.Log.Error("reader template", "page", name, "err", err)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("Erreur interne.\n"))
+		_, _ = w.Write([]byte(i18n.T(loc, "error.internalPlain") + "\n"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -249,29 +266,33 @@ func (h *Handlers) render(w http.ResponseWriter, r *http.Request, status int, na
 }
 
 // ErrorPage renders the reader's error page (used by the Studio shell for
-// its 403 page). The caller sets the response's cache and CSP headers.
+// its 403 page) in the request's interface locale; heading and message are
+// message keys (internal/i18n). The caller sets the response's cache and
+// CSP headers.
 func (h *Handlers) ErrorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {
 	h.errorPage(w, r, status, heading, message)
 }
 
-func (h *Handlers) errorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string) {
-	h.render(w, r, status, "error", view{Title: heading, Heading: heading, Message: message, Status: status})
+// errorPage renders the error page; heading and message are message keys,
+// message formatted with args.
+func (h *Handlers) errorPage(w http.ResponseWriter, r *http.Request, status int, heading, message string, args ...any) {
+	title := msg(r, heading)
+	h.render(w, r, status, "error", view{Title: title, Heading: title, Message: msg(r, message, args...), Status: status})
 }
 
 func (h *Handlers) notFound(w http.ResponseWriter, r *http.Request) {
-	h.errorPage(w, r, http.StatusNotFound, "Leçon indisponible",
-		"Cette page n’existe pas ou cette leçon n’est pas publiée pour le moment.")
+	h.errorPage(w, r, http.StatusNotFound, "error.lessonUnavailable", "error.lessonUnavailableText")
 }
 
 func (h *Handlers) internal(w http.ResponseWriter, r *http.Request, op string, err error) {
 	// Never log tokens, passwords, form bodies or queries.
 	h.Log.Error("reader failure", "op", op, "err", err)
-	h.errorPage(w, r, http.StatusInternalServerError, "Erreur interne", "Un problème est survenu. Réessayez plus tard.")
+	h.errorPage(w, r, http.StatusInternalServerError, "error.internal", "error.internalText")
 }
 
 func (h *Handlers) rateLimited(w http.ResponseWriter, r *http.Request, err *auth.RateLimitedError) {
 	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(err.RetryAfter.Seconds()))))
-	h.errorPage(w, r, http.StatusTooManyRequests, "Trop de tentatives", "Trop de tentatives. Réessayez dans quelques minutes.")
+	h.errorPage(w, r, http.StatusTooManyRequests, "error.tooMany", "error.tooManyText")
 }
 
 // ---- sign-in and sign-out ----
@@ -288,20 +309,20 @@ func (h *Handlers) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, next, http.StatusSeeOther)
 		return
 	}
-	h.render(w, r, http.StatusOK, "login", view{Title: "Se connecter", Data: loginData{Next: next}})
+	h.render(w, r, http.StatusOK, "login", view{Title: msg(r, "login.title"), Data: loginData{Next: next}})
 }
 
 func (h *Handlers) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	if !parseForm(w, r) {
-		h.render(w, r, http.StatusBadRequest, "login", view{Title: "Se connecter",
-			Data: loginData{Next: "/learn", Error: "Saisissez votre adresse e-mail et votre mot de passe."}})
+		h.render(w, r, http.StatusBadRequest, "login", view{Title: msg(r, "login.title"),
+			Data: loginData{Next: "/learn", Error: msg(r, "login.missing")}})
 		return
 	}
 	email, password := r.PostForm.Get("email"), r.PostForm.Get("password")
 	data := loginData{Email: email, Next: safeNext(r.PostForm.Get("next"))}
 	if email == "" || password == "" {
-		data.Error = "Saisissez votre adresse e-mail et votre mot de passe."
-		h.render(w, r, http.StatusBadRequest, "login", view{Title: "Se connecter", Data: data})
+		data.Error = msg(r, "login.missing")
+		h.render(w, r, http.StatusBadRequest, "login", view{Title: msg(r, "login.title"), Data: data})
 		return
 	}
 	var previous string
@@ -313,12 +334,12 @@ func (h *Handlers) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.As(err, &limited):
 		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(limited.RetryAfter.Seconds()))))
-		data.Error = "Trop de tentatives de connexion. Réessayez dans quelques minutes."
-		h.render(w, r, http.StatusTooManyRequests, "login", view{Title: "Se connecter", Data: data})
+		data.Error = msg(r, "login.tooMany")
+		h.render(w, r, http.StatusTooManyRequests, "login", view{Title: msg(r, "login.title"), Data: data})
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
-		data.Error = "Adresse e-mail ou mot de passe incorrect."
-		h.render(w, r, http.StatusUnauthorized, "login", view{Title: "Se connecter", Data: data})
+		data.Error = msg(r, "login.invalid")
+		h.render(w, r, http.StatusUnauthorized, "login", view{Title: msg(r, "login.title"), Data: data})
 		return
 	case err != nil:
 		h.internal(w, r, "login", err)
@@ -335,7 +356,7 @@ func (h *Handlers) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !parseForm(w, r) || !validCSRF(r.PostForm.Get(csrfField), sess.CSRFToken) {
-		h.errorPage(w, r, http.StatusForbidden, "Requête refusée", "La requête n’a pas pu être vérifiée. Rechargez la page et réessayez.")
+		h.errorPage(w, r, http.StatusForbidden, "error.refused", "error.refusedText")
 		return
 	}
 	token, _ := auth.SessionToken(r.Context())
@@ -372,8 +393,7 @@ func (h *Handlers) throttleInvitation(w http.ResponseWriter, r *http.Request) bo
 }
 
 func (h *Handlers) invalidInvitation(w http.ResponseWriter, r *http.Request) {
-	h.errorPage(w, r, http.StatusNotFound, "Ce lien d’invitation ne fonctionne plus",
-		"Il a peut-être expiré ou a déjà été utilisé. Demandez un nouveau lien à la personne qui vous a invité·e.")
+	h.errorPage(w, r, http.StatusNotFound, "error.invitation", "error.invitationText")
 }
 
 func (h *Handlers) invitePage(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +412,7 @@ func (h *Handlers) invitePage(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "load invitation", err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "invite", view{Title: "Activer votre compte",
+	h.render(w, r, http.StatusOK, "invite", view{Title: msg(r, "invite.title"),
 		Data: inviteData{Token: token, Email: email, MinPassword: invitations.MinPasswordLen}})
 }
 
@@ -419,16 +439,16 @@ func (h *Handlers) inviteSubmit(w http.ResponseWriter, r *http.Request) {
 	data := inviteData{Token: token, Email: email, DisplayName: f.Get("display_name"), Errors: map[string]string{}, MinPassword: invitations.MinPasswordLen}
 	name, err := invitations.NormalizeDisplayName(data.DisplayName)
 	if err != nil {
-		data.Errors["display_name"] = "Saisissez un nom de 1 à 100 caractères, sans caractères de contrôle."
+		data.Errors["display_name"] = msg(r, "invite.nameInvalid")
 	}
 	password := f.Get("password")
 	if invitations.CheckPassword(password) != nil {
-		data.Errors["password"] = "Le mot de passe doit contenir au moins " + strconv.Itoa(invitations.MinPasswordLen) + " caractères."
+		data.Errors["password"] = msg(r, "invite.passwordShort", invitations.MinPasswordLen)
 	} else if f.Get("password_confirm") != password {
-		data.Errors["password_confirm"] = "Les deux mots de passe ne correspondent pas."
+		data.Errors["password_confirm"] = msg(r, "invite.passwordMismatch")
 	}
 	if len(data.Errors) > 0 {
-		h.render(w, r, http.StatusUnprocessableEntity, "invite", view{Title: "Activer votre compte", Data: data})
+		h.render(w, r, http.StatusUnprocessableEntity, "invite", view{Title: msg(r, "invite.title"), Data: data, Self: "/invite/" + token})
 		return
 	}
 	hash, err := h.Service.HashPassword(password)
@@ -484,7 +504,7 @@ func (h *Handlers) dashboard(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "home", err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "dashboard", view{Title: "Mes leçons", Data: dashboardData{Bookmarks: bms, Subjects: subjects, Home: home}})
+	h.render(w, r, http.StatusOK, "dashboard", view{Title: msg(r, "nav.home"), Data: dashboardData{Bookmarks: bms, Subjects: subjects, Home: home}})
 }
 
 type subjectData struct {
@@ -503,11 +523,8 @@ func (h *Handlers) subject(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "subject", err)
 		return
 	}
-	label := subject.Label()
-	v := view{Title: label.Text, Data: subjectData{Subject: subject, Chapters: chapters}}
-	if label.Lang == "ar" {
-		v.TitleLang = "ar"
-	}
+	label := subject.Label(string(locale(r)))
+	v := view{Title: label.Text, TitleLang: label.Lang, Data: subjectData{Subject: subject, Chapters: chapters}}
 	h.render(w, r, http.StatusOK, "subject", v)
 }
 
@@ -554,7 +571,7 @@ func (h *Handlers) showLesson(w http.ResponseWriter, r *http.Request, status int
 	}
 	form.Max = reports.MaxMessage
 	w.Header().Set("Content-Security-Policy", cspLesson)
-	h.render(w, r, status, "lesson", view{Title: l.Title, Lesson: true,
+	h.render(w, r, status, "lesson", view{Title: l.Title, TitleLang: l.Language, Lesson: true, Self: lessonPath(l.PublicID),
 		Data: lessonData{Lesson: l, Parts: parts, Report: form}})
 }
 
@@ -628,7 +645,7 @@ func (h *Handlers) report(w http.ResponseWriter, r *http.Request) {
 	}
 	raw := r.PostForm.Get("revision")
 	if len(r.PostForm["revision"]) != 1 || len(r.PostForm["message"]) != 1 || !revisionField.MatchString(raw) {
-		h.errorPage(w, r, http.StatusBadRequest, "Requête invalide", "Le formulaire est incomplet. Rechargez la leçon et réessayez.")
+		h.errorPage(w, r, http.StatusBadRequest, "error.invalid", "error.invalidText")
 		return
 	}
 	number, _ := strconv.Atoi(raw)
@@ -640,11 +657,10 @@ func (h *Handlers) report(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		http.Redirect(w, r, "/learn/lessons/"+id+"/reported", http.StatusSeeOther)
 	case errors.Is(err, reports.ErrTextRequired):
-		form.Error = "Décrivez l’erreur avant d’envoyer le signalement."
+		form.Error = msg(r, "report.required")
 		h.showLesson(w, r, http.StatusUnprocessableEntity, form)
 	case errors.Is(err, reports.ErrInvalidText):
-		form.Error = "Le signalement doit contenir au plus " + strconv.Itoa(reports.MaxMessage) +
-			" caractères, sans caractères de contrôle ni de mise en forme de direction."
+		form.Error = msg(r, "report.invalidText", reports.MaxMessage)
 		h.showLesson(w, r, http.StatusUnprocessableEntity, form)
 	case errors.Is(err, reports.ErrNotFound):
 		h.notFound(w, r)
@@ -652,12 +668,12 @@ func (h *Handlers) report(w http.ResponseWriter, r *http.Request) {
 		// The published revision changed since it was displayed. Show the
 		// current version with the student's text kept; nothing was
 		// stored. A lesson that is no longer published gets 404.
-		form.Error = "La leçon a été modifiée depuis son affichage. Relisez-la, puis renvoyez votre signalement s’il s’applique encore."
+		form.Error = msg(r, "report.lessonChanged")
 		h.showLesson(w, r, http.StatusConflict, form)
 	case errors.Is(err, reports.ErrRejected), isRetryable(err):
 		// A concurrent change or a database guard refused the report;
 		// nothing was stored and the request can be sent again.
-		form.Error = "Le signalement n’a pas pu être enregistré. Réessayez."
+		form.Error = msg(r, "report.retry")
 		h.showLesson(w, r, http.StatusConflict, form)
 	default:
 		h.internal(w, r, "error report", err)
@@ -674,7 +690,7 @@ func (h *Handlers) reportTooLarge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.showLesson(w, r, http.StatusRequestEntityTooLarge, reportForm{Open: true,
-		Error: "Le texte est trop long (au plus " + strconv.Itoa(reports.MaxMessage) + " caractères). Il n’a pas pu être conservé : saisissez une version plus courte."})
+		Error: msg(r, "report.tooLong", reports.MaxMessage)})
 }
 
 // reported confirms a filed report. It shows no lesson data.
@@ -684,7 +700,7 @@ func (h *Handlers) reported(w http.ResponseWriter, r *http.Request) {
 		h.notFound(w, r)
 		return
 	}
-	h.render(w, r, http.StatusOK, "reported", view{Title: "Signalement envoyé", Data: id})
+	h.render(w, r, http.StatusOK, "reported", view{Title: msg(r, "reported.title"), Data: id})
 }
 
 // isRetryable reports a deadlock (40P01) or serialization failure (40001):
@@ -737,7 +753,7 @@ func (h *Handlers) search(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	h.render(w, r, http.StatusOK, "search", view{Title: "Rechercher une leçon ou un cours", Data: data})
+	h.render(w, r, http.StatusOK, "search", view{Title: msg(r, "search.title"), Data: data})
 }
 
 func bookmarkReturn(r *http.Request, publicID string) string {
@@ -754,8 +770,7 @@ func (h *Handlers) addBookmark(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNotFound):
 		h.notFound(w, r)
 	case errors.Is(err, ErrTooManyBookmarks):
-		h.errorPage(w, r, http.StatusConflict, "Trop de signets",
-			"Vous avez atteint la limite de "+strconv.Itoa(MaxBookmarks)+" signets. Retirez-en avant d’en ajouter.")
+		h.errorPage(w, r, http.StatusConflict, "error.tooManyBookmarks", "error.tooManyBookmarksText", MaxBookmarks)
 	case err != nil:
 		h.internal(w, r, "add bookmark", err)
 	default:

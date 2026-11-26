@@ -68,9 +68,9 @@ type Subject struct {
 	LessonCount int
 }
 
-// Label is the subject's name in navigation: French (the reader's
-// language), else Arabic, else the code.
-func (s Subject) Label() catalogue.Label { return s.Names.Label(s.Code, "fr") }
+// Label is the subject's name in navigation: in the interface locale ui,
+// else the other language, else the code.
+func (s Subject) Label(ui string) catalogue.Label { return s.Names.Label(s.Code, ui) }
 
 // LessonSummary is a published lesson in a list.
 type LessonSummary struct {
@@ -107,8 +107,9 @@ type Chapter struct {
 	Lessons []LessonSummary
 }
 
-// Label is the chapter's heading: French, else Arabic, else the code.
-func (c Chapter) Label() catalogue.Label { return c.Names.Label(c.Code, "fr") }
+// Label is the chapter's heading: in the interface locale ui, else the
+// other language, else the code.
+func (c Chapter) Label(ui string) catalogue.Label { return c.Names.Label(c.Code, ui) }
 
 // Lesson is a published lesson ready to render.
 type Lesson struct {

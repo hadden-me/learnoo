@@ -8,7 +8,6 @@ package reader
 
 import (
 	"errors"
-	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,12 +19,6 @@ import (
 
 // coursePages are the templates of this file, parsed by New.
 var coursePages = []string{"course", "course_step", "course_reported", "preferences"}
-
-func (h *Handlers) parseCoursePages(base *template.Template, pages map[string]*template.Template) {
-	for _, name := range coursePages {
-		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(files, "templates/"+name+".html"))
-	}
-}
 
 // registerCourses mounts the course reading and preference routes.
 func (h *Handlers) registerCourses(page func(string, http.HandlerFunc)) {
@@ -57,8 +50,7 @@ func CourseMediaURL(coursePublicID, lessonPublicID string) rendering.MediaURL {
 // unknown, never published, suspended, archived or withdrawn alike, and for
 // a lesson that is not a step of it. It keeps navigation back (error.html).
 func (h *Handlers) courseUnavailable(w http.ResponseWriter, r *http.Request) {
-	h.errorPage(w, r, http.StatusNotFound, "Cours indisponible",
-		"Ce cours n’existe pas ou n’est pas disponible pour le moment. Vos signets sont conservés.")
+	h.errorPage(w, r, http.StatusNotFound, "error.courseUnavailable", "error.courseUnavailableText")
 }
 
 type courseData struct {
@@ -80,10 +72,7 @@ func (h *Handlers) course(w http.ResponseWriter, r *http.Request) {
 	if steps := c.Steps(); len(steps) > 0 {
 		d.First = &steps[0]
 	}
-	v := view{Title: c.Title, Data: d}
-	if c.Language != "fr" {
-		v.TitleLang = c.Language
-	}
+	v := view{Title: c.Title, TitleLang: c.Language, Data: d}
 	h.render(w, r, http.StatusOK, "course", v)
 }
 
@@ -112,10 +101,7 @@ func (h *Handlers) showCourseStep(w http.ResponseWriter, r *http.Request, status
 		return
 	}
 	d := courseStepData{CourseStep: cs}
-	v := view{Title: cs.Step.Title + " · " + cs.Course.Title}
-	if cs.Course.Language != "fr" {
-		v.TitleLang = cs.Course.Language
-	}
+	v := view{Title: cs.Step.Title + " · " + cs.Course.Title, TitleLang: cs.Course.Language, Self: courseStepPath(courseID, lessonID)}
 	if cs.Step.Readable {
 		parts, err := rendering.RenderLesson(cs.Document, CourseMediaURL(courseID, lessonID))
 		if err != nil {
@@ -184,7 +170,7 @@ func (h *Handlers) courseReport(w http.ResponseWriter, r *http.Request) {
 	raw, rawCourse := r.PostForm.Get("revision"), r.PostForm.Get("course_revision")
 	if len(r.PostForm["revision"]) != 1 || len(r.PostForm["course_revision"]) != 1 || len(r.PostForm["message"]) != 1 ||
 		!revisionField.MatchString(raw) || !revisionField.MatchString(rawCourse) {
-		h.errorPage(w, r, http.StatusBadRequest, "Requête invalide", "Le formulaire est incomplet. Rechargez la leçon et réessayez.")
+		h.errorPage(w, r, http.StatusBadRequest, "error.invalid", "error.invalidText")
 		return
 	}
 	number, _ := strconv.Atoi(raw)
@@ -196,21 +182,20 @@ func (h *Handlers) courseReport(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		http.Redirect(w, r, courseStepPath(courseID, lessonID)+"/reported", http.StatusSeeOther)
 	case errors.Is(err, reports.ErrTextRequired):
-		form.Error = "Décrivez l’erreur avant d’envoyer le signalement."
+		form.Error = msg(r, "report.required")
 		h.showCourseStep(w, r, http.StatusUnprocessableEntity, form)
 	case errors.Is(err, reports.ErrInvalidText):
-		form.Error = "Le signalement doit contenir au plus " + strconv.Itoa(reports.MaxMessage) +
-			" caractères, sans caractères de contrôle ni de mise en forme de direction."
+		form.Error = msg(r, "report.invalidText", reports.MaxMessage)
 		h.showCourseStep(w, r, http.StatusUnprocessableEntity, form)
 	case errors.Is(err, reports.ErrNotFound):
 		// The course or the step is no longer readable: show the step page,
 		// which explains which (or the generic notice).
 		h.showCourseStep(w, r, http.StatusNotFound, reportForm{})
 	case errors.Is(err, reports.ErrRevisionChanged):
-		form.Error = "Ce cours ou cette leçon a été modifié depuis son affichage. Relisez-la, puis renvoyez votre signalement s’il s’applique encore."
+		form.Error = msg(r, "report.courseChanged")
 		h.showCourseStep(w, r, http.StatusConflict, form)
 	case errors.Is(err, reports.ErrRejected), isRetryable(err):
-		form.Error = "Le signalement n’a pas pu être enregistré. Réessayez."
+		form.Error = msg(r, "report.retry")
 		h.showCourseStep(w, r, http.StatusConflict, form)
 	default:
 		h.internal(w, r, "course error report", err)
@@ -225,7 +210,7 @@ func (h *Handlers) courseReportTooLarge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.showCourseStep(w, r, http.StatusRequestEntityTooLarge, reportForm{Open: true,
-		Error: "Le texte est trop long (au plus " + strconv.Itoa(reports.MaxMessage) + " caractères). Il n’a pas pu être conservé : saisissez une version plus courte."})
+		Error: msg(r, "report.tooLong", reports.MaxMessage)})
 }
 
 // courseReported confirms a filed course-context report. It shows no
@@ -236,7 +221,7 @@ func (h *Handlers) courseReported(w http.ResponseWriter, r *http.Request) {
 		h.courseUnavailable(w, r)
 		return
 	}
-	h.render(w, r, http.StatusOK, "course_reported", view{Title: "Signalement envoyé", Data: courseStepPath(courseID, lessonID)})
+	h.render(w, r, http.StatusOK, "course_reported", view{Title: msg(r, "reported.title"), Data: courseStepPath(courseID, lessonID)})
 }
 
 // courseBookmarkReturn is where a course bookmark form returns: the home or
@@ -255,8 +240,7 @@ func (h *Handlers) addCourseBookmark(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNotFound):
 		h.courseUnavailable(w, r)
 	case errors.Is(err, ErrTooManyBookmarks):
-		h.errorPage(w, r, http.StatusConflict, "Trop de signets",
-			"Vous avez atteint la limite de "+strconv.Itoa(MaxBookmarks)+" cours enregistrés. Retirez-en avant d’en ajouter.")
+		h.errorPage(w, r, http.StatusConflict, "error.tooManyBookmarks", "error.tooManyCourseBookmarksText", MaxBookmarks)
 	case err != nil:
 		h.internal(w, r, "add course bookmark", err)
 	default:
@@ -319,7 +303,7 @@ func (h *Handlers) preferencesPage(w http.ResponseWriter, r *http.Request) {
 	h.showPreferences(w, r, http.StatusOK, "")
 }
 
-func (h *Handlers) showPreferences(w http.ResponseWriter, r *http.Request, status int, msg string) {
+func (h *Handlers) showPreferences(w http.ResponseWriter, r *http.Request, status int, problem string) {
 	p, err := h.Store.Preference(r.Context(), userID(r.Context()))
 	if err != nil {
 		h.internal(w, r, "preference", err)
@@ -330,8 +314,8 @@ func (h *Handlers) showPreferences(w http.ResponseWriter, r *http.Request, statu
 		h.internal(w, r, "level options", err)
 		return
 	}
-	h.render(w, r, status, "preferences", view{Title: "Mon niveau et ma section",
-		Data: preferencesData{Preference: p, Levels: levels, Error: msg}})
+	h.render(w, r, status, "preferences", view{Title: msg(r, "prefs.title"), Self: "/learn/preferences",
+		Data: preferencesData{Preference: p, Levels: levels, Error: problem}})
 }
 
 // savePreferences stores or clears the level/section preference. The
@@ -340,7 +324,7 @@ func (h *Handlers) savePreferences(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r.Context())
 	choice := r.PostForm.Get("choice")
 	if len(r.PostForm["choice"]) > 1 {
-		h.showPreferences(w, r, http.StatusBadRequest, "Choisissez une seule option.")
+		h.showPreferences(w, r, http.StatusBadRequest, msg(r, "prefs.oneOption"))
 		return
 	}
 	if r.PostForm.Get("skip") != "" || choice == "" {
@@ -353,13 +337,13 @@ func (h *Handlers) savePreferences(w http.ResponseWriter, r *http.Request) {
 	}
 	levelID, sectionID, ok := parsePreference(choice)
 	if !ok {
-		h.showPreferences(w, r, http.StatusUnprocessableEntity, "Ce choix n’est pas proposé. Choisissez dans la liste.")
+		h.showPreferences(w, r, http.StatusUnprocessableEntity, msg(r, "prefs.notOffered"))
 		return
 	}
 	err := h.Store.SetPreference(r.Context(), uid, levelID, sectionID)
 	switch {
 	case errors.Is(err, ErrInvalidPreference):
-		h.showPreferences(w, r, http.StatusUnprocessableEntity, "Ce choix n’est plus proposé. Choisissez dans la liste.")
+		h.showPreferences(w, r, http.StatusUnprocessableEntity, msg(r, "prefs.noLongerOffered"))
 	case err != nil:
 		h.internal(w, r, "save preference", err)
 	default:

@@ -1,3 +1,3 @@
-{{define "content"}}<h1>Signalement envoyé</h1>
-<p role="status">Merci. L’équipe de relecture examinera votre signalement. La leçon reste inchangée tant qu’une correction n’a pas été relue et publiée.</p>
-<p><a href="/learn/lessons/{{.Data}}">Revenir à la leçon</a></p>{{end}}
+{{define "content"}}<h1>{{t "reported.title"}}</h1>
+<p role="status">{{t "reported.lesson"}}</p>
+<p><a href="/learn/lessons/{{.Data}}">{{t "reported.backLesson"}}</a></p>{{end}}

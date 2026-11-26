@@ -1,8 +1,8 @@
-{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="Fil d’Ariane"><a href="/">Accueil</a> › <span aria-current="page">Catalogue</span></nav>
-<h1>Catalogue</h1>
-<p>Choisissez un niveau et une section pour voir les cours et les leçons publiés dans l’édition en vigueur du programme.</p>
-{{if .Levels}}{{range .Levels}}<section class="level"><h2>{{.Name}}</h2><ul class="cards">{{range .Sections}}<li class="card"><a href="{{.Path}}">{{.Name}}</a><span class="context">{{with .Current}}{{.LabelFr}} ({{.StateLabel}}){{else}}Aucune édition en vigueur{{end}}</span></li>{{end}}</ul></section>{{end}}
-{{else}}<p>Aucun niveau ni aucune section ne sont encore publiés.</p>{{end}}
-{{with .Unplaced}}<section aria-labelledby="unplaced-heading"><h2 id="unplaced-heading">Leçons pas encore placées dans une édition du programme</h2>
-<p class="hint">Ces leçons publiées ne sont rattachées à aucun chapitre d’une édition du programme. La lecture d’une leçon nécessite un compte.</p>
-{{range .}}<section class="chapter"><h3>{{template "catname" .Label}}</h3><ul class="cards">{{range .Lessons}}{{template "publesson" .}}{{end}}</ul></section>{{end}}</section>{{end}}{{end}}{{end}}
+{{define "content"}}{{with .Data}}<nav class="breadcrumb" aria-label="{{t "breadcrumb"}}"><a href="{{href "/"}}">{{t "nav.publicHome"}}</a> › <span aria-current="page">{{t "nav.catalogue"}}</span></nav>
+<h1>{{t "nav.catalogue"}}</h1>
+<p>{{t "pub.cat.intro"}}</p>
+{{if .Levels}}{{range .Levels}}<section class="level"><h2>{{pick .Name .NameAr}}</h2><ul class="cards">{{range .Sections}}<li class="card"><a href="{{href .Path}}">{{pick .Name .NameAr}}</a><span class="context">{{with .Current}}{{pick .LabelFr .LabelAr}} ({{t .StateKey}}){{else}}{{t "pub.cat.noCurrent"}}{{end}}</span></li>{{end}}</ul></section>{{end}}
+{{else}}<p>{{t "pub.cat.empty"}}</p>{{end}}
+{{with .Unplaced}}<section aria-labelledby="unplaced-heading"><h2 id="unplaced-heading">{{t "pub.cat.unplaced"}}</h2>
+<p class="hint">{{t "pub.cat.unplacedHint"}}</p>
+{{range .}}<section class="chapter"><h3>{{template "catname" (.Label ui)}}</h3><ul class="cards">{{range .Lessons}}{{template "publesson" .}}{{end}}</ul></section>{{end}}</section>{{end}}{{end}}{{end}}
