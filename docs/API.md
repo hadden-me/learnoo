@@ -209,7 +209,7 @@ Returned by every lesson endpoint that succeeds with a body:
 - `content` is the stored schema v1 document ([fixtures/README.md](fixtures/README.md)), with embedded exercises and solutions. The server stores a canonical compact form, so key order and spacing may differ from what was sent.
 - `version` changes on every save and on submission. Send it back as `expectedVersion`.
 - `number` counts revisions of the lesson (1, 2, …). Numbers are never reused: after a discarded draft #2 the next draft is #3.
-- IDs are numeric database IDs. `subjectId` and `chapterId` refer to the catalogue tables; a catalogue endpoint arrives with LRN-014.
+- IDs are numeric database IDs. `subjectId` and `chapterId` refer to the catalogue tables, read through the [catalogue endpoints](#catalogue).
 
 ### Draft fields
 
@@ -434,6 +434,7 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 - Anonymous `GET`/`HEAD` on `/learn…` pages: `303` to `/login?next=<path>`, whether or not the lesson exists. Anonymous `POST` on `/learn…`: `401` page. Neither contains lesson data.
 - Unsafe methods pass Go's cross-origin protection (`403 cross_origin_rejected` JSON body, as for the API). Authenticated form posts also need the session's CSRF token in the form field `csrf_token` (the same value as `csrfToken`); missing or wrong: `403` page. A token in the query string is ignored.
 - Any signed-in account can read; no permission is needed or granted. Invited students hold no permission and get `403`/`404` from the Studio and review APIs.
+- Subjects and chapters are shown by their [catalogue display names](#catalogue), never by a name stored in the lesson: navigation (dashboard subjects, subject page heading and chapter headings) prefers the French name, a lesson's breadcrumb and its context in bookmarks and search results prefer the lesson's language; then the other language's name, then the code. Arabic names are wrapped in `<bdi lang="ar" dir="rtl">`. Subjects on the dashboard follow the catalogue display order, then code.
 - URLs carry only identifiers: subject and chapter codes, the lesson's random `public_id` (UUID), and the search query on `/learn/search`. Invitation tokens appear only in the invitation link (`Referrer-Policy: no-referrer` on that page); the form posts the token in its body.
 
 ### Routes
@@ -446,7 +447,7 @@ Server-rendered HTML pages in French (interface language), in `internal/reader`.
 | `GET /invite/{token}` | — | Invitation form showing the invited email, or a `404` page with one message for unknown, malformed, expired and used tokens. Throttled |
 | `POST /invite` | — | Fields `token`, `display_name`, `password`, `password_confirm`. Validation errors: `422` form (the display name is kept, passwords are not). Success: creates the Student account, marks the invitation used, signs in, `303` to `/learn`. Invalid token: the same `404` page. Throttled |
 | `GET /learn` | required | Dashboard: the user's bookmarks (newest first, at most 500; lessons no longer published are listed as unavailable), subjects with published lessons, search box |
-| `GET /learn/subjects/{code}` | required | The subject's published lessons grouped by the published revision's chapter (chapters by code; "Sans chapitre" last; lessons by title). `404` if the subject has no published lesson |
+| `GET /learn/subjects/{code}` | required | The subject's published lessons grouped by the published revision's chapter (chapters by catalogue display order, then code; "Sans chapitre" last; lessons by title). `404` if the subject has no published lesson |
 | `GET /learn/lessons/{publicId}` | required | Published lesson: breadcrumb, title, author and approving-reviewer credit (display names), bookmark button, objective and the canonical body from `rendering.RenderBlocks`. `404` page for unknown, malformed (only lower-case UUIDs), never-published, unpublished and archived lessons alike |
 | `POST /learn/lessons/{publicId}/bookmark` | required + `csrf_token` | Bookmarks a published lesson (idempotent), `303` back to the lesson (or to `/learn` with `return=dashboard`). `404` if not published; `409` page at 500 bookmarks |
 | `POST /learn/lessons/{publicId}/unbookmark` | required + `csrf_token` | Removes the bookmark, published or not (idempotent), `303` as above |
@@ -522,19 +523,24 @@ What the Studio needs from the authenticated application, so that neither `local
 
 ### Catalogue
 
-Subjects and chapters are identified by codes (1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen) and carry the IDs that `POST /api/lessons` (`subjectId`) and draft fields (`chapterId`) take. Lists are ordered by code and bounded to 1000 entries. Display names, a curriculum ordering and seed data are LRN-014: there are no names yet, and nothing is seeded (operators add entries with `add-subject` and `add-chapter`, [DEVELOPMENT.md](DEVELOPMENT.md#provisioning-teachers-and-the-catalogue)).
+Subjects and chapters are identified by immutable codes (1 to 63 lower-case ASCII letters, digits and hyphens, not starting with a hyphen) and carry the IDs that `POST /api/lessons` (`subjectId`) and draft fields (`chapterId`) take. Each entry also has optional display names, `nameFr` and `nameAr` (`null` until an operator sets them; clients show the code instead), and a display order `sortOrder` (0 to 9999, default 0). Lists are ordered by `sortOrder`, then code, and bounded to 1000 entries. Names and order are display metadata, changed only by the audited operator commands `set-subject-name`, `set-chapter-name` and `set-order` ([DEVELOPMENT.md](DEVELOPMENT.md#provisioning-teachers-and-the-catalogue)); they are not part of any revision or snapshot. Nothing is seeded: the pilot catalogue waits for teacher-confirmed names (LRN-014). The name and order fields were added in issue #86; clients that ignore unknown fields are unaffected.
 
-`GET /api/catalogue/subjects`:
+`GET /api/catalogue/subjects` (illustrative values):
 
 ```json
-{"subjects": [{"id": 1, "code": "maths"}, {"id": 2, "code": "physique"}]}
+{"subjects": [{"id": 2, "code": "physique", "nameFr": null, "nameAr": null, "sortOrder": 0},
+              {"id": 1, "code": "maths", "nameFr": "Mathématiques", "nameAr": "رياضيات", "sortOrder": 1}]}
 ```
 
 `GET /api/catalogue/subjects/{code}/chapters`: `404 not_found` for an unknown or malformed code.
 
 ```json
-{"subject": {"id": 1, "code": "maths"}, "chapters": [{"id": 4, "code": "complexes"}, {"id": 3, "code": "suites"}]}
+{"subject": {"id": 1, "code": "maths", "nameFr": "Mathématiques", "nameAr": "رياضيات", "sortOrder": 1},
+ "chapters": [{"id": 4, "code": "complexes", "nameFr": null, "nameAr": null, "sortOrder": 0},
+              {"id": 3, "code": "suites", "nameFr": null, "nameAr": null, "sortOrder": 2}]}
 ```
+
+`GET /api/lessons/mine` returns the names too: `subjectNameFr` and `subjectNameAr` on each lesson, `chapterNameFr` and `chapterNameAr` on `latestRevision` (`null` when unset or without a chapter). They are read at request time, so renaming a chapter changes how every lesson placed in it is labelled, published ones included.
 
 Lists are always arrays, never `null`.
 
@@ -544,11 +550,12 @@ The caller's lessons (`lessons.created_by`), most recently updated first (by the
 
 ```json
 {"lessons": [{
-  "id": 7, "publicId": "0b6f…", "subjectId": 1, "subjectCode": "maths", "language": "fr",
-  "translationGroupId": "5c1e…", "archived": false, "publishedRevisionId": 18,
+  "id": 7, "publicId": "0b6f…", "subjectId": 1, "subjectCode": "maths",
+  "subjectNameFr": "Mathématiques", "subjectNameAr": "رياضيات", "language": "fr", "translationGroupId": "5c1e…", "archived": false, "publishedRevisionId": 18,
   "createdAt": "2026-11-20T09:00:00Z", "hasFeedback": true, "feedbackRevisionId": 20,
   "latestRevision": {"id": 21, "number": 3, "status": "draft", "title": "Les nombres complexes",
-    "chapterId": 4, "chapterCode": "complexes", "version": 5, "updatedAt": "2026-11-25T10:12:00Z"}
+    "chapterId": 4, "chapterCode": "complexes", "chapterNameFr": null, "chapterNameAr": null,
+    "version": 5, "updatedAt": "2026-11-25T10:12:00Z"}
 }]}
 ```
 
@@ -624,4 +631,4 @@ Display names of authors, reviewers and administrators are returned to staff onl
 
 ## Not yet defined
 
-Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); catalogue names, ordering and seed data (LRN-014); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
+Public registration, password recovery, email verification, account deletion (LRN-022); web permission administration (LRN-019 console); administration pages for withdrawal, unpublication and restoration and a listing of the pointer audit and withdrawals (LRN-019); reader access to uploaded media (schema v1 cannot reference uploads yet; the Studio attaches them as `mediaIds`); the pilot catalogue seed (LRN-014, waiting for teacher-confirmed names); publisher and administrator access to uploaded media of approved revisions (the publisher view lists their number only); reviewer dashboards and notifications (M2); error report administration pages, notifications to reporters and reviewers, and a reporter's view of their own reports (LRN-019/LRN-020).
