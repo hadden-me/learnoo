@@ -83,7 +83,10 @@ for (const lang of ['fr', 'ar']) {
     const t = await apiSession(browser, baseURL, teacher);
     const rv = await apiSession(browser, baseURL, reviewer);
     const pu = await apiSession(browser, baseURL, publisher);
+    const adm = await apiSession(browser, baseURL, admin);
     const subject = (await t.call('GET', '/api/catalogue/subjects')).subjects.find((x) => x.code === 'test-math');
+    // The teacher reviews the subject only during this journey, so that the self-review refusal is shown to them.
+    await adm.call('POST', `/api/admin/users/${t.me.id}/grant`, { permission: 'reviewer', subjectId: subject.id });
     const chapter = (await t.call('GET', '/api/catalogue/subjects/test-math/chapters')).chapters.find((c) => c.code === 'test-chapter');
     const subjectName = lang === 'ar' ? subject.nameAr : subject.nameFr;
 
@@ -242,7 +245,7 @@ for (const lang of ['fr', 'ar']) {
     const stepBURL = await outline.getByRole('link', { name: lessonB.title }).getAttribute('href');
     await vp.getByRole('link', { name: r('course.start') }).click();
     await expect(vp.getByText(lessonA.body)).toBeVisible();
-    await expect(vp.locator('.math[data-rendered="true"]').first()).toBeAttached();
+    await expect(vp.locator('.math[data-rendered="true"] .katex').first()).toBeVisible();
     await expect(vp.getByText(r('step.position', 1, 2))).toBeVisible();
     const steps = vp.getByRole('navigation', { name: r('step.navLabel') });
     await steps.getByRole('link', { name: new RegExp(r('step.next')) }).click();
@@ -273,7 +276,9 @@ for (const lang of ['fr', 'ar']) {
     await expect(vp.getByText(lessonA.body)).toBeVisible();
     await expect(steps.getByRole('link', { name: new RegExp(r('step.next')) })).toContainText(r('step.unavailableShort'));
     // The withdrawn body is not served at the standalone address either.
-    expect(await (await vp.request.get(`/learn/lessons/${lessonB.publicId}`)).text()).not.toContain(lessonB.body);
+    const standalone = await vp.request.get(`/learn/lessons/${lessonB.publicId}`);
+    expect(standalone.status()).toBe(404);
+    expect(await standalone.text()).not.toContain(lessonB.body);
 
     // A corrected revision of lesson B is written, reviewed and published (lesson workflow through the API).
     const correction = `TEST Corps corrigé de la leçon B ${lang}.`;
@@ -311,7 +316,10 @@ for (const lang of ['fr', 'ar']) {
 
     // The step reads again, with the corrected revision, and navigation passes it.
     await steps.getByRole('link', { name: new RegExp(r('step.next')) }).click();
+    await expect(vp).toHaveURL(new RegExp(`${stepBURL}$`));
     await expect(vp.getByText(correction)).toBeVisible();
+    await expect(vp.getByText(r('step.position', 2, 2))).toBeVisible();
+    await expect(vp.getByText(lessonB.body)).toHaveCount(0);
     await expect(vp.getByText(r('step.unavailable'))).toHaveCount(0);
     expect(await noOverflow(vp)).toBe(true);
 
@@ -321,6 +329,7 @@ for (const lang of ['fr', 'ar']) {
     }
     expect(visitorProblems).toEqual([]);
     await visitor.close();
-    for (const x of [t, rv, pu]) await x.ctx.close();
+    await adm.call('POST', `/api/admin/users/${t.me.id}/revoke`, { permission: 'reviewer', subjectId: subject.id });
+    for (const x of [t, rv, pu, adm]) await x.ctx.close();
   });
 }
