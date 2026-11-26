@@ -1,6 +1,7 @@
 // Restricted lesson JSON (schemaVersion 1). Mirrors internal/rendering/render.go;
 // docs/fixtures/README.md is the contract. The Go renderer stays authoritative:
 // this module only lets the Studio refuse invalid documents before sending them.
+import { t } from '../i18n';
 
 export type Lang = 'fr' | 'ar';
 export type Dir = 'ltr' | 'rtl' | 'auto';
@@ -86,26 +87,26 @@ export const byteLength = (value: string) => utf8.encode(value).length;
  * JSON.parse reads 1.0 and 1e0 as 1 where Go refuses them.
  */
 export function parseLesson(source: string): LessonDocument {
-  if (byteLength(source) > MAX_DOCUMENT_BYTES) throw new LessonError('Le document dépasse 128 Kio.');
+  if (byteLength(source) > MAX_DOCUMENT_BYTES) throw new LessonError(t('lessons.check.tooLarge'));
   let raw: unknown;
   try {
     raw = JSON.parse(source);
   } catch {
-    throw new LessonError('JSON invalide.');
+    throw new LessonError(t('lessons.check.invalidJson'));
   }
   const duplicate = findDuplicateKey(source);
-  if (duplicate !== null) throw new LessonError(`Clé en double : ${duplicate}.`);
+  if (duplicate !== null) throw new LessonError(t('lessons.check.duplicateKey', { key: duplicate }));
   const number = findNonIntegerNumber(source);
-  if (number !== null) throw new LessonError(`Nombre invalide : ${number} (entier attendu).`);
-  if (!isRecord(raw)) throw new LessonError('Le document doit être un objet JSON.');
+  if (number !== null) throw new LessonError(t('lessons.check.invalidNumber', { number }));
+  if (!isRecord(raw)) throw new LessonError(t('lessons.check.notObject'));
   for (const key of Object.keys(raw)) {
-    if (!DOCUMENT_KEYS.includes(key)) throw new LessonError(`Champ inconnu dans le document : ${key}.`);
+    if (!DOCUMENT_KEYS.includes(key)) throw new LessonError(t('lessons.check.unknownDocumentField', { key }));
   }
   for (const key of ['title', 'language', 'status', 'objective']) {
-    if (key in raw && typeof raw[key] !== 'string') throw new LessonError(`Le champ ${key} doit être du texte.`);
+    if (key in raw && typeof raw[key] !== 'string') throw new LessonError(t('lessons.check.fieldText', { key }));
   }
-  if ('schemaVersion' in raw && typeof raw.schemaVersion !== 'number') throw new LessonError('schemaVersion doit être un nombre.');
-  if ('blocks' in raw && !Array.isArray(raw.blocks)) throw new LessonError('blocks doit être une liste.');
+  if ('schemaVersion' in raw && typeof raw.schemaVersion !== 'number') throw new LessonError(t('lessons.check.mustBeNumber', { field: 'schemaVersion' }));
+  if ('blocks' in raw && !Array.isArray(raw.blocks)) throw new LessonError(t('lessons.check.mustBeList', { field: 'blocks' }));
   const doc = {
     schemaVersion: raw.schemaVersion ?? 0,
     title: raw.title ?? '',
@@ -120,17 +121,17 @@ export function parseLesson(source: string): LessonDocument {
 }
 
 function parseNode(raw: unknown, path: string): LessonNode {
-  if (!isRecord(raw)) throw new LessonError(`${path} doit être un objet.`);
+  if (!isRecord(raw)) throw new LessonError(t('lessons.check.mustBeObject', { field: path }));
   const node: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (key === 'children') {
-      if (!Array.isArray(value)) throw new LessonError(`${path}.children doit être une liste.`);
+      if (!Array.isArray(value)) throw new LessonError(t('lessons.check.mustBeList', { field: `${path}.children` }));
       node.children = value.map((child, i) => parseNode(child, `${path}.children[${i}]`));
     } else if (STRING_NODE_KEYS.has(key)) {
-      if (typeof value !== 'string') throw new LessonError(`${path}.${key} doit être du texte.`);
+      if (typeof value !== 'string') throw new LessonError(t('lessons.check.mustBeText', { field: `${path}.${key}` }));
       node[key] = value;
     } else {
-      throw new LessonError(`Champ inconnu ${key} dans ${path}.`);
+      throw new LessonError(t('lessons.check.unknownField', { key, path }));
     }
   }
   return node as unknown as LessonNode;
@@ -139,37 +140,37 @@ function parseNode(raw: unknown, path: string): LessonNode {
 /** Port of rendering.Validate. Returns French messages; empty means valid. */
 export function validateLesson(doc: LessonDocument): string[] {
   const errors: string[] = [];
-  if (doc.schemaVersion !== 1 || doc.status !== 'unreviewed') errors.push('Seuls le schéma 1 et le statut « unreviewed » sont acceptés.');
-  if (doc.language !== 'fr' && doc.language !== 'ar') errors.push('Langue du document non prise en charge.');
-  if (byteLength(doc.title) === 0 || byteLength(doc.title) > 240) errors.push('Le titre est obligatoire (240 octets maximum).');
-  if (byteLength(doc.objective) > 1000) errors.push('L’objectif dépasse 1 000 octets.');
-  if (doc.blocks.length === 0) errors.push('Le document est vide.');
+  if (doc.schemaVersion !== 1 || doc.status !== 'unreviewed') errors.push(t('lessons.check.schema'));
+  if (doc.language !== 'fr' && doc.language !== 'ar') errors.push(t('lessons.check.language'));
+  if (byteLength(doc.title) === 0 || byteLength(doc.title) > 240) errors.push(t('lessons.check.title'));
+  if (byteLength(doc.objective) > 1000) errors.push(t('lessons.check.objective'));
+  if (doc.blocks.length === 0) errors.push(t('lessons.check.empty'));
   let count = 0;
   const walk = (nodes: LessonNode[], parent: string, depth: number, path: string): string | null => {
-    if (depth > MAX_DEPTH) return 'Imbrication trop profonde (12 niveaux maximum).';
+    if (depth > MAX_DEPTH) return t('lessons.check.tooDeep');
     for (const [i, n] of nodes.entries()) {
       const at = `${path}[${i}] (${n.type})`;
-      if (++count > MAX_NODES) return `Trop de nœuds (${MAX_NODES} maximum).`;
-      if (byteLength(n.text ?? '') > 8000 || byteLength(n.title ?? '') > 240 || byteLength(n.alt ?? '') > 1000 || byteLength(n.caption ?? '') > 1000) return `${at} : texte trop long.`;
-      if (n.lang && n.lang !== 'ar' && n.lang !== 'fr') return `${at} : langue non prise en charge.`;
-      if (n.dir && n.dir !== 'rtl' && n.dir !== 'ltr' && n.dir !== 'auto') return `${at} : direction invalide.`;
-      if (INLINE.has(n.type) !== INLINE_PARENTS.has(parent)) return `${at} : ${n.type} interdit dans ${parent}.`;
-      if (parent === 'list' && n.type !== 'item') return `${at} : une liste ne contient que des éléments.`;
-      if (n.type === 'item' && parent !== 'list') return `${at} : élément hors d’une liste.`;
-      if (n.type === 'solution' && parent !== 'exercise') return `${at} : solution hors d’un exercice.`;
-      if ((n.src && n.type !== 'image') || (n.alt && n.type !== 'image') || (n.caption && n.type !== 'image') || (n.videoId && n.type !== 'youtube')) return `${at} : attributs média inattendus.`;
+      if (++count > MAX_NODES) return t('lessons.check.tooManyNodes', { max: MAX_NODES });
+      if (byteLength(n.text ?? '') > 8000 || byteLength(n.title ?? '') > 240 || byteLength(n.alt ?? '') > 1000 || byteLength(n.caption ?? '') > 1000) return t('lessons.check.textTooLong', { at });
+      if (n.lang && n.lang !== 'ar' && n.lang !== 'fr') return t('lessons.check.nodeLanguage', { at });
+      if (n.dir && n.dir !== 'rtl' && n.dir !== 'ltr' && n.dir !== 'auto') return t('lessons.check.direction', { at });
+      if (INLINE.has(n.type) !== INLINE_PARENTS.has(parent)) return t('lessons.check.forbiddenIn', { at, type: n.type, parent });
+      if (parent === 'list' && n.type !== 'item') return t('lessons.check.listItems', { at });
+      if (n.type === 'item' && parent !== 'list') return t('lessons.check.itemOutside', { at });
+      if (n.type === 'solution' && parent !== 'exercise') return t('lessons.check.solutionOutside', { at });
+      if ((n.src && n.type !== 'image') || (n.alt && n.type !== 'image') || (n.caption && n.type !== 'image') || (n.videoId && n.type !== 'youtube')) return t('lessons.check.mediaAttributes', { at });
       const children = n.children ?? [];
       if (LEAVES.has(n.type)) {
-        if (children.length > 0 || !n.text) return `${at} : ${n.type === 'text' ? 'texte vide' : 'formule vide'}.`;
-        if ((n.type === 'math' || n.type === 'displayMath') && byteLength(n.text) > 2000) return `${at} : formule trop longue (2 000 octets maximum).`;
+        if (children.length > 0 || !n.text) return n.type === 'text' ? t('lessons.check.emptyText', { at }) : t('lessons.check.emptyFormula', { at });
+        if ((n.type === 'math' || n.type === 'displayMath') && byteLength(n.text) > 2000) return t('lessons.check.formulaTooLong', { at });
       } else if (CONTAINERS.has(n.type)) {
-        if (n.text || children.length === 0) return `${at} : contenu vide.`;
+        if (n.text || children.length === 0) return t('lessons.check.emptyContent', { at });
       } else if (n.type === 'image') {
-        if (!isAllowedImageSrc(n.src ?? '') || BLANK.test(n.alt ?? '') || children.length > 0 || n.text) return `${at} : l’image doit utiliser une ressource locale autorisée ou une image téléversée (media:<id>), avec un texte alternatif.`;
+        if (!isAllowedImageSrc(n.src ?? '') || BLANK.test(n.alt ?? '') || children.length > 0 || n.text) return t('lessons.check.image', { at });
       } else if (n.type === 'youtube') {
-        if ((n.videoId && !YOUTUBE_ID.test(n.videoId)) || children.length > 0 || n.text) return `${at} : identifiant YouTube invalide (11 caractères).`;
+        if ((n.videoId && !YOUTUBE_ID.test(n.videoId)) || children.length > 0 || n.text) return t('lessons.check.youtube', { at });
       } else {
-        return `${at} : type non pris en charge.`;
+        return t('lessons.check.unsupportedType', { at });
       }
       const nested = walk(children, n.type, depth + 1, `${at}.children`);
       if (nested) return nested;
@@ -206,7 +207,7 @@ export function serializeLesson(doc: LessonDocument): string {
     blocks: doc.blocks.map(node),
   };
   const json = JSON.stringify(ordered, null, 2);
-  if (byteLength(json) > MAX_DOCUMENT_BYTES) throw new LessonError('Le document dépasse 128 Kio.');
+  if (byteLength(json) > MAX_DOCUMENT_BYTES) throw new LessonError(t('lessons.check.tooLarge'));
   return json;
 }
 

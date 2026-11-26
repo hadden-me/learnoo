@@ -7,6 +7,7 @@ import Document from '@tiptap/extension-document';
 import Text from '@tiptap/extension-text';
 import { BulletList, ListItem } from '@tiptap/extension-list';
 import { Gapcursor, TrailingNode, UndoRedo } from '@tiptap/extensions';
+import { t } from '../i18n';
 import { ALLOWED_IMAGES, MEDIA_REF, YOUTUBE_ID, mediaId, type Dir, type Lang } from './lesson';
 
 export const asLang = (value: string | null | undefined): Lang | null => (value === 'fr' || value === 'ar' ? value : null);
@@ -89,7 +90,7 @@ export const InlineMath = Node.create({
     { tag: 'span.math[data-display="false"]', priority: 100, getAttrs: (el: HTMLElement) => ({ latex: texFrom(el) }) },
     { tag: 'span.katex', priority: 100, getAttrs: (el: HTMLElement) => ({ latex: texFrom(el) }) },
   ],
-  renderHTML: ({ node }) => ['span', { 'data-type': 'inline-math', 'data-latex': node.attrs.latex, class: 'studio-math', dir: 'ltr', title: 'Formule (TeX)' }, node.attrs.latex || '∅'],
+  renderHTML: ({ node }) => ['span', { 'data-type': 'inline-math', 'data-latex': node.attrs.latex, class: 'studio-math', dir: 'ltr', title: t('lessons.chrome.formula') }, node.attrs.latex || '∅'],
   renderText: ({ node }) => `$${node.attrs.latex}$`,
   addInputRules() {
     // Typing $…$ (not $$) turns the TeX into an inline formula.
@@ -119,7 +120,7 @@ export const DisplayMath = Node.create({
     { tag: 'div.math[data-display="true"]', getAttrs: (el: HTMLElement) => ({ latex: texFrom(el) }) },
     { tag: '.katex-display', getAttrs: (el: HTMLElement) => ({ latex: texFrom(el) }) },
   ],
-  renderHTML: ({ node }) => ['div', { 'data-type': 'display-math', 'data-latex': node.attrs.latex, class: 'studio-math-block', dir: 'ltr' }, node.attrs.latex || '∅ formule vide'],
+  renderHTML: ({ node }) => ['div', { 'data-type': 'display-math', 'data-latex': node.attrs.latex, class: 'studio-math-block', dir: 'ltr' }, node.attrs.latex || t('lessons.chrome.emptyFormula')],
   addInputRules() {
     // "$$ " at the start of an empty paragraph inserts a display formula.
     return [
@@ -135,9 +136,9 @@ export const DisplayMath = Node.create({
   },
 });
 
-const titled = (label: string) => ({
+const titled = (label: () => string) => ({
   addAttributes: () => ({ title: { default: '', rendered: false } }),
-  label: (title: string) => ['p', { class: 'studio-node-label', contenteditable: 'false' }, `${label} · ${title || 'sans titre'}`] as const,
+  label: (title: string) => ['p', { class: 'studio-node-label', contenteditable: 'false' }, t('lessons.chrome.titled', { label: label(), title: title || t('lessons.untitled') })] as const,
 });
 
 /** Reader markup puts the title in a heading before the children; strip it for content parsing. */
@@ -147,7 +148,7 @@ const withoutFirst = (selector: string) => (el: HTMLElement) => {
   return copy;
 };
 
-const callout = titled('Encadré');
+const callout = titled(() => t('lessons.node.callout'));
 export const Callout = Node.create({
   name: 'callout',
   group: 'block',
@@ -161,7 +162,7 @@ export const Callout = Node.create({
   renderHTML: ({ node }) => ['section', { 'data-type': 'callout', 'data-title': node.attrs.title, class: 'studio-callout' }, callout.label(node.attrs.title), ['div', { 'data-content': '' }, 0]],
 });
 
-const exercise = titled('Exercice');
+const exercise = titled(() => t('lessons.node.exercise'));
 export const Exercise = Node.create({
   name: 'exercise',
   group: 'block',
@@ -183,7 +184,7 @@ export const Solution = Node.create({
     { tag: 'div[data-type="solution"]', contentElement: 'div[data-content]' },
     { tag: 'details', contentElement: withoutFirst(':scope > summary') },
   ],
-  renderHTML: () => ['div', { 'data-type': 'solution', class: 'studio-solution' }, ['p', { class: 'studio-node-label', contenteditable: 'false' }, 'Solution (repliée pour l’élève)'], ['div', { 'data-content': '' }, 0]],
+  renderHTML: () => ['div', { 'data-type': 'solution', class: 'studio-solution' }, ['p', { class: 'studio-node-label', contenteditable: 'false' }, t('lessons.chrome.solution')], ['div', { 'data-content': '' }, 0]],
 });
 
 /** The URL the Studio shows an image from: uploaded media through the author's route (GET /api/media/{id}). */
@@ -221,7 +222,7 @@ export const LessonImage = Node.create({
       'figure',
       { 'data-type': 'image', 'data-src': src, 'data-caption': caption, class: uploaded ? 'studio-image studio-image-uploaded' : 'studio-image' },
       ['img', uploaded ? { src: editorImageURL(src), alt: node.attrs.alt } : { src, alt: node.attrs.alt, width: '320', height: '180' }],
-      ['figcaption', {}, node.attrs.alt ? (caption ? `${caption} · texte alternatif : ${node.attrs.alt}` : `Texte alternatif : ${node.attrs.alt}`) : 'Texte alternatif manquant'],
+      ['figcaption', {}, node.attrs.alt ? (caption ? t('lessons.chrome.altWithCaption', { caption, alt: String(node.attrs.alt) }) : t('lessons.chrome.alt', { alt: String(node.attrs.alt) })) : t('lessons.chrome.altMissing')],
     ];
   },
 });
@@ -242,8 +243,8 @@ export const YouTube = Node.create({
   renderHTML: ({ node }) => [
     'section',
     { 'data-type': 'youtube', 'data-title': node.attrs.title, 'data-video-id': node.attrs.videoId, class: 'studio-video' },
-    ['p', { class: 'studio-node-label' }, `Vidéo YouTube · ${node.attrs.title || 'sans titre'}`],
-    ['p', {}, node.attrs.videoId ? `Identifiant : ${node.attrs.videoId} (chargée seulement au clic de l’élève)` : 'Vidéo à sélectionner avec un enseignant'],
+    ['p', { class: 'studio-node-label' }, t('lessons.chrome.video', { title: node.attrs.title || t('lessons.untitled') })],
+    ['p', {}, node.attrs.videoId ? t('lessons.chrome.videoId', { id: String(node.attrs.videoId) }) : t('lessons.chrome.videoPending')],
   ],
 });
 

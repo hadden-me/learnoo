@@ -9,6 +9,7 @@ import { setFlash, useStudio } from '../context';
 import { DraftEditor } from '../editor/DraftEditor';
 import { emptyData } from '../editor/convert';
 import { entryLabel, labelAttrs } from '../catalogue';
+import { t } from '../i18n';
 import { LANGUAGE_LABELS, formatDateTime } from '../labels';
 import { findRecovery, removeRecovery, type NewLessonParams, type RecoveryEntry } from '../recovery';
 import { BASE, navigate, replacePath } from '../router';
@@ -82,12 +83,12 @@ export function NewLesson() {
     return (
       <main className="page" id="main">
         <p className="breadcrumb">
-          <Link to={`${BASE}/`}>Mes leçons</Link>
+          <Link to={`${BASE}/`}>{t('shell.myLessons')}</Link>
         </p>
-        <h1 tabIndex={-1}>Nouvelle leçon</h1>
+        <h1 tabIndex={-1}>{t('lessons.newLesson')}</h1>
         {createdId !== null && (
           <p className="banner success" role="status">
-            Leçon créée et enregistrée sur le serveur.
+            {t('lessons.new.created')}
           </p>
         )}
         <DraftEditor
@@ -97,13 +98,13 @@ export function NewLesson() {
           chapters={started.chapters}
           initial={emptyData(started.chapterId)}
           restore={started.restore}
-          revisionLabel={createdId === null ? 'Pas encore créée : le premier enregistrement crée la leçon' : 'Brouillon · révision 1'}
+          revisionLabel={createdId === null ? t('lessons.new.notCreated') : t('lessons.draftRevision', { number: 1 })}
           lessonId={null}
           newLesson={started.params}
           onCreated={created}
           onSubmitted={reopen}
           onDiscarded={() => {
-            setFlash('Brouillon supprimé.');
+            setFlash(t('lessons.draftDeleted'));
             navigate(`${BASE}/`, { force: true });
           }}
         />
@@ -115,9 +116,9 @@ export function NewLesson() {
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
-        <Link to={`${BASE}/`}>Mes leçons</Link>
+        <Link to={`${BASE}/`}>{t('shell.myLessons')}</Link>
       </p>
-      <h1 tabIndex={-1}>Nouvelle leçon</h1>
+      <h1 tabIndex={-1}>{t('lessons.newLesson')}</h1>
       {error && (
         <p className="banner error" role="alert">
           {error}
@@ -125,17 +126,17 @@ export function NewLesson() {
       )}
       {pending.length > 0 && (
         <section className="recovery" aria-labelledby="pending-heading">
-          <h2 id="pending-heading">Leçons non enregistrées sur cet appareil</h2>
-          <p className="hint">Copies de secours locales de leçons commencées mais jamais enregistrées sur le serveur.</p>
+          <h2 id="pending-heading">{t('lessons.new.pendingTitle')}</h2>
+          <p className="hint">{t('lessons.new.pendingHint')}</p>
           <ul>
             {pending.map((e) => (
               <li key={e.key}>
                 <p>
-                  « {e.data.title || 'sans titre'} » · {e.newLesson?.subjectCode} · {e.newLesson ? LANGUAGE_LABELS[e.newLesson.language] : ''} · copie du {formatDateTime(e.savedAt)}
+                  {t('lessons.new.pendingTitleQuoted', { title: e.data.title || t('lessons.untitled') })} · {e.newLesson?.subjectCode} · {e.newLesson ? LANGUAGE_LABELS[e.newLesson.language] : ''} · {t('lessons.new.copyOf', { date: formatDateTime(e.savedAt) })}
                 </p>
                 <div className="actions">
                   <button type="button" onClick={() => void resume(e)} disabled={!e.newLesson}>
-                    Reprendre
+                    {t('lessons.new.resume')}
                   </button>
                   <button
                     type="button"
@@ -144,7 +145,7 @@ export function NewLesson() {
                       setPending(findRecovery(localStorage, session.user.id, null, null));
                     }}
                   >
-                    Supprimer cette copie
+                    {t('lessons.recovery.delete')}
                   </button>
                 </div>
               </li>
@@ -152,11 +153,11 @@ export function NewLesson() {
           </ul>
         </section>
       )}
-      {subjects && subjects.length === 0 && <p>Le catalogue ne contient aucune matière. Un opérateur doit en ajouter (commande add-subject) avant toute création de leçon.</p>}
+      {subjects && subjects.length === 0 && <p>{t('lessons.new.noSubject')}</p>}
       {subjects && subjects.length > 0 && (
         <form className="panel new-lesson" onSubmit={start}>
           <div className="fields">
-            <label htmlFor={ids.subject}>Matière</label>
+            <label htmlFor={ids.subject}>{t('lessons.new.subject')}</label>
             <select id={ids.subject} value={subjectId ?? ''} onChange={(e) => setSubjectId(Number(e.target.value))}>
               {subjects.map((s) => {
                 const label = entryLabel(s, language);
@@ -167,9 +168,9 @@ export function NewLesson() {
                 );
               })}
             </select>
-            <label htmlFor={ids.chapter}>Chapitre (facultatif)</label>
+            <label htmlFor={ids.chapter}>{t('lessons.new.chapter')}</label>
             <select id={ids.chapter} value={chapterId ?? ''} onChange={(e) => setChapterId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Sans chapitre</option>
+              <option value="">{t('lessons.noChapter')}</option>
               {chapters.map((c) => {
                 const label = entryLabel(c, language);
                 return (
@@ -181,28 +182,28 @@ export function NewLesson() {
             </select>
           </div>
           <fieldset className="choices">
-            <legend>Langue de la leçon</legend>
+            <legend>{t('lessons.new.language')}</legend>
             {(['fr', 'ar'] as const).map((l) => (
               <label key={l} className="choice">
                 <input type="radio" name="language" value={l} checked={language === l} onChange={() => setLanguage(l)} /> {LANGUAGE_LABELS[l]}
-                {l === 'ar' ? ' (droite à gauche)' : ''}
+                {l === 'ar' ? ` ${t('lessons.new.rtl')}` : ''}
               </label>
             ))}
           </fieldset>
           <div className="fields">
-            <label htmlFor={ids.translation}>Traduction d’une de vos leçons (facultatif)</label>
+            <label htmlFor={ids.translation}>{t('lessons.new.translation')}</label>
             <select id={ids.translation} value={translationOf ?? ''} onChange={(e) => setTranslationOf(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Non, leçon indépendante</option>
+              <option value="">{t('lessons.new.independent')}</option>
               {translatable.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.latestRevision?.title || `Leçon n° ${l.id}`} ({LANGUAGE_LABELS[l.language]})
+                  {l.latestRevision?.title || t('lessons.numbered', { id: l.id })} ({LANGUAGE_LABELS[l.language]})
                 </option>
               ))}
             </select>
           </div>
-          <p className="hint">La matière et la langue ne pourront plus être changées. La leçon est créée sur le serveur à son premier enregistrement.</p>
+          <p className="hint">{t('lessons.new.hint')}</p>
           <button type="submit" className="primary">
-            Commencer la rédaction
+            {t('lessons.new.start')}
           </button>
         </form>
       )}

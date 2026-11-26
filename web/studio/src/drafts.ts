@@ -4,6 +4,7 @@
 import type { JSONContent } from '@tiptap/core';
 import { Api, ApiError, isApiError, type DraftFields, type Revision } from './api/client';
 import { editorToLesson } from './schema/adapter';
+import { t } from './i18n';
 import { LessonError, embeddedMediaIds, serializeLesson, type Lang } from './schema/lesson';
 import type { NewLessonParams, RecoveryData } from './recovery';
 
@@ -41,9 +42,9 @@ export function buildFields(state: EditorState): { fields: DraftFields; errors: 
   try {
     json = serializeLesson(result.document);
   } catch (error) {
-    return { fields: null, errors: [error instanceof LessonError ? error.message : 'Document impossible à exporter.'] };
+    return { fields: null, errors: [error instanceof LessonError ? error.message : t('lessons.check.exportFailed')] };
   }
-  if ([...state.prerequisites].length > 2000) return { fields: null, errors: ['Les prérequis dépassent 2 000 caractères.'] };
+  if ([...state.prerequisites].length > 2000) return { fields: null, errors: [t('lessons.check.prerequisitesTooLong')] };
   return {
     // Every image placed in the text is attached to the revision (the server refuses unattached ones);
     // attached images that are no longer in the text stay attached until the author removes them.
