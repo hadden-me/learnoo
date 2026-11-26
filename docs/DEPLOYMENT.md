@@ -189,12 +189,16 @@ What the application sends today:
 
 | Responses | `Cache-Control` | Notes |
 | --- | --- | --- |
-| Everything by default (API, media, login JSON, probes, errors) | `no-store` | `Vary: Cookie` |
-| Reader pages and their `/static/` assets (CSS, KaTeX) | `private, no-store` | sent even to anonymous requests |
-| `/studio` and `/studio/…` (the Studio shell and its fingerprinted bundle), `/api/catalogue/…`, `/api/lessons/mine`, `/api/preview` | `private, no-store` | the Studio bundle needs a session, assets included |
+| Everything by default (API, media, login JSON, probes, errors, every 404) | `no-store` | `Vary: Cookie` |
+| Reader pages and the unversioned `/static/` files | `private, no-store` | sent even to anonymous requests |
+| `/studio` and `/studio/…` (the Studio shell, client routes, errors), `/api/catalogue/…`, `/api/lessons/mine`, `/api/preview` | `private, no-store` | |
+| Fingerprinted public assets `/assets/<16 hex digits>/…` (reader CSS, `math.js`, KaTeX and its fonts) | `public, max-age=31536000, immutable` | no session read, no `Vary`, never `Set-Cookie`; another version is `404` with `no-store` |
+| Fingerprinted Studio bundle files `/studio/assets/<name>-<hash>.<ext>` served to signed-in staff | `private, max-age=31536000, immutable` | browser cache only; session and Studio access still required, `404` with `no-store` otherwise |
 
 Rules for the proxy and CDN (to be configured by the infrastructure maintainer; header tests in this repository do not prove the live configuration):
 
-- Cloudflare and any shared cache must **never cache authenticated pages or API responses**: bypass cache for the whole Learnoo host until the fingerprinted-asset rule below exists, and never cache a response that carries `Set-Cookie` or a request that carries the session cookie. Do not enable "Cache Everything" or edge HTML caching for this host.
+- Cloudflare and any shared cache must **never cache authenticated pages or API responses**. Do not enable "Cache Everything" or edge HTML caching for this host, and never cache a response that carries `Set-Cookie`.
+- **Only `/assets/` may be cached at the edge** (issue #88): one cache rule, "URI path starts with `/assets/`" (a plain prefix, no regular expression), eligible for cache, respecting the origin's `Cache-Control` (or an edge TTL of up to a year); the cookie may be ignored in the cache key for this prefix, since the server never reads it there. Every other path, including `/static/`, `/studio/` and `/studio/assets/`, `/learn`, `/login`, `/api/`, lesson media and the probes, must **bypass** the cache, whatever its extension (a default "cache static file extensions" rule would otherwise catch `/static/site.css` or `/studio/assets/index-….js`). A `404` under `/assets/` is `no-store` and must not be cached either (an edge must not keep "negative" answers).
 - Forward the `Cookie`, `Origin` and `Sec-Fetch-Site` headers unchanged (cross-origin protection depends on them) and preserve `Host`.
-- **Future, not implemented:** static assets served from content-hashed paths (for example `/assets/<hash>/katex.min.css`) may then be sent as `public, max-age=31536000, immutable` and cached at the edge; only those paths, never lesson pages, `/learn`, `/studio`, `/api/` or media. The Studio's own fingerprinted files (`/studio/assets/index-<hash>.js`) are session-gated and could at most become `private, max-age=…, immutable` (browser cache only), never cached at the edge; today they are `no-store`.
+- After a deployment, pages name the new versions; the old ones answer `404`, so no purge is needed. A browser holding an old page (pages are never stored, so only an open tab) may miss its assets until reloaded.
+- The proxy must not rewrite `Cache-Control` on any path. Check after configuring: `curl -sI https://<host>/learn` shows `private, no-store` and no edge cache hit; an asset URL copied from a page's source shows `public, max-age=31536000, immutable` and, on a second request, an edge hit (for Cloudflare, `cf-cache-status: HIT`); the same path with another version is `404`.
