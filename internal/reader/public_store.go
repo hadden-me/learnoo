@@ -534,8 +534,8 @@ type CourseOverview struct {
 	SubjectNames  catalogue.Names
 	AuthorName    string
 	ReviewerName  string // the approving course reviewer; empty if none recorded
-	Placements    []Placement
-	Modules       []OutlineModule
+	Placements    []PublicPlacement
+	Modules       []PublicModule
 }
 
 // SubjectLabel is the subject's name in the French interface.
@@ -556,8 +556,8 @@ func languageName(lang string) string {
 	return lang
 }
 
-// Placement is one curriculum assignment of the published revision.
-type Placement struct {
+// PublicPlacement is one curriculum assignment of the published revision.
+type PublicPlacement struct {
 	LevelCode    string
 	LevelName    string
 	SectionCode  string
@@ -568,31 +568,31 @@ type Placement struct {
 }
 
 // StateLabel is the edition's state in the interface.
-func (p Placement) StateLabel() string { return editionStateLabel(p.EditionState) }
+func (p PublicPlacement) StateLabel() string { return editionStateLabel(p.EditionState) }
 
 // Current reports whether the placement's edition is current.
-func (p Placement) Current() bool { return p.EditionState == "current" }
+func (p PublicPlacement) Current() bool { return p.EditionState == "current" }
 
-// OutlineModule is a module of the published revision with its steps.
-type OutlineModule struct {
+// PublicModule is a module of the published revision with its steps.
+type PublicModule struct {
 	Key   string
 	Title string
-	Steps []OutlineStep
+	Steps []PublicStep
 }
 
-// OutlineStep is a step's course-authored title and whether its pinned
+// PublicStep is a step's course-authored title and whether its pinned
 // lesson revision is readable now. The lesson's own title is never loaded.
-type OutlineStep struct {
+type PublicStep struct {
 	Title    string
 	Readable bool
 }
 
-// Course loads the public overview of a readable course
+// PublicCourse loads the public overview of a readable course
 // (reader_published_courses), in one repeatable-read snapshot. A course that
 // is not readable (unknown, never published, suspended, archived, its
 // published revision withdrawn) is ErrNotFound: there is no fallback to an
 // earlier revision.
-func (s *Store) Course(ctx context.Context, publicID string) (CourseOverview, error) {
+func (s *Store) PublicCourse(ctx context.Context, publicID string) (CourseOverview, error) {
 	if !ValidPublicID(publicID) {
 		return CourseOverview{}, ErrNotFound
 	}
@@ -639,8 +639,8 @@ func (s *Store) Course(ctx context.Context, publicID string) (CourseOverview, er
 	if err != nil {
 		return CourseOverview{}, fmt.Errorf("course placement: %w", err)
 	}
-	if c.Placements, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Placement, error) {
-		var p Placement
+	if c.Placements, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (PublicPlacement, error) {
+		var p PublicPlacement
 		err := r.Scan(&p.LevelCode, &p.LevelName, &p.SectionCode, &p.SectionName, &p.EditionCode, &p.EditionLabel, &p.EditionState)
 		return p, err
 	}); err != nil {
@@ -653,8 +653,8 @@ func (s *Store) Course(ctx context.Context, publicID string) (CourseOverview, er
 	if err != nil {
 		return CourseOverview{}, fmt.Errorf("course modules: %w", err)
 	}
-	if c.Modules, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (OutlineModule, error) {
-		var m OutlineModule
+	if c.Modules, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (PublicModule, error) {
+		var m PublicModule
 		err := r.Scan(&m.Key, &m.Title)
 		return m, err
 	}); err != nil {
@@ -675,7 +675,7 @@ func (s *Store) Course(ctx context.Context, publicID string) (CourseOverview, er
 	defer rows.Close()
 	for rows.Next() {
 		var key string
-		var st OutlineStep
+		var st PublicStep
 		if err := rows.Scan(&key, &st.Title, &st.Readable); err != nil {
 			return CourseOverview{}, fmt.Errorf("course steps: %w", err)
 		}
