@@ -25,8 +25,9 @@ All generated in Go by `internal/media/worstcase_test.go` and `memory_test.go` (
 | `png8.png`, `png16.png` | 4000 × 4000 RGBA, 8 and 16 bits per sample | 0.1 / 1.1 MiB |
 | `png16-adam7.png` | 4000 × 4000 RGBA 16-bit, Adam7 interlaced | 0.3 MiB |
 | `lossless.webp`, `lossless-palette.webp` | 4000 × 4000 VP8L, without transforms and with a 16-colour colour-indexing transform (the transform for which Go's decoder allocates a second full-size buffer) | < 100 B |
-
-Lossy WebP with an alpha channel (the case the 9 bytes per pixel WebP estimate is sized for) could not be generated without a VP8 encoder; its bound comes from reading `golang.org/x/image/webp` (4:2:0 frame, alpha decoded as a lossless image, extracted alpha plane).
+| `lossy.webp` | 4000 × 4000 lossy key frame with zero-filled partitions (decoded as a flat image) | 0.1 MiB |
+| `groups-*.webp` | Adversarial lossless WebP (review finding of 2026-11-26): 2600 Huffman groups (the most Go's decoder accepts), each referenced by a tile of the meta image so all are built, five complete trees per group and an 11-bit colour cache; 256 × 256, 2400 × 2400 and 4096 × 3906, with and without the palette transform | 0.6 MiB |
+| `alpha-groups-*.webp` | Lossy frame (as above) with that stream as lossless-compressed alpha; 256 × 256 and 2048 × 2048 | 0.7 MiB |
 
 ## One `Process` call
 
@@ -66,12 +67,22 @@ After. "Estimate" is `decodeCost` from the headers; "decode + orient" measures t
 | PNG 8-bit | 61 | 61 | accepted | 62 | 62 | 62 |
 | PNG 16-bit | 122 | 122 | accepted | 126 | 248 | 253 |
 | PNG 16-bit Adam7 | 244 | 214 | `422 image_too_complex` | 1 | 1 | 1 |
-| WebP lossless | 137 | 61 | accepted | 62 | 62 | 62 |
-| WebP lossless with palette | 137 | 92 | accepted | 93 | 93 | 93 |
+| WebP lossless 16 MP | 244 | 61 | `422 image_too_complex` | 0 | 0 | 0 |
+| WebP lossless 16 MP with palette | 244 | 92 | `422 image_too_complex` | 0 | 0 | 0 |
+| WebP lossy 16 MP | 24 | 23 | accepted | 25 | 67 | 74 |
+| WebP 2600 groups, 256 × 256 | 142 | 141 | accepted | 142 | 154 | 209 |
+| WebP 2600 groups, 2400 × 2400 | 178 | 162 | accepted | 164 | 176 | 231 |
+| WebP 2600 groups, 2400 × 2400, palette | 178 | 173 | accepted | 174 | 187 | 242 |
+| WebP 2600 groups, 4096 × 3906 | 244 | 201 | `422 image_too_complex` | 2 | 3 | 3 |
+| WebP 2600 groups, 4096 × 3906, palette | 244 | 232 | `422 image_too_complex` | 2 | 3 | 3 |
+| WebP lossy, alpha with 2600 groups, 256 × 256 | 142 | 141 | accepted | 142 | 157 | 211 |
+| WebP lossy, alpha with 2600 groups, 2048 × 2048 | 178 | 160 | accepted | 161 | 245 | 300 |
+
+Before the WebP correction the estimate was 9 bytes per pixel: 0.6 MiB for the 256 × 256 group file (measured 141 MiB) and 137 MiB for the accepted 4096 × 3906 one (measured 201 MiB, 232 MiB with the palette), so `TestDecodeMemoryWithinEstimate` fails against it.
 
 Notes:
 
-- The estimate is the sum of the large allocations, so it matches the measured decode within about 1 MiB where the model is exact (JPEG, non-interlaced PNG) and is above it elsewhere. `TestDecodeMemoryWithinEstimate` asserts estimate + 4 MiB ≥ measured for every input and that every accepted input stays within `MaxDecodeBytes` + 3 × `MaxEncodedBytes` through `Process` (about 20 s; skipped with `-short` and `-race`).
+- The estimate is the sum of the large allocations, so it matches the measured decode within about 1 MiB where the model is exact (JPEG, non-interlaced PNG) and is above it elsewhere. The exception is the WebP Huffman tables: their per-tree code-length buffers are released before the next tree and are counted once, so "allocated" exceeds the estimate for the group files (up to 300 MiB) while the live heap stays below it; that garbage is short-lived small objects, which the collector reclaims under `GOMEMLIMIT`. `TestDecodeMemoryWithinEstimate` asserts estimate + 4 MiB ≥ measured for every input and that every accepted input stays within `MaxDecodeBytes` + 3 × `MaxEncodedBytes` through `Process` (about 20 s; skipped with `-short` and `-race`).
 - The 16-bit PNG "heap" figure is short-lived garbage: Go's PNG encoder boxes every 16-bit pixel. Its live heap is 126 MiB, but without a memory limit the collector lets the heap reach twice that; this is one reason `GOMEMLIMIT` is set.
 - The progressive JPEG coefficients (one `int32` per sample, for every component, for the whole decode) are what makes progressive 4:4:4 and RGB expensive; baseline JPEGs of the same size need a fifth of it.
 
@@ -95,6 +106,9 @@ A helper container reads the app container's cgroup every 0.1 s: the largest `an
 | after | all 16 inputs | derived (384 MiB) | 384 MiB | 425 MiB | survived, 142 uploads (82 stored, 60 refused) |
 | after | phone | derived (384 MiB) | 233 MiB | 263 MiB | survived, 102 uploads |
 | after | accepted, 180 s | derived (384 MiB) | 388 MiB | 436 MiB | survived, 195 uploads |
+| after WebP fix | accepted incl. WebP group files (2400², 2048² alpha, 256²), progressive 4:2:0, 16-bit PNG, 120 s | derived (384 MiB) | 382 MiB | 416 MiB | survived, 150 uploads |
+| after WebP fix | all 24 inputs, 60 s | derived (384 MiB) | 382 MiB | 438 MiB | survived, 165 uploads (106 stored, 59 refused) |
+| after WebP fix | refused WebP (16 MP lossless, group files), 30 s | derived (384 MiB) | 43 MiB | 45 MiB | survived, 13 092 refused |
 
 With the derived limit the process grows to its `GOMEMLIMIT` (anon about 384 MiB) and the collector then keeps it there: that is the limit working, not the live heap, which stayed at most 131 MiB after collections in the host runs. Without a limit (`off`) the same load reached 435 MiB of 512 MiB, too close to rely on.
 
@@ -110,10 +124,11 @@ Process RSS sampled with `ps` every 50 ms, and the Go heap from `GODEBUG=gctrace
 | after | worst | 384MiB | 152 MiB | 105 MiB | 61 MiB | 19 149 refused |
 | after | accepted | unset | 524 MiB | 333 MiB | 131 MiB | 48 × 201 |
 | after | accepted | 384MiB | 503 MiB | 327 MiB | 131 MiB | 47 × 201 |
+| after WebP fix | accepted incl. WebP group files | 384MiB | 611 MiB | 332 MiB | 157 MiB | 52 × 201 |
 
 ## Budget
 
-With one decode at a time: decode (at most `MaxDecodeBytes` = 192 MiB, by the estimate) + re-encoded output buffer (at most 3 × 16 MiB while a `bytes.Buffer` grows to `MaxEncodedBytes`) + 4 upload bodies (5 MiB each, about twice that while `io.ReadAll` grows) + idle heap (about 20 MiB at start) ≈ 300 MiB of live heap in the worst case, against a `GOMEMLIMIT` of 384 MiB (three quarters of 512 MiB). The remaining quarter of the container covers the binary, page cache of written media and memory outside the Go heap. The largest live heap measured in the server runs was 131 MiB, the largest heap at the start of a collection 333 MiB.
+Computed, with one decode at a time: decode (at most `MaxDecodeBytes` = 192 MiB, by the estimate) + its re-encoded output (at most 3 × 16 MiB while a `bytes.Buffer` grows to `MaxEncodedBytes` and the exact-size copy is made) + its upload body (5 MiB, about twice that while `io.ReadAll` grows) + the three other upload slots, each holding a body or a finished asset (at most 16 MiB each; `Store.Put` compares duplicates in 32 KiB chunks) + idle heap (about 20 MiB at start) ≈ 320 MiB of live heap in the worst case, against a `GOMEMLIMIT` of 384 MiB (three quarters of 512 MiB). The remaining quarter of the container covers the binary, page cache of written media and memory outside the Go heap. Measured: the largest live heap left after a collection in the server runs was 157 MiB, the largest heap at the start of a collection 333 MiB, the largest container `anon` 388 MiB and `memory.peak` 438 MiB, with no OOM kill after the change.
 
 ## Reproducing
 
