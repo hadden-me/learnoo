@@ -6,6 +6,7 @@
 // on every request; nothing here grants or hides access on its own.
 import { ApiError, type Api, type CatalogueEntry } from './client';
 import { describeEditorialError } from './editorialMessages';
+import { t } from '../i18n';
 
 export type GlobalPermission = 'author' | 'publisher' | 'administrator';
 export type PermissionName = GlobalPermission | 'reviewer';
@@ -192,47 +193,44 @@ export function adminApi(api: Api) {
 export type AdminApi = ReturnType<typeof adminApi>;
 
 const MESSAGES: Record<string, string> = {
-  self_change:
-    'Vous ne pouvez ni vous attribuer une permission ni désactiver votre propre compte : un autre administrateur doit le faire. Le serveur a refusé ; rien n’a été modifié.',
-  last_administrator:
-    'Refusé : ce compte est le dernier administrateur actif. Attribuez d’abord la permission administrateur à un autre compte actif. Rien n’a été modifié.',
-  account_exists: 'Un compte existe déjà pour cette adresse e-mail : aucune invitation n’a été créée.',
-  invalid_input: 'Saisie refusée par le serveur : vérifiez le format (code, nom, ordre, adresse e-mail ou durée).',
-  retired_subject: 'Cette matière est retirée : aucune nouvelle attribution n’y est possible. Les attributions existantes restent révocables.',
-  unknown_subject: 'Cette matière n’existe pas.',
-  version_conflict: 'Cet élément a été modifié ailleurs depuis l’ouverture de la page. Rien n’a été écrit : rechargez la page avant de recommencer.',
-  edition_not_draft: 'Ce programme n’est plus à l’état de brouillon : ses matières et listes de chapitres ne peuvent plus changer. Rien n’a été écrit.',
-  state_conflict:
-    'Changement d’état impossible maintenant (programme encore en brouillon, ou programme en vigueur de la section modifié entre-temps). Rien n’a été écrit : rechargez la page.',
-  code_exists: 'Ce code est déjà utilisé (les codes ne sont jamais réutilisés). Choisissez-en un autre.',
-  already_retired: 'Cet élément est déjà retiré.',
-  parent_retired: 'Le niveau ou la section parent est retiré : rien ne peut y être ajouté ni mis en vigueur.',
-  assignment_exists: 'Ce programme comprend déjà cette matière.',
-  placement_invalid: 'Sélection refusée : matière ou chapitre retiré, chapitre d’une autre matière ou présent deux fois.',
-  retry: 'Conflit temporaire avec une autre opération. Rien n’a été écrit : réessayez.',
+  self_change: t('admin.error.self_change'),
+  last_administrator: t('admin.error.last_administrator'),
+  account_exists: t('admin.error.account_exists'),
+  invalid_input: t('admin.error.invalid_input'),
+  retired_subject: t('admin.error.retired_subject'),
+  unknown_subject: t('admin.error.unknown_subject'),
+  version_conflict: t('admin.error.version_conflict'),
+  edition_not_draft: t('admin.error.edition_not_draft'),
+  state_conflict: t('admin.error.state_conflict'),
+  code_exists: t('admin.error.code_exists'),
+  already_retired: t('admin.error.already_retired'),
+  parent_retired: t('admin.error.parent_retired'),
+  assignment_exists: t('admin.error.assignment_exists'),
+  placement_invalid: t('admin.error.placement_invalid'),
+  retry: t('admin.error.retry'),
 };
 
-/** A French sentence for an administration failure (falls back to the editorial and authoring messages). */
+/** A sentence in the interface language for an administration failure (falls back to the editorial and authoring messages). */
 export function describeAdminError(error: unknown): string {
   if (error instanceof ApiError && error.code in MESSAGES) {
     const base = MESSAGES[error.code];
-    return error.code === 'placement_invalid' && error.message ? `${base} Détail : ${error.message}` : base;
+    return error.code === 'placement_invalid' && error.message ? t('shell.error.detail', { base, detail: error.message }) : base;
   }
   return describeEditorialError(error);
 }
 
 export const PERMISSION_LABELS: Record<PermissionName, string> = {
-  author: 'Auteur',
-  publisher: 'Éditeur (publication)',
-  administrator: 'Administrateur',
-  reviewer: 'Relecteur',
+  author: t('admin.permission.author'),
+  publisher: t('admin.permission.publisher'),
+  administrator: t('admin.permission.administrator'),
+  reviewer: t('admin.permission.reviewer'),
 };
 
 export const EDITION_STATE_LABELS: Record<EditionState, string> = {
-  draft: 'Brouillon',
-  current: 'En vigueur',
-  superseded: 'Remplacé',
-  retired: 'Retiré',
+  draft: t('admin.editionState.draft'),
+  current: t('admin.editionState.current'),
+  superseded: t('admin.editionState.superseded'),
+  retired: t('admin.editionState.retired'),
 };
 
 /**
@@ -256,11 +254,11 @@ export const leavesAdministration = (isSelf: boolean, p: { kind: string; permiss
 
 export const adminRevokedHome = `/studio/?notice=${ADMIN_REVOKED_NOTICE}`;
 
-/** The French message for a notice in the Studio home's query string, or null. */
+/** The message for a notice in the Studio home's query string, or null. */
 export function noticeFrom(search: string): string | null {
   const notice = new URLSearchParams(search).get('notice');
   return notice === ADMIN_REVOKED_NOTICE
-    ? 'Vous avez retiré votre propre permission administrateur : les pages d’administration ne vous sont plus accessibles. Un autre administrateur peut vous la rendre.'
+    ? t('admin.notice.adminRevoked')
     : null;
 }
 

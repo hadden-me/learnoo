@@ -5,6 +5,7 @@ import { useMemo, type ReactNode } from 'react';
 import { adminApi, describeAdminError } from '../api/admin';
 import { useStudio } from '../context';
 import { paths } from '../editorialRoutes';
+import { t } from '../i18n';
 import { useRoute } from '../router';
 import { Link } from '../ui/Link';
 
@@ -14,18 +15,18 @@ export function useAdmin() {
 }
 
 const SECTIONS: { label: string; to: string; routes: string[] }[] = [
-  { label: 'Leçons', to: paths.adminLessons, routes: ['adminLessons'] },
-  { label: 'Cours', to: paths.adminCourses, routes: ['adminCourses', 'adminCourse'] },
-  { label: 'Utilisateurs', to: paths.adminUsers, routes: ['adminUsers', 'adminUser'] },
-  { label: 'Catalogue', to: paths.adminCatalogue, routes: ['adminCatalogue'] },
-  { label: 'Programmes', to: paths.adminCurriculum, routes: ['adminCurriculum', 'adminSection', 'adminEdition'] },
+  { label: t('admin.nav.lessons'), to: paths.adminLessons, routes: ['adminLessons'] },
+  { label: t('admin.nav.courses'), to: paths.adminCourses, routes: ['adminCourses', 'adminCourse'] },
+  { label: t('admin.nav.users'), to: paths.adminUsers, routes: ['adminUsers', 'adminUser'] },
+  { label: t('admin.nav.catalogue'), to: paths.adminCatalogue, routes: ['adminCatalogue'] },
+  { label: t('admin.nav.curriculum'), to: paths.adminCurriculum, routes: ['adminCurriculum', 'adminSection', 'adminEdition'] },
 ];
 
 /** The administration sub-navigation, shown on every administration page. */
 export function AdminNav() {
   const route = useRoute();
   return (
-    <nav aria-label="Administration" className="admin-nav">
+    <nav aria-label={t('shell.space.admin')} className="admin-nav">
       {SECTIONS.map((s) => (
         <Link key={s.to} to={s.to} current={s.routes.includes(route.name)}>
           {s.label}
@@ -41,7 +42,7 @@ export function LoadFailed({ message, onRetry }: { message: string; onRetry: () 
     <div className="banner error" role="alert">
       <p>{message}</p>
       <button type="button" onClick={onRetry}>
-        Réessayer
+        {t('shell.retry')}
       </button>
     </div>
   );
@@ -73,7 +74,7 @@ export function OutcomeBanner({ outcome, onReload }: { outcome: Outcome; onReloa
       <p>{outcome.message}</p>
       {onReload && (
         <button type="button" onClick={onReload}>
-          Recharger
+          {t('admin.reload')}
         </button>
       )}
     </div>

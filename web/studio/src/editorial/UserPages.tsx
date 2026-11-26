@@ -22,6 +22,7 @@ import {
 import { CatalogueName, entryLabel } from '../catalogue';
 import { allowUnload, useStudio } from '../context';
 import { paths } from '../editorialRoutes';
+import { locale, t, tn } from '../i18n';
 import { formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
@@ -31,12 +32,12 @@ import { latestOnly, useLoad } from './common';
 type ListState = { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; users: AdminUser[]; nextAfter: number | null; more: boolean };
 
 const PERMISSION_FILTERS: { value: NonNullable<UserFilter['permission']>; label: string }[] = [
-  { value: '', label: 'Toutes' },
-  { value: 'author', label: 'Enseignants (auteur)' },
-  { value: 'reviewer', label: 'Relecteurs' },
-  { value: 'publisher', label: 'Éditeurs (publication)' },
-  { value: 'administrator', label: 'Administrateurs' },
-  { value: 'none', label: 'Élèves (aucune permission)' },
+  { value: '', label: t('admin.users.filter.all') },
+  { value: 'author', label: t('admin.users.filter.author') },
+  { value: 'reviewer', label: t('admin.users.filter.reviewer') },
+  { value: 'publisher', label: t('admin.users.filter.publisher') },
+  { value: 'administrator', label: t('admin.users.filter.administrator') },
+  { value: 'none', label: t('admin.users.filter.none') },
 ];
 
 export function UserListPage() {
@@ -86,20 +87,16 @@ export function UserListPage() {
 
   return (
     <AdminPage
-      title="Utilisateurs"
-      intro={
-        <p className="hint">
-          Chaque permission est attribuée séparément. Un administrateur n’est relecteur que des matières qui lui sont attribuées. Chaque changement est enregistré dans l’historique du compte.
-        </p>
-      }
+      title={t('admin.nav.users')}
+      intro={<p className="hint">{t('admin.users.intro')}</p>}
     >
-      <form className="filters" onSubmit={search} role="search" aria-label="Rechercher des utilisateurs">
+      <form className="filters" onSubmit={search} role="search" aria-label={t('admin.users.search')}>
         <div className="fields">
-          <label htmlFor="user-q">Rechercher (e-mail ou nom)</label>
+          <label htmlFor="user-q">{t('admin.users.query')}</label>
           <input id="user-q" type="search" value={q} maxLength={100} autoComplete="off" onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="fields">
-          <label htmlFor="user-permission">Permission</label>
+          <label htmlFor="user-permission">{t('admin.users.permission')}</label>
           <select id="user-permission" value={permission} onChange={(e) => setPermission(e.target.value as typeof permission)}>
             {PERMISSION_FILTERS.map((f) => (
               <option key={f.value} value={f.value}>
@@ -109,28 +106,30 @@ export function UserListPage() {
           </select>
         </div>
         <div className="fields">
-          <label htmlFor="user-status">Statut</label>
+          <label htmlFor="user-status">{t('admin.status')}</label>
           <select id="user-status" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-            <option value="">Tous</option>
-            <option value="active">Actifs</option>
-            <option value="disabled">Désactivés</option>
+            <option value="">{t('admin.users.status.all')}</option>
+            <option value="active">{t('admin.users.status.active')}</option>
+            <option value="disabled">{t('admin.users.status.disabled')}</option>
           </select>
         </div>
         <button type="submit" className="primary">
-          Rechercher
+          {t('admin.users.submit')}
         </button>
       </form>
 
-      {list.state === 'loading' && <p role="status">Chargement des utilisateurs…</p>}
+      {list.state === 'loading' && <p role="status">{t('admin.users.loading')}</p>}
       {list.state === 'error' && <LoadFailed message={list.message} onRetry={() => void load()} />}
-      {list.state === 'ready' && list.users.length === 0 && <p>Aucun utilisateur ne correspond à cette recherche.</p>}
+      {list.state === 'ready' && list.users.length === 0 && <p>{t('admin.users.empty')}</p>}
       {list.state === 'ready' && list.users.length > 0 && (
         <>
-          <ul className="lesson-list" aria-label="Utilisateurs">
+          <ul className="lesson-list" aria-label={t('admin.nav.users')}>
             {list.users.map((u) => (
               <li key={u.id} className="lesson-card">
                 <h2>
-                  <Link to={paths.adminUser(u.id)}>{u.displayName}</Link>
+                  <Link to={paths.adminUser(u.id)}>
+                    <bdi>{u.displayName}</bdi>
+                  </Link>
                 </h2>
                 <p className="lesson-context" dir="ltr">
                   {u.email}
@@ -146,7 +145,7 @@ export function UserListPage() {
           )}
           {list.nextAfter !== null && (
             <button type="button" onClick={() => void more()} disabled={list.more}>
-              {list.more ? 'Chargement…' : 'Afficher plus'}
+              {list.more ? t('shell.loadingPage') : t('admin.users.more')}
             </button>
           )}
         </>
@@ -161,14 +160,14 @@ export function UserListPage() {
 function UserStates({ user }: { user: AdminUser }) {
   return (
     <p className="lesson-meta">
-      {user.disabled ? <span className="state state-withdrawn">Désactivé</span> : <span className="state">Actif</span>}
+      {user.disabled ? <span className="state state-withdrawn">{t('admin.disabled')}</span> : <span className="state">{t('admin.active')}</span>}
       {user.permissions.map((p) => (
         <span key={p} className="state">
           {PERMISSION_LABELS[p]}
         </span>
       ))}
-      {user.reviewerSubjects.length > 0 && <span className="state">Relecteur ({user.reviewerSubjects.length} matière{user.reviewerSubjects.length > 1 ? 's' : ''})</span>}
-      {user.permissions.length === 0 && user.reviewerSubjects.length === 0 && <span className="state">Élève (aucune permission)</span>}
+      {user.reviewerSubjects.length > 0 && <span className="state">{tn('admin.users.reviewerOf', user.reviewerSubjects.length)}</span>}
+      {user.permissions.length === 0 && user.reviewerSubjects.length === 0 && <span className="state">{t('admin.users.student')}</span>}
     </p>
   );
 }
@@ -179,16 +178,25 @@ function InviteStudent() {
   const [hours, setHours] = useState('72');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The field the error is about (validation), else none (server refusal).
+  const [errorField, setErrorField] = useState<'email' | 'hours' | null>(null);
   const [result, setResult] = useState<Invitation | null>(null);
   const linkRef = useRef<HTMLInputElement>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const ttl = Number(hours);
-    if (!email.trim()) return setError('Saisissez l’adresse e-mail de l’élève.');
-    if (!Number.isInteger(ttl) || ttl < 1 || ttl > 720) return setError('La validité doit être un nombre entier d’heures, de 1 à 720.');
+    if (!email.trim()) {
+      setErrorField('email');
+      return setError(t('admin.invite.emailRequired'));
+    }
+    if (!Number.isInteger(ttl) || ttl < 1 || ttl > 720) {
+      setErrorField('hours');
+      return setError(t('admin.invite.hoursInvalid'));
+    }
     setBusy(true);
     setError(null);
+    setErrorField(null);
     setResult(null);
     try {
       setResult(await admin.invite(email.trim(), ttl));
@@ -205,39 +213,56 @@ function InviteStudent() {
 
   return (
     <section aria-labelledby="invite-title">
-      <h2 id="invite-title">Inviter un élève</h2>
-      <p className="hint">
-        L’invitation crée un compte élève sans permission. Pour un enseignant : invitez-le, puis attribuez-lui la permission auteur une fois son compte créé. Aucun e-mail n’est envoyé :
-        transmettez vous-même le lien.
-      </p>
+      <h2 id="invite-title">{t('admin.invite.title')}</h2>
+      <p className="hint">{t('admin.invite.intro')}</p>
       <form onSubmit={submit} noValidate>
         <div className="fields">
-          <label htmlFor="invite-email">Adresse e-mail de l’élève</label>
-          <input id="invite-email" type="email" dir="ltr" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label htmlFor="invite-email">{t('admin.invite.email')}</label>
+          <input
+            id="invite-email"
+            type="email"
+            dir="ltr"
+            autoComplete="off"
+            value={email}
+            aria-invalid={errorField === 'email' ? true : undefined}
+            aria-describedby={errorField === 'email' ? 'invite-error' : undefined}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </div>
         <div className="fields">
-          <label htmlFor="invite-hours">Validité (heures, de 1 à 720)</label>
-          <input id="invite-hours" type="number" min={1} max={720} inputMode="numeric" value={hours} onChange={(e) => setHours(e.target.value)} />
+          <label htmlFor="invite-hours">{t('admin.invite.hours')}</label>
+          <input
+            id="invite-hours"
+            type="number"
+            min={1}
+            max={720}
+            inputMode="numeric"
+            value={hours}
+            aria-invalid={errorField === 'hours' ? true : undefined}
+            aria-describedby={errorField === 'hours' ? 'invite-error' : undefined}
+            onChange={(e) => setHours(e.target.value)}
+          />
         </div>
         {error && (
-          <p className="banner error" role="alert">
+          <p className="banner error" role="alert" id="invite-error">
             {error}
           </p>
         )}
         <button type="submit" className="primary" disabled={busy}>
-          Créer l’invitation
+          {t('admin.invite.submit')}
         </button>
       </form>
       {result && (
         <div className="banner success" role="status">
           <p>
-            Invitation créée pour <span dir="ltr">{result.invitation.email}</span>, valable jusqu’au {formatDateTime(result.invitation.expiresAt)}.
+            {t('admin.invite.createdFor')} <span dir="ltr">{result.invitation.email}</span>
+            {t('admin.invite.validUntil', { date: formatDateTime(result.invitation.expiresAt) })}
           </p>
           <div className="fields">
-            <label htmlFor="invite-link">Lien d’invitation</label>
+            <label htmlFor="invite-link">{t('admin.invite.link')}</label>
             <input id="invite-link" ref={linkRef} readOnly dir="ltr" value={invitationLink(location.origin, result.path)} onFocus={(e) => e.currentTarget.select()} />
           </div>
-          <p>Ce lien n’est affiché qu’une fois et n’est pas conservé : copiez-le maintenant. Aucun e-mail n’a été envoyé.</p>
+          <p>{t('admin.invite.once')}</p>
         </div>
       )}
     </section>
@@ -256,15 +281,15 @@ export const needsConfirmation = (p: Pending) => p.kind !== 'grant' || p.permiss
 const pendingTitle = (p: Pending, name: string): string => {
   switch (p.kind) {
     case 'grant':
-      return `Attribuer la permission ${PERMISSION_LABELS[p.permission]} ?`;
+      return t('admin.user.confirmGrant', { permission: PERMISSION_LABELS[p.permission] });
     case 'revoke':
-      return `Retirer la permission ${PERMISSION_LABELS[p.permission]} ?`;
+      return t('admin.user.confirmRevoke', { permission: PERMISSION_LABELS[p.permission] });
     case 'revokeReviewer':
-      return 'Retirer cette matière de relecture ?';
+      return t('admin.user.confirmRevokeReviewer');
     case 'disable':
-      return `Désactiver le compte de ${name} ?`;
+      return t('admin.user.confirmDisable', { name });
     case 'enable':
-      return `Réactiver le compte de ${name} ?`;
+      return t('admin.user.confirmEnable', { name });
   }
 };
 
@@ -280,16 +305,16 @@ export function UserPage({ userId }: { userId: number }) {
 
   if (loaded.state === 'loading')
     return (
-      <AdminPage title="Utilisateur">
-        <p role="status">Chargement du compte…</p>
+      <AdminPage title={t('admin.user.title')}>
+        <p role="status">{t('admin.user.loading')}</p>
       </AdminPage>
     );
   if (loaded.state === 'error')
     return (
-      <AdminPage title="Utilisateur">
+      <AdminPage title={t('admin.user.title')}>
         <LoadFailed message={loaded.message} onRetry={() => void reload()} />
         <p>
-          <Link to={paths.adminUsers}>Revenir aux utilisateurs</Link>
+          <Link to={paths.adminUsers}>{t('admin.user.back')}</Link>
         </p>
       </AdminPage>
     );
@@ -307,23 +332,23 @@ export function UserPage({ userId }: { userId: number }) {
       switch (p.kind) {
         case 'grant':
           res = await admin.grant(user.id, p.permission);
-          done = `Permission ${PERMISSION_LABELS[p.permission]} attribuée.`;
+          done = t('admin.user.granted', { permission: PERMISSION_LABELS[p.permission] });
           break;
         case 'revoke':
           res = await admin.revoke(user.id, p.permission);
-          done = `Permission ${PERMISSION_LABELS[p.permission]} retirée.`;
+          done = t('admin.user.revoked', { permission: PERMISSION_LABELS[p.permission] });
           break;
         case 'revokeReviewer':
           res = await admin.revoke(user.id, 'reviewer', p.subjectId);
-          done = `Relecture retirée pour ${p.label}.`;
+          done = t('admin.user.reviewerRevoked', { subject: p.label });
           break;
         case 'disable':
           res = await admin.disable(user.id);
-          done = 'Compte désactivé : ses sessions sont fermées.';
+          done = t('admin.user.disabledDone');
           break;
         case 'enable':
           res = await admin.enable(user.id);
-          done = 'Compte réactivé.';
+          done = t('admin.user.enabledDone');
           break;
       }
       if (res.changed && leavesAdministration(isSelf, p)) {
@@ -332,7 +357,7 @@ export function UserPage({ userId }: { userId: number }) {
         location.assign(adminRevokedHome);
         return;
       }
-      setOutcome({ kind: 'success', message: res.changed ? done : 'Aucun changement : c’était déjà le cas.' });
+      setOutcome({ kind: 'success', message: res.changed ? done : t('admin.user.unchanged') });
       await reload();
     } catch (e) {
       setOutcome(failure(e));
@@ -346,12 +371,12 @@ export function UserPage({ userId }: { userId: number }) {
   const grantReviewer = async (e: FormEvent) => {
     e.preventDefault();
     const id = Number(subjectId);
-    if (!id) return setOutcome({ kind: 'error', message: 'Choisissez une matière.' });
+    if (!id) return setOutcome({ kind: 'error', message: t('admin.chooseSubject') });
     setBusy(true);
     setOutcome(null);
     try {
       const res = await admin.grant(user.id, 'reviewer', id);
-      setOutcome({ kind: 'success', message: res.changed ? 'Matière de relecture attribuée.' : 'Aucun changement : ce compte relit déjà cette matière.' });
+      setOutcome({ kind: 'success', message: res.changed ? t('admin.user.reviewerGranted') : t('admin.user.reviewerUnchanged') });
       setSubjectId('');
       await reload();
     } catch (err) {
@@ -367,45 +392,42 @@ export function UserPage({ userId }: { userId: number }) {
   return (
     <AdminPage title={user.displayName}>
       <p className="breadcrumb">
-        <Link to={paths.adminUsers}>Utilisateurs</Link>
+        <Link to={paths.adminUsers}>{t('admin.nav.users')}</Link>
       </p>
       <dl className="facts">
         <div>
-          <dt>Adresse e-mail</dt>
+          <dt>{t('admin.user.email')}</dt>
           <dd dir="ltr">{user.email}</dd>
         </div>
         <div>
-          <dt>Statut</dt>
-          <dd>{user.disabled ? 'Désactivé' : 'Actif'}</dd>
+          <dt>{t('admin.status')}</dt>
+          <dd>{user.disabled ? t('admin.disabled') : t('admin.active')}</dd>
         </div>
         <div>
-          <dt>Créé le</dt>
+          <dt>{t('admin.user.createdOn')}</dt>
           <dd>{formatDateTime(user.createdAt)}</dd>
         </div>
       </dl>
       {isSelf && (
-        <p className="banner">
-          C’est votre propre compte : le serveur refuse que vous vous attribuiez une permission ou que vous désactiviez ce compte. Vous pouvez retirer vos propres permissions (la
-          permission administrateur seulement s’il reste un autre administrateur actif).
-        </p>
+        <p className="banner">{t('admin.user.self')}</p>
       )}
       <OutcomeBanner outcome={outcome} />
 
       <section aria-labelledby="status-title">
-        <h2 id="status-title">Statut du compte</h2>
+        <h2 id="status-title">{t('admin.user.statusTitle')}</h2>
         {user.disabled ? (
           <>
-            <p>Ce compte est désactivé : il ne peut pas se connecter et n’a aucune permission effective. Ses permissions restent enregistrées et s’appliquent de nouveau à la réactivation.</p>
+            <p>{t('admin.user.disabledText')}</p>
             <button type="button" disabled={busy} onClick={() => ask({ kind: 'enable' })}>
-              Réactiver le compte
+              {t('admin.user.enable')}
             </button>
           </>
         ) : (
           <>
-            <p>Ce compte est actif.</p>
+            <p>{t('admin.user.activeText')}</p>
             {rules.canDisable && (
               <button type="button" className="danger" disabled={busy} onClick={() => ask({ kind: 'disable' })}>
-                Désactiver le compte
+                {t('admin.user.disable')}
               </button>
             )}
           </>
@@ -413,23 +435,25 @@ export function UserPage({ userId }: { userId: number }) {
       </section>
 
       <section aria-labelledby="perm-title">
-        <h2 id="perm-title">Permissions</h2>
+        <h2 id="perm-title">{t('admin.user.permissions')}</h2>
         <ul className="grant-list">
           {GLOBAL_PERMISSIONS.map((p) => {
             const has = user.permissions.includes(p);
             return (
               <li key={p}>
                 <span>
-                  <strong>{PERMISSION_LABELS[p]}</strong> : {has ? 'attribuée' : 'non attribuée'}
+                  <strong>{PERMISSION_LABELS[p]}</strong>
+                  {t('admin.colon')}
+                  {has ? t('admin.user.has') : t('admin.user.hasNot')}
                 </span>
                 {has && rules.canRevoke && (
                   <button type="button" className="danger" disabled={busy} onClick={() => ask({ kind: 'revoke', permission: p })}>
-                    Retirer {PERMISSION_LABELS[p]}
+                    {t('admin.user.revokePermission', { permission: PERMISSION_LABELS[p] })}
                   </button>
                 )}
                 {!has && rules.canGrant && (
                   <button type="button" disabled={busy} onClick={() => ask({ kind: 'grant', permission: p })}>
-                    Attribuer {PERMISSION_LABELS[p]}
+                    {t('admin.user.grantPermission', { permission: PERMISSION_LABELS[p] })}
                   </button>
                 )}
               </li>
@@ -439,21 +463,21 @@ export function UserPage({ userId }: { userId: number }) {
       </section>
 
       <section aria-labelledby="review-title">
-        <h2 id="review-title">Matières de relecture</h2>
-        <p className="hint">La permission administrateur ne donne pas le droit de relire : seul un compte à qui une matière est attribuée ici peut relire les leçons de cette matière.</p>
+        <h2 id="review-title">{t('admin.user.reviewSubjects')}</h2>
+        <p className="hint">{t('admin.user.reviewHint')}</p>
         {user.reviewerSubjects.length === 0 ? (
-          <p>Aucune matière de relecture.</p>
+          <p>{t('admin.user.noReviewSubject')}</p>
         ) : (
-          <ul className="grant-list" aria-label="Matières de relecture">
+          <ul className="grant-list" aria-label={t('admin.user.reviewSubjects')}>
             {user.reviewerSubjects.map((s) => {
-              const label = entryLabel({ ...s, sortOrder: 0 }, 'fr');
+              const label = entryLabel({ ...s, sortOrder: 0 }, locale());
               return (
                 <li key={s.id}>
                   <span>
-                    <CatalogueName label={label} /> {s.retiredAt && '(retirée)'}
+                    <CatalogueName label={label} /> {s.retiredAt && t('admin.user.retiredSubject')}
                   </span>
                   <button type="button" className="danger" disabled={busy} onClick={() => ask({ kind: 'revokeReviewer', subjectId: s.id, label: label.text })}>
-                    Retirer la relecture de {label.text}
+                    {t('admin.user.revokeReviewer', { subject: label.text })}
                   </button>
                 </li>
               );
@@ -463,18 +487,24 @@ export function UserPage({ userId }: { userId: number }) {
         {rules.canGrant && (
           <form className="find-lesson" onSubmit={grantReviewer}>
             <div className="fields">
-              <label htmlFor="reviewer-subject">Ajouter une matière de relecture</label>
+              <label htmlFor="reviewer-subject">{t('admin.user.addReviewSubject')}</label>
               {catalogue.state === 'error' && (
-                <p className="field-error" role="alert">
-                  Liste des matières indisponible. {catalogue.message}
+                <p className="field-error" role="alert" id="reviewer-subject-error">
+                  {t('admin.user.subjectsUnavailable', { message: catalogue.message })}
                 </p>
               )}
-              <select id="reviewer-subject" value={subjectId} onChange={(e) => setSubjectId(e.target.value)} disabled={catalogue.state !== 'ready'}>
-                <option value="">{catalogue.state === 'loading' ? 'Chargement des matières…' : assignable.length ? 'Choisir une matière' : 'Aucune matière disponible'}</option>
+              <select
+                id="reviewer-subject"
+                value={subjectId}
+                onChange={(e) => setSubjectId(e.target.value)}
+                disabled={catalogue.state !== 'ready'}
+                aria-describedby={catalogue.state === 'error' ? 'reviewer-subject-error' : undefined}
+              >
+                <option value="">{catalogue.state === 'loading' ? t('admin.loadingSubjects') : assignable.length ? t('admin.chooseSubjectOption') : t('admin.noSubjectAvailable')}</option>
                 {assignable.map((s) => {
-                  const label = entryLabel(s, 'fr');
+                  const label = entryLabel(s, locale());
                   return (
-                    <option key={s.id} value={s.id} lang={label.lang === 'ar' ? 'ar' : undefined}>
+                    <option key={s.id} value={s.id} lang={label.lang && label.lang !== locale() ? label.lang : undefined}>
                       {label.text}
                     </option>
                   );
@@ -482,15 +512,15 @@ export function UserPage({ userId }: { userId: number }) {
               </select>
             </div>
             <button type="submit" disabled={busy || !subjectId}>
-              Attribuer la relecture
+              {t('admin.user.grantReviewer')}
             </button>
           </form>
         )}
       </section>
 
       <section aria-labelledby="history-title">
-        <h2 id="history-title">Historique</h2>
-        {history.length === 0 ? <p>Aucun changement enregistré.</p> : <HistoryList history={history} />}
+        <h2 id="history-title">{t('admin.history')}</h2>
+        {history.length === 0 ? <p>{t('admin.user.noHistory')}</p> : <HistoryList history={history} />}
       </section>
 
       {pending && (
@@ -516,44 +546,47 @@ export function UserPage({ userId }: { userId: number }) {
 function confirmLabel(p: Pending): string {
   switch (p.kind) {
     case 'grant':
-      return 'Attribuer';
+      return t('admin.user.grant');
     case 'revoke':
     case 'revokeReviewer':
-      return 'Retirer';
+      return t('admin.user.revoke');
     case 'disable':
-      return 'Désactiver';
+      return t('admin.user.disableAction');
     case 'enable':
-      return 'Réactiver';
+      return t('admin.user.enableAction');
   }
 }
 
 function confirmText(p: Pending): string {
   switch (p.kind) {
     case 'grant':
-      return 'Un administrateur peut gérer les utilisateurs, leurs permissions, le catalogue et les programmes. Il ne devient pas relecteur pour autant.';
+      return t('admin.user.grantAdminText');
     case 'revoke':
-      return p.permission === 'administrator'
-        ? 'Le compte ne pourra plus administrer. Le serveur refuse si c’est le dernier administrateur actif.'
-        : 'Le changement s’applique dès la prochaine requête du compte.';
+      return p.permission === 'administrator' ? t('admin.user.revokeAdminText') : t('admin.user.revokeText');
     case 'revokeReviewer':
-      return `Le compte ne pourra plus relire les leçons de ${p.label}.`;
+      return t('admin.user.revokeReviewerText', { subject: p.label });
     case 'disable':
-      return 'Le compte ne pourra plus se connecter et ses sessions ouvertes sont fermées immédiatement. Ses permissions restent enregistrées. Le serveur refuse s’il s’agit du dernier administrateur actif.';
+      return t('admin.user.disableText');
     case 'enable':
-      return 'Le compte pourra de nouveau se connecter avec ses permissions enregistrées.';
+      return t('admin.user.enableText');
   }
 }
 
-const ACTION_LABELS: Record<UserEvent['action'], string> = { grant: 'Attribution', revoke: 'Retrait', disable: 'Désactivation', enable: 'Réactivation' };
+const ACTION_LABELS: Record<UserEvent['action'], string> = {
+  grant: t('admin.event.grant'),
+  revoke: t('admin.event.revoke'),
+  disable: t('admin.event.disable'),
+  enable: t('admin.event.enable'),
+};
 
-/** One history event as a French sentence. */
+/** One history event as a sentence in the interface language. */
 export function describeUserEvent(e: UserEvent): string {
-  const who = e.actorId !== null ? (e.actorName ?? `utilisateur n° ${e.actorId}`) : `opérateur ${e.operatorLabel ?? 'inconnu'}`;
+  const who = e.actorId !== null ? (e.actorName ?? t('admin.event.userId', { id: e.actorId })) : t('admin.event.operator', { label: e.operatorLabel ?? t('admin.event.unknown') });
   const what =
     e.kind === 'status'
       ? ACTION_LABELS[e.action]
-      : `${ACTION_LABELS[e.action]} : ${e.permission ? PERMISSION_LABELS[e.permission] : ''}${e.subjectCode ? ` (${e.subjectCode})` : ''}`;
-  return `${what}, par ${who}`;
+      : `${t('admin.event.permission', { action: ACTION_LABELS[e.action], permission: e.permission ? PERMISSION_LABELS[e.permission] : '' })}${e.subjectCode ? ` (${e.subjectCode})` : ''}`;
+  return t('admin.event.by', { what, who });
 }
 
 function HistoryList({ history }: { history: UserEvent[] }) {
