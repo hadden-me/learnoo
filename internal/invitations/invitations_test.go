@@ -349,6 +349,9 @@ func TestDatabaseGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Release on every path: a connection still held when the test fails
+	// would make the pool's Close in the cleanup wait forever.
+	t.Cleanup(conn.Release)
 	if _, err := conn.Exec(ctx, `CREATE TEMP TABLE users (id bigint, email text)`); err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hadden-me/learnoo/internal/auth"
+	"github.com/hadden-me/learnoo/internal/database/dbtest"
 	"github.com/hadden-me/learnoo/internal/permissions"
 	"github.com/hadden-me/learnoo/internal/users"
 	"github.com/jackc/pgx/v5"
@@ -41,17 +42,7 @@ var hash = func() string {
 // connection setup.
 func (e *env) warm(n int) {
 	e.t.Helper()
-	var conns []interface{ Release() }
-	for range n {
-		c, err := e.db.Acquire(e.ctx)
-		if err != nil {
-			e.t.Fatal(err)
-		}
-		conns = append(conns, c)
-	}
-	for _, c := range conns {
-		c.Release()
-	}
+	dbtest.Warm(e.t, e.db, n)
 }
 
 func (e *env) activeAdmins() int {

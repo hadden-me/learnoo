@@ -395,6 +395,9 @@ func TestRestoreRechecksEligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Roll back on every path: a transaction left open by t.Fatal would make
+	// the pool's Close in the test cleanup wait forever (harmless after Commit).
+	defer func() { _ = tx.Rollback(w.ctx) }()
 	for _, s := range []string{
 		`ALTER TABLE lesson_revisions DISABLE TRIGGER zz_guard_lesson_revisions_immutable_snapshot`,
 		fmt.Sprintf(`UPDATE lesson_revisions SET content = content || '{"unexpected": true}' WHERE id = %d`, first.ID),

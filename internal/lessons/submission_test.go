@@ -293,6 +293,9 @@ func TestSubmissionRefusedForStaleSnapshots(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Roll back if a t.Fatal below fires first, or the pool's Close in
+			// the test cleanup would wait forever (a no-op after the rollback).
+			defer func() { _ = tx.Rollback(f.ctx) }()
 			if _, err := tx.Exec(f.ctx, `SELECT count(*) FROM lesson_revisions`); err != nil { // takes the snapshot
 				t.Fatal(err)
 			}

@@ -297,6 +297,7 @@ func TestWithdrawalCloseTriggerIsHardened(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback(w.ctx) }()
 	var execErr error
 	for _, s := range []string{
 		`CREATE TEMP TABLE revision_withdrawals (lesson_id bigint, revision_id bigint)`,

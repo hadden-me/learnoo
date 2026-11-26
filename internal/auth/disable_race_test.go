@@ -198,6 +198,13 @@ func TestLoginWaitsForUncommittedDisable(t *testing.T) {
 		done <- err
 	}()
 	holder := <-holderc
+	// Roll back if a t.Fatal below fires before Commit, or the pool's Close in
+	// the test cleanup would wait forever (a no-op after Commit).
+	defer func() {
+		if disable != nil {
+			_ = disable.Rollback(e.ctx)
+		}
+	}()
 	if holder == 0 || !e.waitBlockedBy(holder, done) {
 		if disable != nil {
 			_ = disable.Rollback(e.ctx)
