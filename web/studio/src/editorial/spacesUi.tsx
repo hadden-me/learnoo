@@ -8,6 +8,8 @@ import type { Route } from '../router';
 import { canHandleReports, type Spaces } from '../spaces';
 import { Link } from '../ui/Link';
 import { AdminLessonsPage, LessonPublicationPage } from './AdminPages';
+import { AdminCoursePage, AdminCoursesPage } from './CourseAdminPages';
+import { CoursePublishPage, CourseReviewPage } from './CourseReviewPages';
 import { NoAccess } from './common';
 import { PublishQueuePage, PublishRevisionPage } from './PublishPages';
 import { ReportListPage, ReportPage } from './ReportPages';
@@ -23,10 +25,10 @@ interface SpaceLink {
 }
 
 export const SPACE_LINKS: SpaceLink[] = [
-  { key: 'review', label: 'Relecture', to: paths.reviewQueue, description: 'Relire les révisions soumises dans vos matières : approuver ou demander des modifications.', available: (s) => s.reviewer, routes: ['reviewQueue', 'reviewRevision'] },
-  { key: 'publish', label: 'Publication', to: paths.publishQueue, description: 'Publier les révisions approuvées.', available: (s) => s.publisher, routes: ['publishQueue', 'publishRevision'] },
+  { key: 'review', label: 'Relecture', to: paths.reviewQueue, description: 'Relire les leçons et les cours soumis dans vos matières : approuver ou demander des modifications.', available: (s) => s.reviewer, routes: ['reviewQueue', 'reviewRevision', 'reviewCourse'] },
+  { key: 'publish', label: 'Publication', to: paths.publishQueue, description: 'Publier les leçons et les cours approuvés.', available: (s) => s.publisher, routes: ['publishQueue', 'publishRevision', 'publishCourse'] },
   { key: 'reports', label: 'Signalements', to: paths.reports, description: 'Traiter les erreurs signalées par les lecteurs.', available: canHandleReports, routes: ['reports', 'report'] },
-  { key: 'admin', label: 'Administration', to: paths.adminLessons, description: 'Retirer une révision, dépublier une leçon ou restaurer une version publiée auparavant.', available: (s) => s.administrator, routes: ['adminLessons'] },
+  { key: 'admin', label: 'Administration', to: paths.adminLessons, description: 'Leçons et cours : retraits, dépublication, suspension, archivage, restauration, transferts et relectures bloquées.', available: (s) => s.administrator, routes: ['adminLessons', 'adminCourses', 'adminCourse'] },
 ];
 
 /** Navigation links for the editorial spaces this account can use. */
@@ -45,6 +47,8 @@ export function SpaceNav({ spaces, route }: { spaces: Spaces; route: Route }) {
 /** Which space a route belongs to and whether the account can use it. */
 export function routeAccess(route: EditorialRoute, spaces: Spaces): { space: string; allowed: boolean } {
   if (route.name === 'publication') return { space: 'Publication', allowed: spaces.publisher || spaces.administrator };
+  // Publishers and administrators read any submitted course revision (they never decide on it).
+  if (route.name === 'reviewCourse') return { space: 'Relecture', allowed: spaces.reviewer || spaces.publisher || spaces.administrator };
   const link = SPACE_LINKS.find((l) => (l.routes as string[]).includes(route.name))!;
   return { space: link.label, allowed: link.available(spaces) };
 }
@@ -58,6 +62,14 @@ export function editorialPage(route: EditorialRoute, spaces: Spaces): ReactNode 
       return <ReviewQueuePage />;
     case 'reviewRevision':
       return <ReviewRevisionPage key={route.revisionId} revisionId={route.revisionId} />;
+    case 'reviewCourse':
+      return <CourseReviewPage key={route.revisionId} revisionId={route.revisionId} />;
+    case 'publishCourse':
+      return <CoursePublishPage key={route.revisionId} revisionId={route.revisionId} />;
+    case 'adminCourses':
+      return <AdminCoursesPage />;
+    case 'adminCourse':
+      return <AdminCoursePage key={route.courseId} courseId={route.courseId} />;
     case 'publishQueue':
       return <PublishQueuePage />;
     case 'publishRevision':

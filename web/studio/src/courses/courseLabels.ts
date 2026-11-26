@@ -21,10 +21,17 @@ export const COURSE_FILTERS: Array<[CourseStateFilter, string]> = [
   ['none', 'Sans version en cours'],
 ];
 
-/** The course's current state as one phrase, with the tone classes of the lesson list. */
-export function courseState(course: Course): { label: string; tone: 'draft' | 'review' | 'changes' | 'approved' | 'published' | 'empty' } {
+/**
+ * The course's current state as one phrase, with the tone classes of the
+ * lesson list. Archive and suspension come first: they decide whether
+ * students can read the course, whatever revision is in progress.
+ */
+export function courseState(course: Course): { label: string; tone: 'draft' | 'review' | 'changes' | 'approved' | 'published' | 'empty' | 'withdrawn' } {
   const latest = course.latestRevision;
+  if (course.archived) return { label: 'Archivé', tone: 'withdrawn' };
+  if (course.suspended) return { label: 'Suspendu par un administrateur', tone: 'withdrawn' };
   if (!latest) return { label: 'Aucune version en cours', tone: 'empty' };
+  if (latest.withdrawn) return { label: 'Version retirée par un administrateur', tone: 'withdrawn' };
   if (latest.status === 'approved') return course.publishedRevisionId === latest.id ? { label: 'Publié', tone: 'published' } : { label: 'Approuvé, en attente de publication', tone: 'approved' };
   const tone = latest.status === 'draft' ? 'draft' : latest.status === 'in_review' ? 'review' : 'changes';
   return { label: COURSE_STATUS_LABELS[latest.status], tone };

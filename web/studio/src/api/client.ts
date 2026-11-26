@@ -130,6 +130,12 @@ export class ApiError extends Error {
     message: string,
     /** Seconds from Retry-After, when sent. */
     readonly retryAfter: number | null = null,
+    /**
+     * The error object's other keys, when the server sends some (for example
+     * `fields` with 422 incomplete, `steps` with 409 ineligible, `reasons`
+     * with 403 not_eligible_reviewer: docs/API.md "Course review and publication").
+     */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = 'ApiError';
@@ -304,12 +310,17 @@ async function readError(response: Response): Promise<ApiError> {
   const retryAfter = header !== null && /^\d+$/.test(header) ? Number(header) : null;
   let code = `http_${response.status}`;
   let message = response.statusText;
+  let details: Record<string, unknown> = {};
   try {
-    const body = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
+    const body = (await response.json()) as { error?: Record<string, unknown> };
     if (typeof body.error?.code === 'string') code = body.error.code;
     if (typeof body.error?.message === 'string') message = body.error.message;
+    if (body.error && typeof body.error === 'object') {
+      const { code: _c, message: _m, ...rest } = body.error;
+      details = rest;
+    }
   } catch {
     // Not JSON (a proxy page, for example): keep the status-based code.
   }
-  return new ApiError(response.status, code, message, retryAfter);
+  return new ApiError(response.status, code, message, retryAfter, details);
 }

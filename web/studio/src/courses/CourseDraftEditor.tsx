@@ -10,6 +10,8 @@ import { ApiError, type Chapter, type Subject } from '../api/client';
 import type { Course, CourseRevision, Edition, Level } from '../api/courses';
 import { courseApi } from '../api/courses';
 import { describeCourseError } from '../api/courseMessages';
+import { courseReviewApi, incompleteFields, ineligibleSteps, type ReviewedRevision } from '../api/courseReview';
+import { describeCourseWorkflowError } from '../api/courseReviewMessages';
 import { describeError, isHeif } from '../api/messages';
 import { CatalogueName, catalogueLabel, entryLabel } from '../catalogue';
 import { isUnloadAllowed, useStudio } from '../context';
@@ -24,6 +26,7 @@ import * as outline from './outline';
 import { LIMITS, checkDraft, fromRevision, snapshot, toSaveBody, type CourseDraft, type DraftStep, type Problem } from './outline';
 import { PlacementSection, type PlacementInfo } from './PlacementSection';
 import { saveCourse } from './saveCourse';
+import { submissionProblems } from './workflow';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_IMAGE_BYTES = 5 << 20;
@@ -48,6 +51,8 @@ export interface CourseDraftEditorProps {
   onLeftDraft: () => void;
   /** After each successful save (the page heading shows the saved title). */
   onSaved?: (revision: CourseRevision) => void;
+  /** The draft was submitted for review (LMS-B04): the page shows it read-only. */
+  onSubmitted?: (revision: ReviewedRevision) => void;
 }
 
 const withTitles = (draft: CourseDraft, titles: Map<number, string>): CourseDraft => ({
@@ -60,6 +65,7 @@ const placementsOf = (revision: CourseRevision): Record<number, PlacementInfo> =
 export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const { api, session, expired, accountChanged } = useStudio();
   const courses = useMemo(() => courseApi(api), [api]);
+  const review = useMemo(() => courseReviewApi(api), [api]);
   const { course, subject, levels } = props;
   const language = course.language;
   const dir = language === 'ar' ? 'rtl' : 'ltr';
@@ -86,7 +92,8 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   const [notDraft, setNotDraft] = useState(false);
   const [entries, setEntries] = useState<CourseRecoveryEntry[]>([]);
   const [restoredKey, setRestoredKey] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'discard' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<'discard' | 'delete' | 'submit' | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [picker, setPicker] = useState<{ moduleId: string; step?: DraftStep } | null>(null);
   const [announcement, setAnnouncement] = useState({ text: '', n: 0 });
   const announce = (text: string) => setAnnouncement((a) => ({ text, n: a.n + 1 }));
@@ -308,14 +315,14 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's' && !picker && !dialog) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's' && !picker && !dialog && !submitting) {
         e.preventDefault();
         void save();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [save, picker, dialog]);
+  }, [save, picker, dialog, submitting]);
 
   const reloadServer = async () => {
     writeCourseRecovery(localStorage, recoveryTarget(), draftRef.current, 'conflict');
@@ -375,6 +382,53 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       props.onDeleted();
     } catch (error) {
       setMessage({ text: `Suppression du cours impossible. ${describeCourseError(error)}`, error: true });
+    }
+  };
+
+  /* ---------- submission (LMS-B04) ---------- */
+
+  /** Asks for confirmation once the saved draft passes the client checks; the server checks everything again. */
+  const askSubmit = () => {
+    if (expired) return refuseExpired();
+    if (dirtyRef.current) {
+      setMessage({ text: 'Enregistrez d’abord vos modifications : la soumission porte sur la version enregistrée sur le serveur.', error: true });
+      return;
+    }
+    const found = checkDraft(draftRef.current);
+    setProblems(found);
+    if (found.length > 0) {
+      setMessage({ text: 'Le brouillon contient des points à corriger ; rien n’a été soumis.', error: true });
+      requestAnimationFrame(() => problemsRef.current?.focus());
+      return;
+    }
+    setDialog('submit');
+  };
+
+  const submit = async () => {
+    setDialog(null);
+    if (expired) return refuseExpired();
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const submitted = await review.submit(server.id, server.version);
+      removeCourseRecovery(localStorage, courseRecoveryKey(recoveryTarget()));
+      if (restoredKey) removeCourseRecovery(localStorage, restoredKey);
+      dirtyRef.current = false;
+      props.onSubmitted?.(submitted);
+    } catch (error) {
+      if (error instanceof ApiError && (error.code === 'incomplete' || error.code === 'ineligible')) {
+        setProblems(submissionProblems(draftRef.current, incompleteFields(error), ineligibleSteps(error)));
+        requestAnimationFrame(() => problemsRef.current?.focus());
+      }
+      if (error instanceof ApiError && error.code === 'placement_invalid') setPlacementInvalid(true);
+      if (error instanceof ApiError && error.code === 'version_conflict') setConflict(true);
+      if (error instanceof ApiError && error.code === 'not_draft') {
+        setNotDraft(true);
+        return;
+      }
+      setMessage({ text: `Soumission impossible. ${describeCourseWorkflowError(error)}`, error: true });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -506,15 +560,19 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
   return (
     <div className="editor-page course-editor">
       <div className="editor-bar">
-        <p className="revision-label">Brouillon · version {server.number} du cours</p>
+        <p className="revision-label">
+          Brouillon · version {server.number} du cours{props.revision.kind === 'amendment' ? ' · amendement (remplacement de révisions de leçons)' : ''}
+        </p>
         <p id={ids.save} className={dirty ? 'save-state dirty' : 'save-state'} role="status" aria-live="polite">
           {saveState}
         </p>
         <div className="actions">
-          <button type="button" className="primary" onClick={() => void save()} disabled={saving} aria-describedby={ids.save}>
+          <button type="button" className="primary" onClick={() => void save()} disabled={saving || submitting} aria-describedby={ids.save}>
             Enregistrer
           </button>
-          {/* Submission for review is LMS-B04; its action belongs here, after saving. */}
+          <button type="button" onClick={askSubmit} disabled={saving || submitting} aria-describedby={ids.save}>
+            {submitting ? 'Soumission en cours…' : 'Soumettre pour relecture…'}
+          </button>
         </div>
       </div>
 
@@ -525,7 +583,7 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       )}
       {problems.length > 0 && (
         <div tabIndex={-1} ref={problemsRef} className="problems">
-          <ul className="errors" aria-label="Points à corriger avant l’enregistrement">
+          <ul className="errors" aria-label="Points à corriger">
             {problems.map((p, i) => (
               <li key={`${p.target}-${i}`}>{p.message}</li>
             ))}
@@ -743,6 +801,20 @@ export function CourseDraftEditor(props: CourseDraftEditorProps) {
       {dialog === 'discard' && (
         <Dialog title="Supprimer ce brouillon ?" onCancel={() => setDialog(null)} cancelLabel="Garder le brouillon" actions={[{ label: 'Supprimer le brouillon', kind: 'danger', onClick: () => void discard() }]}>
           <p>Le brouillon (présentation, classement et plan) sera supprimé du serveur. Cette action est définitive. Le cours lui-même, ses versions déjà soumises, les leçons et les images ne sont pas touchés.</p>
+        </Dialog>
+      )}
+      {dialog === 'submit' && (
+        <Dialog
+          title={`Soumettre la version ${server.number} du cours pour relecture ?`}
+          onCancel={() => setDialog(null)}
+          cancelLabel="Continuer la rédaction"
+          actions={[{ label: 'Soumettre', kind: 'primary', disabled: submitting, onClick: () => void submit() }]}
+        >
+          <p>
+            La version enregistrée sur le serveur sera envoyée à un relecteur de la matière, indépendant de vous et des auteurs des leçons ajoutées ou remplacées. Elle ne pourra plus être
+            modifiée : une correction passera par une nouvelle version.
+          </p>
+          <p>Chaque leçon du cours doit déjà être approuvée et publiée : la relecture du cours porte sur sa présentation, son plan et son classement, pas sur le contenu des leçons.</p>
         </Dialog>
       )}
       {dialog === 'delete' && (

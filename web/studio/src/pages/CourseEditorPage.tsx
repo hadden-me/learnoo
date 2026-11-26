@@ -1,24 +1,28 @@
 // /studio/courses/{id}: the course's latest revision. A draft opens in the
-// course editor; a course without an open draft offers to start one (steps
-// that can no longer be attached are listed, never silently lost); a
-// submitted revision (LMS-B04) is shown as a summary. Another user's course
-// is reported exactly like a missing one, as the server does.
+// course editor, where it is submitted for review; a course without an open
+// draft shows its latest revision's state (in review, blocked, changes
+// requested with the feedback, approved, published, withdrawn) and offers to
+// start a new draft (steps that can no longer be attached are listed, never
+// silently lost). Suspension and archive are shown above, the newer lesson
+// revision notice (amendments) and the archive request below. Another
+// user's course is reported exactly like a missing one, as the server does.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Chapter, Subject } from '../api/client';
 import { courseApi, findOwnCourse, type Course, type CourseRevision, type DroppedStep, type Level } from '../api/courses';
 import { describeCourseError } from '../api/courseMessages';
+import type { ReviewedRevision } from '../api/courseReview';
 import { CatalogueName, entryLabel } from '../catalogue';
 import { setFlash, takeFlash, useStudio } from '../context';
-import { COURSE_STATUS_LABELS, courseState, courseTitle } from '../courses/courseLabels';
+import { courseState, courseTitle } from '../courses/courseLabels';
 import { CourseDraftEditor } from '../courses/CourseDraftEditor';
-import { LANGUAGE_LABELS, formatDateTime } from '../labels';
+import { ArchiveRequest, CourseStateNotice, CourseStatusView, NewerRevisionsNotice } from '../courses/CourseStatus';
+import { LANGUAGE_LABELS } from '../labels';
 import { BASE, navigate } from '../router';
-import { Dialog } from '../ui/Dialog';
 import { Link } from '../ui/Link';
 
 type Loaded = {
   course: Course;
-  revision: CourseRevision | null;
+  revision: ReviewedRevision | null;
   subject: Subject;
   chapters: Chapter[];
   levels: Level[];
@@ -47,7 +51,7 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
         const [subjects, levels, revision, lessons] = await Promise.all([
           api.subjects(),
           courses.levels(),
-          course.latestRevision ? courses.revision(course.latestRevision.id) : Promise.resolve(null),
+          course.latestRevision ? (courses.revision(course.latestRevision.id) as Promise<ReviewedRevision>) : Promise.resolve(null),
           api.myLessons(),
         ]);
         const subject = subjects.find((s) => s.id === course.subjectId);
@@ -115,11 +119,18 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
         onDeleted={() => toList('Cours supprimé. Les leçons et les images n’ont pas été touchées.')}
         onLeftDraft={() => void reload('Ce brouillon a quitté l’état de brouillon.')}
         onSaved={(saved) => setSavedTitle(saved.title)}
+        onSubmitted={(submitted) =>
+          void reload(
+            submitted.blocked
+              ? `Version ${submitted.number} soumise pour relecture, mais aucun relecteur éligible ne peut la décider pour l’instant (détails ci-dessous).`
+              : `Version ${submitted.number} soumise pour relecture. Elle ne peut plus être modifiée.`,
+          )
+        }
       />
     );
   } else {
     body = (
-      <NoDraft
+      <CourseStatusView
         course={course}
         revision={revision}
         onDraft={(created) => {
@@ -130,6 +141,8 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
       />
     );
   }
+  const everSubmitted = revision !== null && (revision.status !== 'draft' || revision.number > 1);
+  const showNotice = course.publishedRevisionId !== null || !!course.suspended;
 
   return (
     <main className="page" id="main">
@@ -148,7 +161,17 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
           {notice}
         </p>
       )}
+      <CourseStateNotice course={course} />
+      {showNotice && !course.archived && (
+        <NewerRevisionsNotice
+          key={`notice-${generation}`}
+          course={course}
+          draftOpen={revision?.status === 'draft'}
+          onAmendment={(created) => void reload(`Amendement créé (version ${created.number}) : vérifiez-le, enregistrez-le si besoin, puis soumettez-le pour relecture.`)}
+        />
+      )}
       {body}
+      {everSubmitted && revision?.status !== 'draft' && <ArchiveRequest key={`archive-${generation}`} course={course} />}
     </main>
   );
 }
@@ -170,82 +193,6 @@ function DroppedNotice({ dropped, revision }: { dropped: DroppedStep[]; revision
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-/**
- * No open draft: the course's only draft was discarded, or its latest
- * revision was submitted (LMS-B04 adds review, publication and amendments
- * here). Starting a draft copies the latest revision.
- */
-function NoDraft({ course, revision, onDraft, onDeleted }: { course: Course; revision: CourseRevision | null; onDraft: (created: CourseRevision) => void; onDeleted: () => void }) {
-  const { api, expired } = useStudio();
-  const courses = useMemo(() => courseApi(api), [api]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState(false);
-
-  const start = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      onDraft(await courses.startDraft(course.id));
-    } catch (e) {
-      setError(describeCourseError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const remove = async () => {
-    setConfirm(false);
-    setError(null);
-    try {
-      await courses.deleteCourse(course.id);
-      onDeleted();
-    } catch (e) {
-      setError(describeCourseError(e));
-    }
-  };
-
-  return (
-    <section className="status-card" aria-labelledby="nodraft-heading">
-      {revision ? (
-        <>
-          <h2 id="nodraft-heading">
-            Version {revision.number} · {COURSE_STATUS_LABELS[revision.status]}
-          </h2>
-          <p>Cette version du cours a quitté l’état de brouillon : elle ne peut plus être modifiée.</p>
-          {revision.submittedAt && <p className="hint">Soumise le {formatDateTime(revision.submittedAt)}.</p>}
-        </>
-      ) : (
-        <>
-          <h2 id="nodraft-heading">Aucun brouillon en cours</h2>
-          <p>Le brouillon de ce cours a été supprimé. Créez un nouveau brouillon pour reprendre la rédaction, ou supprimez le cours s’il n’a jamais été soumis.</p>
-        </>
-      )}
-      <div className="actions">
-        {(!revision || revision.status === 'changes_requested') && (
-          <button type="button" className="primary" onClick={() => void start()} disabled={busy || expired}>
-            {revision ? 'Créer la version corrigée' : 'Créer un brouillon'}
-          </button>
-        )}
-        {!revision && (
-          <button type="button" className="danger" onClick={() => setConfirm(true)} disabled={busy || expired}>
-            Supprimer le cours
-          </button>
-        )}
-      </div>
-      {error && (
-        <p className="banner error" role="alert">
-          {error}
-        </p>
-      )}
-      {confirm && (
-        <Dialog title="Supprimer définitivement le cours ?" onCancel={() => setConfirm(false)} cancelLabel="Garder le cours" actions={[{ label: 'Supprimer le cours', kind: 'danger', onClick: () => void remove() }]}>
-          <p>Le cours sera supprimé du serveur. Cette action est définitive. Les leçons et les images ne sont pas supprimées. Un cours déjà soumis ne peut pas être supprimé.</p>
-        </Dialog>
-      )}
     </section>
   );
 }
