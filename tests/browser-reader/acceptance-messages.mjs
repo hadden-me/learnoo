@@ -12,6 +12,7 @@ import * as courses from '../../web/studio/src/i18n/messages/courses.ts';
 import * as lessons from '../../web/studio/src/i18n/messages/lessons.ts';
 import * as review from '../../web/studio/src/i18n/messages/review.ts';
 import * as shell from '../../web/studio/src/i18n/messages/shell.ts';
+import { format } from '../../web/studio/src/i18n/core.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -41,7 +42,8 @@ export function messages(lang) {
     let m = st[key];
     if (m === undefined) throw new Error(`Studio message ${key} missing (${lang})`);
     if (typeof m === 'object') m = m[plural.select(vars.n)] ?? m.other;
-    return m.replace(/\{(\w+)\}/g, (all, name) => (name in vars ? String(vars[name]) : all));
+    // The Studio's own format(), so values are isolated (FSI…PDI) exactly as rendered.
+    return format(m, vars, lang);
   };
   const r = (key, ...args) => {
     let m = rd[key];
