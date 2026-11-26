@@ -100,19 +100,11 @@ func (e *env) disabled(id int64) bool {
 	return e.count(`SELECT count(*) FROM users WHERE id = $1 AND disabled_at IS NOT NULL`, id) == 1
 }
 
+// warm opens n pooled connections so racing goroutines do not queue on
+// connection setup.
 func (e *env) warm(n int) {
 	e.t.Helper()
-	var conns []*pgxpool.Conn
-	for range n {
-		c, err := e.db.Acquire(e.ctx)
-		if err != nil {
-			e.t.Fatal(err)
-		}
-		conns = append(conns, c)
-	}
-	for _, c := range conns {
-		c.Release()
-	}
+	dbtest.Warm(e.t, e.db, n)
 }
 
 func TestDisableRevokesSessionsAndIsAudited(t *testing.T) {

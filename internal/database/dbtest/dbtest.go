@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/hadden-me/learnoo/internal/database"
 	"github.com/hadden-me/learnoo/migrations"
@@ -71,6 +72,43 @@ func EmptySchema(t testing.TB) *pgxpool.Pool {
 		admin.Close()
 	})
 	return pool
+}
+
+// WarmTimeout bounds how long Warm waits for its connections.
+const WarmTimeout = 30 * time.Second
+
+// Warm opens n pooled connections at once and releases them, so racing
+// goroutines do not queue on connection setup. It fails the test if the
+// connections cannot be had within WarmTimeout (for example when the shared
+// database is at max_connections, or n exceeds the pool's MaxConns), and it
+// never keeps a connection: a held one would make the pool's Close in the
+// test cleanup wait forever.
+func Warm(t testing.TB, pool *pgxpool.Pool, n int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), WarmTimeout)
+	defer cancel()
+	if err := acquireAll(ctx, pool, n); err != nil {
+		t.Fatalf("warm %d connections: %v", n, err)
+	}
+}
+
+// acquireAll acquires n connections and releases every one it acquired
+// before returning, on success and on failure.
+func acquireAll(ctx context.Context, pool *pgxpool.Pool, n int) error {
+	conns := make([]*pgxpool.Conn, 0, n)
+	defer func() {
+		for _, c := range conns {
+			c.Release()
+		}
+	}()
+	for range n {
+		c, err := pool.Acquire(ctx)
+		if err != nil {
+			return err
+		}
+		conns = append(conns, c)
+	}
+	return nil
 }
 
 // Migrated returns an isolated schema with every migration applied.
