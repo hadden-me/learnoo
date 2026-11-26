@@ -1,10 +1,10 @@
 # LMS acceptance and operational readiness (LMS-B12)
 
-Status: evidence for issue #102, recorded 2026-11-26 on the local branch `feat/lms-b12-acceptance`. It is a record of what was specified, built and tested, not a release approval. Nothing here is deployed, and nothing here was validated by a teacher, a student or a native speaker.
+Status: evidence for issue #102, recorded 2026-11-26 on `feat/lms-b12-acceptance` (draft PR #119). It is a record of what was specified, built and tested, not a release approval. Nothing here is deployed, and nothing here was validated by a teacher, a student or a native speaker.
 
 ## What was run, and against what
 
-The branch starts from B09 (`feat/lms-b09-i18n-a11y`), which sits on the local integration branch `integration/lms` combining every LMS slice (B03 to B10) on top of `develop` (B02 merged as fe827b2). None of B03 to B10 is merged into `develop`; the integration branch has never been pushed. Results below are from one machine (Apple silicon, macOS, Go 1.25.4, Node 22.20, Chromium from Playwright 1.65.1, PostgreSQL 16.13 initialised with `-E UTF8 --locale=C`, so every database-backed test and the browser suite ran in a C-locale database).
+The branch starts from B09 (`feat/lms-b09-i18n-a11y`), which sits on the integration branch `integration/lms` (4a1c613) combining every LMS slice (B03 to B10) on top of `develop` (B02 merged as fe827b2). None of B03 to B10 is merged into `develop`. `integration/lms` was pushed on 2026-11-26 only as the base of draft PR #118 (B09). Results below are from one machine (Apple silicon, macOS, Go 1.25.4, Node 22.20, Chromium from Playwright 1.65.1, PostgreSQL 16.13 initialised with `-E UTF8 --locale=C`, so every database-backed test and the browser suite ran in a C-locale database).
 
 | Check | Command | Result (2026-11-26) |
 | --- | --- | --- |
@@ -21,13 +21,31 @@ The branch starts from B09 (`feat/lms-b09-i18n-a11y`), which sits on the local i
 
 `TestUpgradeFrom0012…` writes its 0012 data with the current stores (and SQL that follows the 0012 guards where current code writes later columns). To exercise the real previous application as well, the server at `7143c31` (main, last migration 0012) was built from `git archive` and used to populate a fresh C-locale database through its own operator commands (`bootstrap-admin`, `create-user`, `grant`, `add-subject`, `add-chapter`, `set-subject-name`, `invite-student`) and HTTP API (lessons written, submitted, approved and published; a second edition published, withdrawn and the first restored; a bookmark and an error report filed by a student through the reader forms). The current binary then ran `migrate` (0013 to 0017). Every row of every 0012 table, limited to its 0012 columns (IDs, public IDs, sessions, bookmarks, audit and history rows), was identical before and after; no edition, placement or course was created. The current `serve` answered the sessions opened before the upgrade: both lessons read (the withdrawn edition absent), the dashboard listed the bookmark, `/catalogue` listed the lessons as not yet placed, the open error report was listed for the reviewer, and `verify-restore -strict` passed. The script lives in the session's scratch directory only; this paragraph is its record.
 
+## Review and test record
+
+Each slice's pull request carries the full list of findings. "Reviewed head" is the last commit an independent review round covered. Later commits were audited by a separate reviewer on 2026-11-26, as noted.
+
+| Slice | PR | Review rounds (commit) | Findings resolved | Later commits |
+| --- | --- | --- | --- | --- |
+| B03 | #109 | 52a2a24; then `52a2a24..27388df` | 8 (attachability guard, races, curriculum locks, step-count and revision-number guards, `noQuery`, paging, a DECISIONS note) | rebased as aab45c9 (same patches); CI green on aab45c9 |
+| B04 | #113 | b147a26; 3e59d33; 491ee3e | 7, plus the review-diff leak of withdrawn lesson content | 95cfac5 (one doc line); 71a1719 and d49cd52, audited ok |
+| B05 | #112 | first round; `0303046..7c1c060` | 6 | rebased as 5fc2a25 (same patches); 942e141 audited ok |
+| B06 | #116 | 57d6daa; 69e361a | 6, plus nits | ddccb57 and 64bf2a7 (A08 browser journey), audited ok |
+| B07 | #115 | 6cab30e; `6cab30e..dbaab55` | 4 of 5; the sign-in dependency is resolved by merging after #117 | 85d0637, 0b5874d and 2ef035e, audited ok |
+| B08 | #117 | first round; 37aa758 | 4, plus nits | none |
+| B10 | #114 | 4bc6140; `4bc6140..d2766a2` | 6 | a7494b9, 98bdfce, de1a364 and f53f610, audited ok; CI green on f53f610 |
+| B09 | #118 | cc09d1f; `cc09d1f..31da8ef` | 8, plus Arabic wording | 701116e (merge), audited: it adds one fr/ar message, which joins the native-speaker list |
+| B12 | #119 | 688bab8; `688bab8..c4d0e53` | 7, plus a nit | d30edf4 audited (should-fix: the revoke could mask failures), fixed in 99aa671; 086023c to 5c0bdc7 under review |
+
+The browser runs above were made at c4d0e53 (47 tests) and again at 5c0bdc7 (49 tests, three runs). The Go, Studio, upgrade, backup and Docker results are from c4d0e53; later commits change only browser specs and this document.
+
 ## Status per acceptance journey
 
-Columns follow the definition of done in [LMS_PRODUCT_SPEC.md §12](LMS_PRODUCT_SPEC.md#12-acceptance-and-definition-of-done). **Merged** means merged into `develop`: only B01 (specification #89, contract #90) and B02 (curriculum, #106) are. **Human-validated** and **deployed** are false for every journey. "Reviewed" refers to the independent reviews recorded on each slice's pull request (B03 to B08 and B10 reviewed at least twice; B09 and this B12 branch have had no independent review yet).
+Columns follow the definition of done in [LMS_PRODUCT_SPEC.md §12](LMS_PRODUCT_SPEC.md#12-acceptance-and-definition-of-done). **Merged** means merged into `develop`: only B01 (specification #89, contract #90) and B02 (curriculum, #106) are. **Human-validated** and **deployed** are false for every journey. "Reviewed" refers to the independent reviews recorded on each slice's pull request (every slice from B03 to B12 had at least two independent review rounds; see [Review and test record](#review-and-test-record)).
 
 | ID | Specified | Implemented | Independently reviewed | Tested (automated) | Merged | Usable through the UI | Human-validated | Deployed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A01 | yes | yes (B07, B08) | B07, B08 yes; B09 no | yes, passed | no | yes | no | no |
+| A01 | yes | yes (B07, B08) | yes | yes, passed | no | yes | no | no |
 | A02 | yes | yes (B03, B05) | yes | yes, passed | no | yes | no | no |
 | A03 | yes | yes (B03, B05) | yes | yes, passed | no | yes | no | no |
 | A04 | yes | yes (B04, B06) | yes | yes, passed | no | yes | no | no |
@@ -36,8 +54,8 @@ Columns follow the definition of done in [LMS_PRODUCT_SPEC.md §12](LMS_PRODUCT_
 | A07 | yes | yes (B04, B06, B08) | yes | yes, passed | no | yes; concurrency through automated tests only | no | no |
 | A08 | yes | yes (B03, B04, B06, B10) | yes | yes, passed | no | yes | no | no |
 | A09 | yes | yes (B02, B10) | yes | yes, passed | B02 only | yes | no | no |
-| A10 | yes | yes (B09) | no | yes, passed (viewport emulation; Studio small screens and keyboard only as listed below) | no | yes | no (no native-speaker review, no physical phone) | no |
-| A11 | yes | yes (LRN-010 scripts, #110 memory budget, B12 checks) | LRN-010 and #110 yes; B12 no | yes, passed | LRN-010 and #110 only | operator commands, not UI (by design) | no | no |
+| A10 | yes | yes (B09) | yes | yes, passed (viewport emulation; Studio small screens and keyboard only as listed below) | no | yes | no (no native-speaker review, no physical phone) | no |
+| A11 | yes | yes (LRN-010 scripts, #110 memory budget, B12 checks) | yes | yes, passed | LRN-010 and #110 only | operator commands, not UI (by design) | no | no |
 | A12 | yes | yes (B04, B06) | yes | yes, passed | no | yes | no | no |
 
 ## Evidence per journey
