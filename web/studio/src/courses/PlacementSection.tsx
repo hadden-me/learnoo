@@ -9,6 +9,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { CoursePlacement, CourseApi, Edition, Level } from '../api/courses';
 import { describeCourseError } from '../api/courseMessages';
 import { CatalogueName, catalogueLabel, labelAttrs, type CatalogueLabel, type Lang } from '../catalogue';
+import { t } from '../i18n';
 import { EDITION_STATE_LABELS } from './courseLabels';
 
 export type PlacementInfo = Pick<CoursePlacement, 'assignmentId' | 'editionId' | 'editionState' | 'selectable' | 'retired'>;
@@ -112,14 +113,14 @@ export function PlacementSection({
         const { editions: list } = await courses.sectionEditions(sectionId);
         const current = list.find((e) => e.state === 'current');
         if (!current) {
-          if (!cancelled) setOffer({ state: 'none', message: 'Cette section n’a pas d’édition en vigueur : aucun classement ne peut y être choisi pour le moment.' });
+          if (!cancelled) setOffer({ state: 'none', message: t('courses.placement.noCurrent') });
           return;
         }
         const edition = await courses.edition(current.id);
         const assignment = edition.assignments?.find((a) => a.subjectId === subjectId);
         if (cancelled) return;
-        if (!assignment) setOffer({ state: 'none', message: 'L’édition en vigueur de cette section ne comprend pas la matière du cours.' });
-        else if (!assignment.selectable) setOffer({ state: 'none', message: 'Cette édition ne peut pas être choisie : sa section, son niveau ou la matière a été retiré.' });
+        if (!assignment) setOffer({ state: 'none', message: t('courses.placement.noSubject') });
+        else if (!assignment.selectable) setOffer({ state: 'none', message: t('courses.placement.notSelectable') });
         else setOffer({ state: 'ready', edition, assignmentId: assignment.id });
       } catch (e) {
         if (!cancelled) setOffer({ state: 'error', message: describeCourseError(e) });
@@ -132,36 +133,34 @@ export function PlacementSection({
 
   return (
     <section className="panel course-section" aria-labelledby={ids.heading}>
-      <h2 id={ids.heading}>Classement dans le programme</h2>
-      <p className="hint">
-        Choisissez le niveau, la section et l’édition du programme officiel où le cours s’inscrit. Seule l’édition en vigueur d’une section peut être ajoutée ; un cours peut être classé dans plusieurs sections. Le classement est obligatoire pour soumettre le cours, pas pour enregistrer un brouillon.
-      </p>
+      <h2 id={ids.heading}>{t('courses.placement.heading')}</h2>
+      <p className="hint">{t('courses.placement.hint')}</p>
       {assignmentIds.length === 0 ? (
-        <p>Aucun classement choisi.</p>
+        <p>{t('courses.placement.none')}</p>
       ) : (
-        <ul className="placement-list" aria-label="Classements choisis">
+        <ul className="placement-list" aria-label={t('courses.placement.list')}>
           {assignmentIds.map((id) => {
             const info = placements[id];
             const names = placementNames(info ? editions[info.editionId] : undefined, levels, language);
             return (
               <li key={id} className={refused.has(id) || info?.retired ? 'placement flagged' : info && info.editionState !== 'current' ? 'placement carried' : 'placement'}>
                 <p>
-                  <PlacementName names={names} fallback={`Classement n° ${id}`} />
+                  <PlacementName names={names} fallback={t('courses.placement.number', { id })} />
                   {info && <span className="hint"> ({EDITION_STATE_LABELS[info.editionState]})</span>}
                 </p>
                 {refused.has(id) && (
                   <p className="field-error">
-                    Le prochain enregistrement sera refusé : cette édition ne peut plus être choisie (elle n’est plus en vigueur, ou sa section, son niveau ou la matière a été retiré). Retirez ce classement, puis ajoutez l’édition en vigueur.
+                    {t('courses.placement.refused')}
                   </p>
                 )}
                 {!refused.has(id) && carried.has(id) && info?.retired && (
-                  <p className="field-error">Retiré du programme : ce classement, conservé depuis la version publiée du cours, devra être retiré ou remplacé avant la soumission du cours.</p>
+                  <p className="field-error">{t('courses.placement.retiredCarried')}</p>
                 )}
                 {!refused.has(id) && carried.has(id) && info && !info.retired && info.editionState === 'superseded' && (
-                  <p className="hint">Édition remplacée, conservée depuis la version publiée du cours. Si vous la retirez, elle ne pourra plus être choisie de nouveau.</p>
+                  <p className="hint">{t('courses.placement.supersededCarried')}</p>
                 )}
-                <button type="button" onClick={() => onRemove(id)} aria-label={`Retirer le classement ${names.edition?.text ?? id}`}>
-                  Retirer ce classement
+                <button type="button" onClick={() => onRemove(id)} aria-label={t('courses.placement.removeLabel', { name: names.edition?.text ?? id })}>
+                  {t('courses.placement.remove')}
                 </button>
               </li>
             );
@@ -170,22 +169,22 @@ export function PlacementSection({
       )}
       {editionsFailed && (
         <div className="banner error" role="alert">
-          <p>Les détails d’une édition du programme n’ont pas pu être lus : son nom et ses chapitres officiels ne sont pas affichés. Les chapitres des modules sont conservés.</p>
+          <p>{t('courses.placement.editionsFailed')}</p>
           <button type="button" onClick={onRetryEditions}>
-            Réessayer
+            {t('shell.retry')}
           </button>
         </div>
       )}
-      {invalid && <p className="field-error">Le dernier enregistrement a été refusé à cause du classement : vérifiez les classements et les chapitres officiels des modules.</p>}
+      {invalid && <p className="field-error">{t('courses.placement.invalid')}</p>}
 
       <fieldset className="placement-picker">
-        <legend>Ajouter un classement</legend>
+        <legend>{t('courses.placement.add')}</legend>
         {openLevels.length === 0 ? (
-          <p>Aucun niveau du programme n’est disponible. Un administrateur doit d’abord créer le programme.</p>
+          <p>{t('courses.placement.noLevels')}</p>
         ) : (
           <>
             <div className="fields">
-              <label htmlFor={ids.level}>Niveau</label>
+              <label htmlFor={ids.level}>{t('courses.placement.level')}</label>
               <select
                 id={ids.level}
                 value={levelId ?? ''}
@@ -194,7 +193,7 @@ export function PlacementSection({
                   setSectionId(null);
                 }}
               >
-                <option value="">Choisir un niveau</option>
+                <option value="">{t('courses.placement.chooseLevel')}</option>
                 {openLevels.map((l) => {
                   const label = catalogueLabel(l.code, l.nameFr, l.nameAr, language);
                   return (
@@ -206,9 +205,9 @@ export function PlacementSection({
               </select>
             </div>
             <div className="fields">
-              <label htmlFor={ids.section}>Section</label>
+              <label htmlFor={ids.section}>{t('courses.placement.section')}</label>
               <select ref={sectionRef} id={ids.section} value={sectionId ?? ''} disabled={!level} onChange={(e) => setSectionId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">{level ? 'Choisir une section' : 'Choisissez d’abord un niveau'}</option>
+                <option value="">{level ? t('courses.placement.chooseSection') : t('courses.placement.levelFirst')}</option>
                 {sections.map((s) => {
                   const label = catalogueLabel(s.code, s.nameFr, s.nameAr, language);
                   return (
@@ -220,7 +219,7 @@ export function PlacementSection({
               </select>
             </div>
             <div aria-live="polite">
-              {offer.state === 'loading' && <p role="status">Recherche de l’édition en vigueur…</p>}
+              {offer.state === 'loading' && <p role="status">{t('courses.placement.searching')}</p>}
               {offer.state === 'none' && <p>{offer.message}</p>}
               {offer.state === 'error' && (
                 <p className="banner error" role="alert">
@@ -230,7 +229,9 @@ export function PlacementSection({
               {offer.state === 'ready' &&
                 (assignmentIds.includes(offer.assignmentId) ? (
                   <p>
-                    L’édition en vigueur « <CatalogueName label={catalogueLabel(offer.edition.code, offer.edition.labelFr, offer.edition.labelAr, language)} /> » est déjà choisie.
+                    {t('courses.placement.alreadyBefore')}
+                    <CatalogueName label={catalogueLabel(offer.edition.code, offer.edition.labelFr, offer.edition.labelAr, language)} />
+                    {t('courses.placement.alreadyAfter')}
                   </p>
                 ) : (
                   <button
@@ -242,7 +243,7 @@ export function PlacementSection({
                       sectionRef.current?.focus();
                     }}
                   >
-                    Ajouter l’édition en vigueur « {catalogueLabel(offer.edition.code, offer.edition.labelFr, offer.edition.labelAr, language).text} »
+                    {t('courses.placement.addCurrent', { name: catalogueLabel(offer.edition.code, offer.edition.labelFr, offer.edition.labelAr, language).text })}
                   </button>
                 ))}
             </div>

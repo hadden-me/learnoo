@@ -11,7 +11,8 @@ import { courseReviewApi, type NewerRevisions, type ReviewedRevision } from '../
 import { describeCourseWorkflowError } from '../api/courseReviewMessages';
 import { useStudio } from '../context';
 import { NoteField, Quote } from '../editorial/common';
-import { formatDateTime } from '../labels';
+import { t } from '../i18n';
+import { STATUS_LABELS, formatDateTime } from '../labels';
 import { Dialog } from '../ui/Dialog';
 import { COURSE_STATUS_LABELS } from './courseLabels';
 import { describeBlocked } from './workflow';
@@ -33,18 +34,15 @@ export function CourseStateNotice({ course }: { course: Course }) {
   if (course.archived)
     return (
       <section className="status-card warning" aria-labelledby="course-state-heading">
-        <h2 id="course-state-heading">Cours archivé</h2>
-        <p>Un administrateur a archivé ce cours : il n’apparaît plus dans le catalogue et les élèves ne peuvent plus le lire. Son historique est conservé. Seul un administrateur peut le désarchiver ; il ne sera pas republié automatiquement.</p>
+        <h2 id="course-state-heading">{t('courses.status.archivedHeading')}</h2>
+        <p>{t('courses.status.archivedText')}</p>
       </section>
     );
   if (course.suspended)
     return (
       <section className="status-card warning" aria-labelledby="course-state-heading">
-        <h2 id="course-state-heading">Cours suspendu</h2>
-        <p>
-          Un administrateur a suspendu ce cours : il n’apparaît plus dans le catalogue et les élèves ne peuvent plus le lire. Pour le rendre de nouveau lisible, une version relue doit être publiée (un
-          amendement si une leçon a une révision plus récente, sinon une nouvelle version), ou un administrateur le restaure une fois toutes ses leçons de nouveau publiables.
-        </p>
+        <h2 id="course-state-heading">{t('courses.status.suspendedHeading')}</h2>
+        <p>{t('courses.status.suspendedText')}</p>
       </section>
     );
   return null;
@@ -55,11 +53,9 @@ function Feedback({ revision }: { revision: ReviewedRevision }) {
   if (!r) return null;
   return (
     <section className="feedback" aria-labelledby="feedback-heading">
-      <h3 id="feedback-heading">{r.action === 'request_changes' ? 'Modifications demandées par le relecteur' : 'Commentaire du relecteur'}</h3>
-      <p>
-        {r.reviewerName}, le {formatDateTime(r.decidedAt)}
-      </p>
-      {r.comment ? <Quote>{r.comment}</Quote> : <p>Sans commentaire.</p>}
+      <h3 id="feedback-heading">{r.action === 'request_changes' ? t('courses.status.changesRequested') : t('courses.status.reviewerComment')}</h3>
+      <p>{t('courses.status.decidedBy', { name: r.reviewerName, date: formatDateTime(r.decidedAt) })}</p>
+      {r.comment ? <Quote>{r.comment}</Quote> : <p>{t('courses.status.noComment')}</p>}
     </section>
   );
 }
@@ -111,23 +107,23 @@ export function CourseStatusView({
   let heading: string;
   let body: React.ReactNode;
   if (!revision) {
-    heading = 'Aucun brouillon en cours';
-    body = <p>Le brouillon de ce cours a été supprimé. Créez un nouveau brouillon pour reprendre la rédaction, ou supprimez le cours s’il n’a jamais été soumis.</p>;
+    heading = t('courses.status.noDraft');
+    body = <p>{t('courses.status.noDraftText')}</p>;
   } else if (revision.withdrawnAt) {
-    heading = `Version ${revision.number} · retirée par un administrateur`;
-    body = <p>Un administrateur a retiré cette version le {formatDateTime(revision.withdrawnAt)} : elle ne sera ni relue ni publiée. Vous pouvez rédiger une nouvelle version.</p>;
+    heading = t('courses.status.heading', { number: revision.number, status: t('courses.status.withdrawnState') });
+    body = <p>{t('courses.status.withdrawnText', { date: formatDateTime(revision.withdrawnAt) })}</p>;
   } else if (revision.status === 'in_review') {
     const blocked = revision.blocked ? describeBlocked(revision.blocked) : null;
-    heading = `Version ${revision.number} · En relecture`;
+    heading = t('courses.status.heading', { number: revision.number, status: STATUS_LABELS.in_review });
     body = (
       <>
         <p>
-          {revision.kind === 'amendment' ? 'Cet amendement' : 'Cette version'} attend la décision d’un relecteur de la matière. Elle ne peut plus être modifiée.
-          {revision.submittedAt && ` Soumise le ${formatDateTime(revision.submittedAt)}.`}
+          {revision.kind === 'amendment' ? t('courses.status.inReviewAmendment') : t('courses.status.inReviewVersion')}
+          {revision.submittedAt && t('courses.status.submittedOn', { date: formatDateTime(revision.submittedAt) })}
         </p>
         {blocked && (
           <div className="status-card warning" role="note" aria-labelledby="blocked-heading">
-            <h3 id="blocked-heading">Relecture bloquée : aucun relecteur éligible</h3>
+            <h3 id="blocked-heading">{t('courses.status.blockedHeading')}</h3>
             <p>{blocked.summary}</p>
             {blocked.details.length > 0 && (
               <ul>
@@ -136,34 +132,34 @@ export function CourseStatusView({
                 ))}
               </ul>
             )}
-            <p>Personne ne peut approuver à la place d’un relecteur éligible : cette version ne peut pas être publiée tant que la situation n’a pas changé.</p>
+            <p>{t('courses.status.blockedText')}</p>
           </div>
         )}
       </>
     );
   } else if (revision.status === 'changes_requested') {
-    heading = `Version ${revision.number} · Modifications demandées`;
-    body = <p>Le relecteur a renvoyé cette version. Créez une version corrigée : elle reprend celle-ci, que vous modifierez avant de la soumettre de nouveau.</p>;
+    heading = t('courses.status.heading', { number: revision.number, status: STATUS_LABELS.changes_requested });
+    body = <p>{t('courses.status.changesText')}</p>;
   } else if (revision.status === 'approved' && published) {
-    heading = `Version ${revision.number} · Publiée`;
-    body = <p>Les élèves lisent cette version. Une nouvelle version ne remplacera celle-ci qu’après sa relecture et sa publication.</p>;
+    heading = t('courses.status.heading', { number: revision.number, status: t('shell.state.published') });
+    body = <p>{t('courses.status.publishedText')}</p>;
   } else if (revision.status === 'approved' && everPublished(course, revision)) {
-    heading = `Version ${revision.number} · Approuvée, publiée auparavant`;
+    heading = t('courses.status.heading', { number: revision.number, status: t('courses.status.publishedBefore') });
     body = (
       <p>
         {course.archived
-          ? 'Cette version n’est plus lue par les élèves depuis l’archivage du cours.'
+          ? t('courses.status.notReadArchived')
           : course.suspended
-            ? 'Cette version n’est plus lue par les élèves depuis la suspension du cours.'
-            : 'Les élèves lisent maintenant une autre version, restaurée par un administrateur ou un éditeur. Une nouvelle version passera par la relecture.'}
+            ? t('courses.status.notReadSuspended')
+            : t('courses.status.otherRead')}
       </p>
     );
   } else if (revision.status === 'approved') {
-    heading = `Version ${revision.number} · Approuvée, en attente de publication`;
-    body = <p>Un relecteur a approuvé cette version. Un éditeur doit maintenant la publier ; jusque-là, les élèves lisent la version publiée précédente, s’il y en a une.</p>;
+    heading = t('courses.status.heading', { number: revision.number, status: t('shell.state.awaitingPublication') });
+    body = <p>{t('courses.status.approvedText')}</p>;
   } else {
-    heading = `Version ${revision.number} · ${COURSE_STATUS_LABELS[revision.status]}`;
-    body = <p>Cette version du cours a quitté l’état de brouillon : elle ne peut plus être modifiée.</p>;
+    heading = t('courses.status.heading', { number: revision.number, status: COURSE_STATUS_LABELS[revision.status] });
+    body = <p>{t('courses.status.leftDraftText')}</p>;
   }
 
   return (
@@ -174,12 +170,12 @@ export function CourseStatusView({
       <div className="actions">
         {canStartDraft(course, revision) && (
           <button type="button" className="primary" onClick={() => void start()} disabled={busy || expired}>
-            {!revision ? 'Créer un brouillon' : revision.status === 'changes_requested' ? 'Créer la version corrigée' : 'Créer une nouvelle version'}
+            {!revision ? t('courses.status.createDraft') : revision.status === 'changes_requested' ? t('courses.status.createCorrected') : t('courses.status.createVersion')}
           </button>
         )}
         {!revision && (
           <button type="button" className="danger" onClick={() => setConfirm(true)} disabled={busy || expired}>
-            Supprimer le cours
+            {t('courses.editor.deleteCourse')}
           </button>
         )}
       </div>
@@ -189,8 +185,8 @@ export function CourseStatusView({
         </p>
       )}
       {confirm && (
-        <Dialog title="Supprimer définitivement le cours ?" onCancel={() => setConfirm(false)} cancelLabel="Garder le cours" actions={[{ label: 'Supprimer le cours', kind: 'danger', onClick: () => void remove() }]}>
-          <p>Le cours sera supprimé du serveur. Cette action est définitive. Les leçons et les images ne sont pas supprimées. Un cours déjà soumis ne peut pas être supprimé.</p>
+        <Dialog title={t('courses.editor.deleteTitle')} onCancel={() => setConfirm(false)} cancelLabel={t('courses.editor.keepCourse')} actions={[{ label: t('courses.editor.deleteCourse'), kind: 'danger', onClick: () => void remove() }]}>
+          <p>{t('courses.status.deleteText')}</p>
         </Dialog>
       )}
     </section>
@@ -235,7 +231,7 @@ export function NewerRevisionsNotice({ course, draftOpen, onAmendment }: { cours
   if (loadError)
     return (
       <p className="banner error" role="alert">
-        Impossible de vérifier si des leçons du cours ont des révisions plus récentes. Rechargez la page pour réessayer.
+        {t('courses.newer.loadError')}
       </p>
     );
   if (!notice || notice.steps.length === 0) return null;
@@ -255,13 +251,10 @@ export function NewerRevisionsNotice({ course, draftOpen, onAmendment }: { cours
 
   return (
     <section className="status-card warning" aria-labelledby={`${id}-heading`}>
-      <h2 id={`${id}-heading`}>Des leçons du cours publié ont une révision plus récente</h2>
-      <p>
-        Le cours publié épingle des révisions de leçons plus anciennes que celles qui sont maintenant publiées. Les élèves lisent toujours les révisions épinglées : rien ne change sans un amendement
-        relu et publié. Un amendement ne remplace que les révisions choisies ; le relecteur ne verra que ces étapes comme modifiées.
-      </p>
+      <h2 id={`${id}-heading`}>{t('courses.newer.heading')}</h2>
+      <p>{t('courses.newer.text')}</p>
       <fieldset>
-        <legend>Révisions à remplacer</legend>
+        <legend>{t('courses.newer.legend')}</legend>
         {notice.steps.map((s) => (
           <div key={s.lessonId} className="checkbox">
             <input
@@ -278,21 +271,21 @@ export function NewerRevisionsNotice({ course, draftOpen, onAmendment }: { cours
               }
             />
             <label htmlFor={`${id}-${s.lessonId}`}>
-              « {s.title} » : révision {s.pinnedNumber} épinglée, révision {s.newerNumber} disponible
+              {t('courses.newer.step', { title: s.title, pinned: s.pinnedNumber, newer: s.newerNumber })}
             </label>
           </div>
         ))}
       </fieldset>
-      {draftOpen && <p className="hint">Un brouillon de ce cours est ouvert : un amendement ne peut être créé qu’après sa suppression. Vous pouvez aussi remplacer la révision dans ce brouillon.</p>}
+      {draftOpen && <p className="hint">{t('courses.newer.draftOpen')}</p>}
       <div className="actions">
         <button type="button" className="primary" onClick={() => void create()} disabled={busy || expired || chosen.size === 0}>
-          Créer un amendement
+          {t('courses.newer.create')}
         </button>
       </div>
       {error && (
         <div className="banner error" role="alert" tabIndex={-1} ref={errorRef}>
           <p>{error.text}</p>
-          {error.draftExists && !draftOpen && <p>Rechargez la page pour ouvrir le brouillon existant.</p>}
+          {error.draftExists && !draftOpen && <p>{t('courses.newer.reloadForDraft')}</p>}
         </div>
       )}
     </section>
@@ -323,7 +316,7 @@ export function ArchiveRequest({ course }: { course: Course }) {
   if (done)
     return (
       <p className="banner success" role="status" tabIndex={-1} ref={doneRef}>
-        Demande d’archivage envoyée aux administrateurs avec votre motif. Le cours reste dans son état actuel jusqu’à leur décision.
+        {t('courses.archive.done')}
       </p>
     );
 
@@ -343,18 +336,18 @@ export function ArchiveRequest({ course }: { course: Course }) {
 
   return (
     <section className="danger-zone" aria-labelledby="archive-request-heading">
-      <h2 id="archive-request-heading">Archivage</h2>
-      <p className="hint">Un cours déjà soumis n’est jamais supprimé. Vous pouvez demander son archivage : un administrateur le retire alors du catalogue et de la lecture, en conservant son historique.</p>
+      <h2 id="archive-request-heading">{t('courses.archive.heading')}</h2>
+      <p className="hint">{t('courses.archive.hint')}</p>
       {!open ? (
         <button type="button" onClick={() => setOpen(true)} disabled={expired}>
-          Demander l’archivage…
+          {t('courses.archive.ask')}
         </button>
       ) : (
         <div className="reason-form">
           <NoteField
             id="archive-request-reason"
-            label="Motif de la demande"
-            hint="Obligatoire, transmis aux administrateurs et conservé dans l’historique (2 000 caractères au maximum)."
+            label={t('courses.archive.reason')}
+            hint={t('courses.archive.reasonHint')}
             value={reason}
             onChange={(v) => {
               setReason(v);
@@ -371,17 +364,17 @@ export function ArchiveRequest({ course }: { course: Course }) {
               onClick={() => {
                 setError(null);
                 if (!reason.trim()) {
-                  setFieldError('Indiquez le motif de la demande : il est obligatoire.');
+                  setFieldError(t('courses.archive.reasonRequired'));
                   field.current?.focus();
                   return;
                 }
                 setAsking(true);
               }}
             >
-              Envoyer la demande…
+              {t('courses.archive.send')}
             </button>
             <button type="button" onClick={() => setOpen(false)}>
-              Annuler
+              {t('shell.cancel')}
             </button>
           </div>
         </div>
@@ -392,8 +385,8 @@ export function ArchiveRequest({ course }: { course: Course }) {
         </p>
       )}
       {asking && (
-        <Dialog title="Demander l’archivage du cours ?" onCancel={() => setAsking(false)} cancelLabel="Ne pas envoyer" actions={[{ label: 'Envoyer la demande', kind: 'danger', disabled: busy, onClick: () => void send() }]}>
-          <p>Les administrateurs recevront votre demande avec ce motif :</p>
+        <Dialog title={t('courses.archive.confirmTitle')} onCancel={() => setAsking(false)} cancelLabel={t('courses.archive.dontSend')} actions={[{ label: t('courses.archive.sendAction'), kind: 'danger', disabled: busy, onClick: () => void send() }]}>
+          <p>{t('courses.archive.confirmText')}</p>
           <Quote>{reason.trim()}</Quote>
         </Dialog>
       )}

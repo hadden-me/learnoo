@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { AttachableLesson, CourseApi, EligibleRevision } from '../api/courses';
 import { describeCourseError } from '../api/courseMessages';
+import { t } from '../i18n';
 import { STATUS_LABELS } from '../labels';
 import type { Lang } from '../catalogue';
 import { Dialog } from '../ui/Dialog';
@@ -19,7 +20,8 @@ export function defaultRevision(revisions: EligibleRevision[]): EligibleRevision
   return revisions.find((r) => r.eligible) ?? revisions[0] ?? null;
 }
 
-const revisionLabel = (r: EligibleRevision) => `Révision ${r.number} · ${STATUS_LABELS[r.status]} · ${r.eligible ? 'publiable dans un cours' : 'pas encore publiable dans un cours'}`;
+const revisionLabel = (r: EligibleRevision) =>
+  `${t('courses.picker.revision', { number: r.number })} · ${STATUS_LABELS[r.status]} · ${r.eligible ? t('courses.picker.eligible') : t('courses.picker.notEligible')}`;
 
 export function LessonPicker({
   courses,
@@ -119,29 +121,29 @@ export function LessonPicker({
   const dir = language === 'ar' ? 'rtl' : 'ltr';
   return (
     <Dialog
-      title={change ? `Changer la révision de l’étape « ${change.title} »` : `Ajouter une leçon au module « ${moduleTitle || 'sans titre'} »`}
+      title={change ? t('courses.picker.changeTitle', { title: change.title }) : t('courses.picker.addTitle', { title: moduleTitle || t('courses.untitled') })}
       onCancel={onCancel}
       initialFocus={change ? revisionRef : searchRef}
-      actions={[{ label: change ? 'Changer la révision' : 'Ajouter l’étape', kind: 'primary', disabled: !ready, onClick: pick }]}
+      actions={[{ label: change ? t('courses.outline.changeRevision') : t('courses.picker.addStep'), kind: 'primary', disabled: !ready, onClick: pick }]}
     >
       {!change && (
         <>
           <form className="picker-search" onSubmit={submitSearch} role="search">
-            <label htmlFor={ids.search}>Rechercher une leçon de la matière et de la langue du cours</label>
+            <label htmlFor={ids.search}>{t('courses.picker.search')}</label>
             <div className="actions">
               <input ref={searchRef} id={ids.search} type="search" value={query} maxLength={100} lang={language} dir="auto" onChange={(e) => setQuery(e.target.value)} />
               <button type="submit" disabled={searching}>
-                Rechercher
+                {t('courses.picker.searchButton')}
               </button>
             </div>
           </form>
-          <p className="hint">Vos leçons (toutes leurs révisions) et les leçons publiées d’autres auteurs.</p>
+          <p className="hint">{t('courses.picker.hint')}</p>
           <div aria-live="polite">
-            {searching && results === null && <p role="status">Recherche…</p>}
-            {results && results.length === 0 && <p>Aucune leçon ne correspond. Créez d’abord la leçon dans « Mes leçons », ou vérifiez qu’elle est dans la matière et la langue du cours.</p>}
+            {searching && results === null && <p role="status">{t('courses.picker.searching')}</p>}
+            {results && results.length === 0 && <p>{t('courses.picker.noResults')}</p>}
           </div>
           {results && results.length > 0 && (
-            <ul className="picker-results" id={ids.results} aria-label="Leçons trouvées">
+            <ul className="picker-results" id={ids.results} aria-label={t('courses.picker.results')}>
               {results.map((l) => {
                 const already = taken.has(l.lessonId);
                 const selected = lesson?.lessonId === l.lessonId;
@@ -156,13 +158,17 @@ export function LessonPicker({
                         setTitle((t) => (t.trim() === '' || t === lesson?.title ? l.title : t));
                       }}
                     >
-                      <span lang={language} dir={dir}>
-                        {l.title || `Leçon n° ${l.lessonId}`}
-                      </span>
+                      {l.title ? (
+                        <span lang={language} dir={dir}>
+                          {l.title}
+                        </span>
+                      ) : (
+                        <span>{t('courses.lessonNumber', { id: l.lessonId })}</span>
+                      )}
                       <span className="hint">
                         {' '}
-                        · {l.own ? 'votre leçon' : 'leçon publiée d’un autre auteur'}
-                        {already ? ' · déjà dans le cours' : ''}
+                        · {l.own ? t('courses.yourLesson') : t('courses.picker.otherAuthor')}
+                        {already ? ` · ${t('courses.picker.alreadyIn')}` : ''}
                       </span>
                     </button>
                   </li>
@@ -172,7 +178,7 @@ export function LessonPicker({
           )}
           {next !== null && (
             <button type="button" onClick={() => void search(query, next)} disabled={searching}>
-              Afficher plus de leçons
+              {t('courses.picker.more')}
             </button>
           )}
         </>
@@ -185,23 +191,27 @@ export function LessonPicker({
       {lesson && (
         <div className="fields picked">
           <p>
-            Leçon choisie :{' '}
-            <strong lang={language} dir={dir}>
-              {lesson.title || `Leçon n° ${lesson.lessonId}`}
-            </strong>
+            {t('courses.picker.chosen')}{' '}
+            {lesson.title ? (
+              <strong lang={language} dir={dir}>
+                {lesson.title}
+              </strong>
+            ) : (
+              <strong>{t('courses.lessonNumber', { id: lesson.lessonId })}</strong>
+            )}
           </p>
-          <label htmlFor={ids.revision}>Révision à épingler</label>
+          <label htmlFor={ids.revision}>{t('courses.picker.revisionLabel')}</label>
           {revisionsError ? (
             <div className="banner error" role="alert">
-              <p>Les révisions de cette leçon n’ont pas pu être chargées. {revisionsError}</p>
+              <p>{t('courses.picker.revisionsFailed', { error: revisionsError })}</p>
               <button type="button" onClick={() => setRevisionsAttempt((n) => n + 1)}>
-                Réessayer
+                {t('shell.retry')}
               </button>
             </div>
           ) : revisions === null ? (
-            <p role="status">Chargement des révisions…</p>
+            <p role="status">{t('courses.picker.loadingRevisions')}</p>
           ) : revisions.length === 0 ? (
-            <p>Cette leçon n’a aucune révision qui puisse être rattachée.</p>
+            <p>{t('courses.picker.noRevisions')}</p>
           ) : (
             <select ref={revisionRef} id={ids.revision} value={revisionId ?? ''} onChange={(e) => setRevisionId(Number(e.target.value))}>
               {revisions.map((r) => (
@@ -212,13 +222,15 @@ export function LessonPicker({
             </select>
           )}
           {chosen && !chosen.eligible && (
-            <p className="hint">Cette révision peut figurer dans le brouillon, mais elle devra être approuvée et publiée avant la soumission du cours.</p>
+            <p className="hint">{t('courses.picker.notEligibleHint')}</p>
           )}
           {!change && (
             <>
-              <label htmlFor={ids.title}>Titre de l’étape dans le cours</label>
-              <input id={ids.title} value={title} maxLength={LIMITS.stepTitle} lang={language} dir={dir} onChange={(e) => setTitle(e.target.value)} />
-              <p className="hint">Ce titre est celui du plan du cours ; il est relu avec la structure du cours.</p>
+              <label htmlFor={ids.title}>{t('courses.picker.stepTitle')}</label>
+              <input id={ids.title} value={title} maxLength={LIMITS.stepTitle} lang={language} dir={dir} aria-describedby={`${ids.title}-hint`} onChange={(e) => setTitle(e.target.value)} />
+              <p id={`${ids.title}-hint`} className="hint">
+                {t('courses.picker.stepTitleHint')}
+              </p>
             </>
           )}
         </div>

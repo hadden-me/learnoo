@@ -16,6 +16,7 @@ import { setFlash, takeFlash, useStudio } from '../context';
 import { courseState, courseTitle } from '../courses/courseLabels';
 import { CourseDraftEditor } from '../courses/CourseDraftEditor';
 import { ArchiveRequest, CourseStateNotice, CourseStatusView, NewerRevisionsNotice } from '../courses/CourseStatus';
+import { t, tn } from '../i18n';
 import { LANGUAGE_LABELS } from '../labels';
 import { BASE, navigate } from '../router';
 import { Link } from '../ui/Link';
@@ -45,7 +46,7 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
       try {
         const course = await findOwnCourse(courses, courseId);
         if (!course) {
-          setError('Cours introuvable : il n’existe pas ou ne vous appartient pas.');
+          setError(t('courses.page.notFound'));
           return;
         }
         const [subjects, levels, revision, lessons] = await Promise.all([
@@ -77,13 +78,13 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
     return (
       <main className="page" id="main">
         <p className="breadcrumb">
-          <Link to={`${BASE}/courses`}>Mes cours</Link>
+          <Link to={`${BASE}/courses`}>{t('shell.myCourses')}</Link>
         </p>
-        <h1 tabIndex={-1}>Cours</h1>
+        <h1 tabIndex={-1}>{t('courses.course')}</h1>
         <div className="banner error" role="alert">
           <p>{error}</p>
           <button type="button" onClick={() => void reload()}>
-            Réessayer
+            {t('shell.retry')}
           </button>
         </div>
       </main>
@@ -91,7 +92,7 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
   if (!loaded)
     return (
       <main className="page" id="main">
-        <p role="status">Chargement du cours…</p>
+        <p role="status">{t('courses.page.loading')}</p>
       </main>
     );
 
@@ -115,15 +116,15 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
         levels={loaded.levels}
         lessonTitles={loaded.lessonTitles}
         notice={dropped && dropped.revision.id === revision.id ? <DroppedNotice dropped={dropped.steps} revision={dropped.revision} /> : null}
-        onDiscarded={() => toList('Brouillon du cours supprimé.')}
-        onDeleted={() => toList('Cours supprimé. Les leçons et les images n’ont pas été touchées.')}
-        onLeftDraft={() => void reload('Ce brouillon a quitté l’état de brouillon.')}
+        onDiscarded={() => toList(t('courses.page.draftDiscarded'))}
+        onDeleted={() => toList(t('courses.page.deleted'))}
+        onLeftDraft={() => void reload(t('courses.page.leftDraft'))}
         onSaved={(saved) => setSavedTitle(saved.title)}
         onSubmitted={(submitted) =>
           void reload(
             submitted.blocked
-              ? `Version ${submitted.number} soumise pour relecture, mais aucun relecteur éligible ne peut la décider pour l’instant (détails ci-dessous).`
-              : `Version ${submitted.number} soumise pour relecture. Elle ne peut plus être modifiée.`,
+              ? t('courses.page.submittedBlocked', { number: submitted.number })
+              : t('courses.page.submitted', { number: submitted.number }),
           )
         }
       />
@@ -135,9 +136,9 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
         revision={revision}
         onDraft={(created) => {
           setDropped({ steps: created.droppedSteps ?? [], revision: created });
-          void reload('Nouveau brouillon créé : vous pouvez le modifier.');
+          void reload(t('courses.page.draftCreated'));
         }}
-        onDeleted={() => toList('Cours supprimé. Les leçons et les images n’ont pas été touchées.')}
+        onDeleted={() => toList(t('courses.page.deleted'))}
       />
     );
   }
@@ -147,14 +148,14 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
   return (
     <main className="page" id="main">
       <p className="breadcrumb">
-        <Link to={`${BASE}/courses`}>Mes cours</Link>
+        <Link to={`${BASE}/courses`}>{t('shell.myCourses')}</Link>
       </p>
       <h1 tabIndex={-1} lang={course.language} dir={dir}>
         {courseTitle(savedTitle ?? revision?.title ?? course.latestRevision?.title, course.id)}
       </h1>
       <p className="lesson-context">
-        Cours · <CatalogueName label={entryLabel(subject, course.language)} /> · {LANGUAGE_LABELS[course.language]} · <span className={`state state-${state.tone}`}>{state.label}</span>
-        {course.publishedRevisionId !== null && state.tone !== 'published' && <> · une version antérieure est publiée</>}
+        {t('courses.course')} · <CatalogueName label={entryLabel(subject, course.language)} /> · {LANGUAGE_LABELS[course.language]} · <span className={`state state-${state.tone}`}>{state.label}</span>
+        {course.publishedRevisionId !== null && state.tone !== 'published' && <> · {t('courses.page.earlierPublished')}</>}
       </p>
       {notice && (
         <p className="banner success" role="status">
@@ -167,7 +168,7 @@ export function CourseEditorPage({ courseId }: { courseId: number }) {
           key={`notice-${generation}`}
           course={course}
           draftOpen={revision?.status === 'draft'}
-          onAmendment={(created) => void reload(`Amendement créé (version ${created.number}) : vérifiez-le, enregistrez-le si besoin, puis soumettez-le pour relecture.`)}
+          onAmendment={(created) => void reload(t('courses.page.amendmentCreated', { number: created.number }))}
         />
       )}
       {body}
@@ -183,15 +184,20 @@ function DroppedNotice({ dropped, revision }: { dropped: DroppedStep[]; revision
   return (
     <section className="status-card warning" aria-labelledby="dropped-heading">
       <h2 id="dropped-heading">
-        {dropped.length} étape{dropped.length > 1 ? 's n’ont' : ' n’a'} pas été reprise{dropped.length > 1 ? 's' : ''} dans ce brouillon
+        {tn('courses.dropped.heading', dropped.length)}
       </h2>
-      <p>La leçon d’un autre auteur n’est plus rattachable à la révision épinglée (elle n’est plus publiée, ou cette révision a été retirée). Ajoutez-la de nouveau avec une révision publiable, ou remplacez l’étape.</p>
+      <p>{t('courses.dropped.text')}</p>
       <ul>
-        {dropped.map((s) => (
-          <li key={`${s.moduleKey}-${s.position}`}>
-            « {s.title} » (leçon n° {s.lessonId}){moduleTitle(s.moduleKey) ? `, module « ${moduleTitle(s.moduleKey)} »` : ''}, position {s.position}
-          </li>
-        ))}
+        {dropped.map((s) => {
+          const module = moduleTitle(s.moduleKey);
+          return (
+            <li key={`${s.moduleKey}-${s.position}`}>
+              {module
+                ? t('courses.dropped.itemInModule', { title: s.title, lesson: s.lessonId, module, position: s.position })
+                : t('courses.dropped.item', { title: s.title, lesson: s.lessonId, position: s.position })}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

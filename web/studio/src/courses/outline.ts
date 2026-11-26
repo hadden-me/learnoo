@@ -5,6 +5,7 @@
 // drafts"). The server checks everything again; these only explain problems
 // before a save is sent.
 import type { CourseRevision, CourseSaveBody } from '../api/courses';
+import { intlLocale, t } from '../i18n';
 
 export const LIMITS = { title: 200, summary: 1000, objectives: 2000, prerequisites: 2000, coverAlt: 300, moduleTitle: 200, stepTitle: 200, modules: 50, steps: 200 } as const;
 
@@ -283,28 +284,28 @@ const FORBIDDEN_TEXT = new RegExp(`[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009
 export function checkDraft(draft: CourseDraft): Problem[] {
   const problems: Problem[] = [];
   const text = (target: string, label: string, value: string, max: number, multiline: boolean) => {
-    if (length(value) > max) problems.push({ target, message: `${label} : ${max.toLocaleString('fr-FR')} caractères au maximum (actuellement ${length(value).toLocaleString('fr-FR')}).` });
-    else if ((multiline ? FORBIDDEN_TEXT : FORBIDDEN_LINE).test(value.trim())) problems.push({ target, message: `${label} : caractère de contrôle ou de mise en forme invisible non autorisé.` });
+    if (length(value) > max) problems.push({ target, message: t('courses.check.tooLong', { label, max: max.toLocaleString(intlLocale()), count: length(value).toLocaleString(intlLocale()) }) });
+    else if ((multiline ? FORBIDDEN_TEXT : FORBIDDEN_LINE).test(value.trim())) problems.push({ target, message: t('courses.check.forbidden', { label }) });
   };
-  text('title', 'Titre du cours', draft.title, LIMITS.title, false);
-  text('summary', 'Description courte', draft.summary, LIMITS.summary, true);
-  text('objectives', 'Objectifs', draft.objectives, LIMITS.objectives, true);
-  text('prerequisites', 'Prérequis', draft.prerequisites, LIMITS.prerequisites, true);
+  text('title', t('courses.field.title'), draft.title, LIMITS.title, false);
+  text('summary', t('courses.field.summary'), draft.summary, LIMITS.summary, true);
+  text('objectives', t('courses.field.objectives'), draft.objectives, LIMITS.objectives, true);
+  text('prerequisites', t('courses.field.prerequisites'), draft.prerequisites, LIMITS.prerequisites, true);
   if (draft.coverMediaId !== null) {
-    if (length(draft.coverAlt) === 0) problems.push({ target: 'coverAlt', message: 'Image de couverture : le texte alternatif est obligatoire.' });
-    else text('coverAlt', 'Texte alternatif de la couverture', draft.coverAlt, LIMITS.coverAlt, false);
+    if (length(draft.coverAlt) === 0) problems.push({ target: 'coverAlt', message: t('courses.check.coverAltRequired') });
+    else text('coverAlt', t('courses.field.coverAlt'), draft.coverAlt, LIMITS.coverAlt, false);
   }
-  if (draft.modules.length > LIMITS.modules) problems.push({ target: 'modules', message: `Un cours compte ${LIMITS.modules} modules au maximum.` });
+  if (draft.modules.length > LIMITS.modules) problems.push({ target: 'modules', message: t('courses.check.modulesMax', { max: LIMITS.modules }) });
   const steps = draft.modules.reduce((n, m) => n + m.steps.length, 0);
-  if (steps > LIMITS.steps) problems.push({ target: 'modules', message: `Un cours compte ${LIMITS.steps} étapes au maximum.` });
+  if (steps > LIMITS.steps) problems.push({ target: 'modules', message: t('courses.check.stepsMax', { max: LIMITS.steps }) });
   draft.modules.forEach((m, i) => {
-    const label = `Module ${i + 1}`;
-    if (length(m.title) === 0) problems.push({ target: `module:${m.localId}`, message: `${label} : le titre est obligatoire.` });
-    else text(`module:${m.localId}`, `${label}, titre`, m.title, LIMITS.moduleTitle, false);
+    const label = t('courses.check.module', { index: i + 1 });
+    if (length(m.title) === 0) problems.push({ target: `module:${m.localId}`, message: t('courses.check.titleRequired', { label }) });
+    else text(`module:${m.localId}`, t('courses.check.titleOf', { label }), m.title, LIMITS.moduleTitle, false);
     m.steps.forEach((s, j) => {
-      const stepLabel = `${label}, étape ${j + 1}`;
-      if (length(s.title) === 0) problems.push({ target: `step:${s.localId}`, message: `${stepLabel} : le titre est obligatoire.` });
-      else text(`step:${s.localId}`, `${stepLabel}, titre`, s.title, LIMITS.stepTitle, false);
+      const stepLabel = t('courses.check.step', { module: label, index: j + 1 });
+      if (length(s.title) === 0) problems.push({ target: `step:${s.localId}`, message: t('courses.check.titleRequired', { label: stepLabel }) });
+      else text(`step:${s.localId}`, t('courses.check.titleOf', { label: stepLabel }), s.title, LIMITS.stepTitle, false);
     });
   });
   return problems;

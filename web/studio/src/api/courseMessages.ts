@@ -5,22 +5,20 @@
 // for the lesson validator.
 import { ApiError } from './client';
 import { describeError } from './messages';
+import { t } from '../i18n';
 
 const MESSAGES: Record<string, string> = {
-  not_found: 'Introuvable : ce cours ou ce brouillon n’existe pas ou ne vous appartient pas.',
-  version_conflict: 'Ce brouillon de cours a été modifié ailleurs (autre onglet ou appareil) depuis son ouverture. Rien n’a été écrasé.',
-  not_draft: 'Cette version du cours a déjà été soumise : elle ne peut plus être modifiée.',
-  active_candidate_exists:
-    'Le cours a déjà une version en cours : un brouillon, une version en relecture ou une version approuvée qui attend sa publication. Un nouveau brouillon ne pourra être créé qu’après sa publication ou son retrait.',
-  archived: 'Ce cours est archivé.',
-  has_history: 'Ce cours a déjà été soumis au moins une fois : il est conservé avec son historique et ne peut pas être supprimé. Vous pouvez supprimer son brouillon en cours.',
-  invalid_input: 'Un champ du cours est refusé (longueur, caractère non autorisé, ou image de couverture sans texte alternatif). Rien n’a été enregistré.',
-  placement_invalid:
-    'Classement refusé : une édition choisie ne peut plus être sélectionnée (elle n’est plus en vigueur, ou sa section, son niveau ou la matière a été retiré), ou le chapitre officiel d’un module n’appartient à aucune édition choisie. Rien n’a été enregistré.',
-  invalid_step:
-    'Une étape ne peut pas être rattachée : leçon inconnue, leçon d’un autre auteur qui n’est plus publiée ou révision non publiable, autre matière ou langue, ou leçon présente deux fois dans le cours. Rien n’a été enregistré.',
-  unknown_media: 'L’image de couverture est introuvable ou ne vous appartient pas. Téléversez-la de nouveau.',
-  unknown_subject: 'Matière inconnue.',
+  not_found: t('courses.error.not_found'),
+  version_conflict: t('courses.error.version_conflict'),
+  not_draft: t('courses.error.not_draft'),
+  active_candidate_exists: t('courses.error.active_candidate_exists'),
+  archived: t('courses.error.archived'),
+  has_history: t('courses.error.has_history'),
+  invalid_input: t('courses.error.invalid_input'),
+  placement_invalid: t('courses.error.placement_invalid'),
+  invalid_step: t('courses.error.invalid_step'),
+  unknown_media: t('courses.error.unknown_media'),
+  unknown_subject: t('shell.error.unknown_subject'),
 };
 
 const DETAILED = new Set(['invalid_input', 'placement_invalid', 'invalid_step']);
@@ -29,5 +27,5 @@ const DETAILED = new Set(['invalid_input', 'placement_invalid', 'invalid_step'])
 export function describeCourseError(error: unknown): string {
   if (!(error instanceof ApiError) || !(error.code in MESSAGES)) return describeError(error);
   const base = MESSAGES[error.code];
-  return DETAILED.has(error.code) && error.message ? `${base} Détail du serveur : ${error.message}` : base;
+  return DETAILED.has(error.code) && error.message ? t('courses.error.serverDetail', { base, detail: error.message }) : base;
 }

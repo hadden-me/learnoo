@@ -7,14 +7,15 @@
 import type { AdminCourseDetail, AdminCourseRevision, Blocked, FieldChange, CourseReviewItem, ReviewerProblem, StepChange, StepRef } from '../api/courseReview';
 import type { ReviewQueueItem } from '../api/editorial';
 import type { CourseDraft, Problem } from './outline';
+import { t, tn } from '../i18n';
 
 /* ---------- submission refusals ---------- */
 
 const FIELD_LABELS: Record<string, string> = {
-  title: 'Titre du cours : obligatoire pour soumettre.',
-  summary: 'Description courte : obligatoire pour soumettre.',
-  objectives: 'Objectifs d’apprentissage : obligatoires pour soumettre.',
-  modules: 'Plan du cours : ajoutez au moins un module avec une étape.',
+  title: t('courses.submit.field.title'),
+  summary: t('courses.submit.field.summary'),
+  objectives: t('courses.submit.field.objectives'),
+  modules: t('courses.submit.field.modules'),
 };
 
 /**
@@ -32,18 +33,17 @@ export function submissionProblems(draft: CourseDraft, fields: string[], steps: 
       const m = draft.modules[index];
       problems.push(
         m
-          ? { target: `module:${m.localId}`, message: `Module ${index + 1} « ${m.title.trim() || 'sans titre'} » : ajoutez au moins une étape avant de soumettre.` }
-          : { target: 'modules', message: 'Un module sans étape empêche la soumission. Enregistrez puis réessayez.' },
+          ? { target: `module:${m.localId}`, message: t('courses.submit.moduleEmpty', { index: index + 1, title: m.title.trim() || t('courses.untitled') }) }
+          : { target: 'modules', message: t('courses.submit.moduleUnknown') },
       );
-    } else problems.push({ target: field, message: FIELD_LABELS[field] ?? `Champ « ${field} » : à compléter avant de soumettre.` });
+    } else problems.push({ target: field, message: FIELD_LABELS[field] ?? t('courses.submit.field.other', { field }) });
   }
   for (const s of steps) {
     const index = draft.modules.findIndex((m) => m.steps.some((x) => x.lessonId === s.lessonId));
     const step = index >= 0 ? draft.modules[index].steps.find((x) => x.lessonId === s.lessonId) : undefined;
-    const where = index >= 0 ? ` (module ${index + 1})` : '';
     problems.push({
       target: step ? `step:${step.localId}` : 'modules',
-      message: `Étape « ${s.title} »${where} : la révision de leçon épinglée ne peut pas être soumise avec le cours. Elle doit être approuvée, publiée au moins une fois et non retirée, et la leçon doit être publiée. Épinglez une révision publiée ou retirez l’étape.`,
+      message: index >= 0 ? t('courses.submit.stepIneligibleInModule', { title: s.title, index: index + 1 }) : t('courses.submit.stepIneligible', { title: s.title }),
     });
   }
   return problems;
@@ -52,20 +52,20 @@ export function submissionProblems(draft: CourseDraft, fields: string[], steps: 
 /* ---------- reviewer eligibility ---------- */
 
 const revisionOf = (p: ReviewerProblem) =>
-  p.lessonRevisionId !== null ? `la révision n° ${p.lessonRevisionId} de la leçon n° ${p.lessonId}` : `une révision de la leçon n° ${p.lessonId}`;
+  p.lessonRevisionId !== null ? t('courses.blocked.revision', { revision: p.lessonRevisionId, lesson: String(p.lessonId) }) : t('courses.blocked.anyRevision', { lesson: String(p.lessonId) });
 
 /** One reviewer's disqualification, as the queue and the author see it (with names). */
 export function describeBlockedDetail(p: ReviewerProblem): string {
-  const who = p.reviewerName ?? (p.reviewerId !== null ? `le compte n° ${p.reviewerId}` : 'ce relecteur');
+  const who = p.reviewerName ?? (p.reviewerId !== null ? t('courses.blocked.account', { id: p.reviewerId }) : t('courses.blocked.thisReviewer'));
   switch (p.reason) {
     case 'no_subject_reviewer':
-      return 'La matière n’a aucun relecteur actif.';
+      return t('courses.blocked.noSubjectReviewer');
     case 'course_author':
-      return `${who} est l’auteur de cette version du cours.`;
+      return t('courses.blocked.courseAuthor', { who });
     case 'lesson_author':
-      return `${who} est l’auteur de ${revisionOf(p)}, ajoutée ou remplacée par cette version.`;
+      return t('courses.blocked.lessonAuthor', { who, revision: revisionOf(p) });
     default:
-      return `${who} ne peut pas décider (${p.reason}).`;
+      return t('courses.blocked.other', { who, reason: p.reason });
   }
 }
 
@@ -74,8 +74,8 @@ export function describeBlocked(blocked: Blocked): { summary: string; details: s
   const none = blocked.details.length === 0 || blocked.details.some((d) => d.reason === 'no_subject_reviewer');
   return {
     summary: none
-      ? 'Relecture bloquée : la matière n’a aucun relecteur actif. Un administrateur doit attribuer la permission de relecteur pour cette matière à une personne indépendante.'
-      : 'Relecture bloquée : aucun relecteur de la matière n’est indépendant de cette version. Il faut un relecteur de la matière autre que l’auteur du cours et que les auteurs des leçons ajoutées ou remplacées.',
+      ? t('courses.blocked.summaryNone')
+      : t('courses.blocked.summaryDependent'),
     details: none ? [] : blocked.details.map(describeBlockedDetail),
   };
 }
@@ -84,13 +84,13 @@ export function describeBlocked(blocked: Blocked): { summary: string; details: s
 export function describeOwnProblem(p: ReviewerProblem): string {
   switch (p.reason) {
     case 'course_author':
-      return 'Vous êtes l’auteur de cette version du cours : vous ne pouvez ni l’approuver ni demander des modifications.';
+      return t('courses.own.courseAuthor');
     case 'lesson_author':
-      return `Vous êtes l’auteur de ${revisionOf(p)}, que cette version ajoute ou remplace : vous ne pouvez pas approuver un changement de votre propre leçon.`;
+      return t('courses.own.lessonAuthor', { revision: revisionOf(p) });
     case 'not_subject_reviewer':
-      return 'Vous n’êtes pas relecteur de la matière de ce cours : vous pouvez le lire, pas en décider.';
+      return t('courses.own.notSubjectReviewer');
     default:
-      return `Vous ne pouvez pas décider de cette version (${p.reason}).`;
+      return t('courses.own.other', { reason: p.reason });
   }
 }
 
@@ -141,33 +141,33 @@ export function paginate<T>(items: T[], page: number, size = PAGE_SIZE): { items
 /** How long ago something was submitted, in whole days. */
 export function submissionAge(iso: string, now: Date = new Date()): string {
   const days = Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000);
-  if (days <= 0) return 'soumise aujourd’hui';
-  if (days === 1) return 'soumise hier';
-  return `soumise il y a ${days} jours`;
+  if (days <= 0) return t('courses.age.today');
+  if (days === 1) return t('courses.age.yesterday');
+  return tn('courses.age.days', days);
 }
 
 /* ---------- change list ---------- */
 
 export const CHANGE_LABELS: Record<StepChange['change'], string> = {
-  unchanged: 'Inchangée',
-  moved: 'Déplacée ou renommée',
-  replaced: 'Révision remplacée',
-  added: 'Ajoutée',
+  unchanged: t('courses.change.unchanged'),
+  moved: t('courses.change.moved'),
+  replaced: t('courses.change.replaced'),
+  added: t('courses.change.added'),
 };
 
 /** Counts per change, for the summary above the list. */
 export function changeSummary(steps: StepChange[], removed: number): string {
   const n = (c: StepChange['change']) => steps.filter((s) => s.change === c).length;
   const parts = [
-    [n('replaced'), 'remplacée', 'remplacées'],
-    [n('added'), 'ajoutée', 'ajoutées'],
-    [n('moved'), 'déplacée ou renommée', 'déplacées ou renommées'],
-    [removed, 'retirée', 'retirées'],
-    [n('unchanged'), 'inchangée', 'inchangées'],
+    [n('replaced'), 'courses.change.count.replaced'],
+    [n('added'), 'courses.change.count.added'],
+    [n('moved'), 'courses.change.count.moved'],
+    [removed, 'courses.change.count.removed'],
+    [n('unchanged'), 'courses.change.count.unchanged'],
   ] as const;
   return parts
     .filter(([count]) => count > 0)
-    .map(([count, one, many]) => `${count} étape${count > 1 ? 's' : ''} ${count > 1 ? many : one}`)
+    .map(([count, key]) => tn(key, count))
     .join(' · ');
 }
 
@@ -250,18 +250,18 @@ export function adminCourseActions(d: AdminCourseDetail): AdminCourseActions {
 }
 
 const LIFECYCLE_LABELS: Record<string, string> = {
-  archive_request: 'Demande d’archivage par le propriétaire',
-  archive: 'Archivage (sans version publiée)',
-  unarchive: 'Désarchivage (aucune republication automatique)',
-  discard_draft: 'Brouillon supprimé par un administrateur',
-  transfer: 'Transfert de propriété',
+  archive_request: t('courses.lifecycle.archive_request'),
+  archive: t('courses.lifecycle.archive'),
+  unarchive: t('courses.lifecycle.unarchive'),
+  discard_draft: t('courses.lifecycle.discard_draft'),
+  transfer: t('courses.lifecycle.transfer'),
 };
 
 const POINTER_LABELS: Record<string, string> = {
-  publish: 'Publication',
-  restore: 'Restauration',
-  suspend: 'Suspension',
-  archive: 'Archivage',
+  publish: t('courses.pointer.publish'),
+  restore: t('courses.pointer.restore'),
+  suspend: t('courses.pointer.suspend'),
+  archive: t('courses.pointer.archive'),
 };
 
 export const lifecycleLabel = (action: string) => LIFECYCLE_LABELS[action] ?? action;
