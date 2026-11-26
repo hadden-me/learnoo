@@ -15,7 +15,7 @@ The conventions of the existing system apply unchanged: guards raise SQLSTATE `L
 Application transactions take locks in this order: permission and account rows first (`RequireTx`/`RequireReviewerTx` share-lock them at the start, so later guard locks on the same rows do not wait) → curriculum editions (ascending ID) → lessons (ascending ID) → course → course revision → child rows. Existing guards that lock permission or account rows after the lesson (0007, 0009) remain safe because the application already holds those locks.
 
 - Making an edition current or retiring it takes the edition `FOR UPDATE`. Course save, submit, publish and restore take the editions their revision references `FOR SHARE`.
-- Course save and submit take the referenced lesson rows `FOR SHARE`, then the course `FOR SHARE`, before the course revision row (so the author-equals-owner guard never takes the course lock after the revision lock). Publish and restore take them `FOR SHARE`, then the course `FOR UPDATE`.
+- Course save and submit take the referenced lesson rows `FOR SHARE`, then the pinned lesson revision rows `FOR SHARE` (so a lesson-draft discard cannot deadlock with a course save), then the course `FOR SHARE`, before the course revision row (so the author-equals-owner guard never takes the course lock after the revision lock). Publish and restore take them `FOR SHARE`, then the course `FOR UPDATE`.
 - Review decisions take the course `FOR SHARE`, then the revision `FOR UPDATE`.
 - Dependency triggers run under the lesson lock their writer already holds, then lock affected courses in ascending ID.
 - The course-context report guard locks the lesson, then the course, then the reporter's account.
