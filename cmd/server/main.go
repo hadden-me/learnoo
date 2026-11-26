@@ -13,6 +13,12 @@
 //	server invite-student -email E [-ttl D]        print a one-time Student invitation link
 //	server add-subject -code C                     add a catalogue subject (audited)
 //	server add-chapter -subject S -code C          add a chapter to a subject (audited)
+//	server set-subject-name -code C [-fr N] [-ar N]  set a subject's display names (audited)
+//	server set-chapter-name -subject S -code C [-fr N] [-ar N]
+//	                                               set a chapter's display names (audited)
+//	server set-order -subject S [-chapter C] -order N
+//	                                               set a subject's or chapter's display order (audited)
+//	server show-catalogue [-subject S]             subjects and chapters with names and order
 //	server verify-restore [-strict]                check a restored database and media directory
 //	server probe [-path P]                         container health check: GET P on LEARNOO_ADDR
 //
@@ -104,12 +110,20 @@ func run(args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) err
 		return addSubject(ctx, args, stdout)
 	case "add-chapter":
 		return addChapter(ctx, args, stdout)
+	case "set-subject-name":
+		return setSubjectName(ctx, args, stdout)
+	case "set-chapter-name":
+		return setChapterName(ctx, args, stdout)
+	case "set-order":
+		return setOrder(ctx, args, stdout)
+	case "show-catalogue":
+		return showCatalogue(ctx, args, stdout)
 	case "verify-restore":
 		return verifyRestore(ctx, args, stdout)
 	case "probe":
 		return probe(ctx, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user, invite-student, add-subject, add-chapter, verify-restore or probe)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, bootstrap-admin, grant, revoke, disable-user, enable-user, show-user, invite-student, add-subject, add-chapter, set-subject-name, set-chapter-name, set-order, show-catalogue, verify-restore or probe)", cmd)
 	}
 }
 
@@ -783,6 +797,267 @@ func addChapter(ctx context.Context, args []string, stdout io.Writer) error {
 		return nil
 	}
 	fmt.Fprintf(stdout, "added chapter %s to subject %s (id %d)\n", ch.Code, sj.Code, ch.ID)
+	return nil
+}
+
+// nameFlags registers -fr and -ar on fs. After parsing, the returned
+// function gives the names that were set on the command line (nil when a
+// flag was not given), so an explicit -fr "" is refused rather than ignored.
+func nameFlags(fs *flag.FlagSet) func() (fr, ar *string) {
+	frValue := fs.String("fr", "", "French display name, 1 to 200 characters")
+	arValue := fs.String("ar", "", "Arabic display name, 1 to 200 characters")
+	return func() (fr, ar *string) {
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "fr":
+				fr = frValue
+			case "ar":
+				ar = arValue
+			}
+		})
+		return fr, ar
+	}
+}
+
+// checkNames validates the names given on the command line before the
+// database is touched.
+func checkNames(fr, ar *string) error {
+	for _, n := range []struct {
+		flag  string
+		value *string
+	}{{"-fr", fr}, {"-ar", ar}} {
+		if n.value == nil {
+			continue
+		}
+		if _, err := catalogue.NormalizeName(*n.value); err != nil {
+			return fmt.Errorf("%s %q: %w", n.flag, *n.value, err)
+		}
+	}
+	return nil
+}
+
+// displayNames formats an entry's names for operator output.
+func displayNames(n catalogue.Names) string {
+	q := func(p *string) string {
+		if p == nil {
+			return "-"
+		}
+		return strconv.Quote(*p)
+	}
+	return "fr " + q(n.Fr) + ", ar " + q(n.Ar)
+}
+
+// setSubjectName sets a subject's French and/or Arabic display name. Names
+// are display metadata, not identity: the code stays. The change is audited
+// with the old and new names and the local operator label.
+func setSubjectName(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("set-subject-name", flag.ContinueOnError)
+	code := fs.String("code", "", "code of an existing subject (required)")
+	names := nameFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	fr, ar := names()
+	if *code == "" || (fr == nil && ar == nil) || fs.NArg() > 0 {
+		return errors.New("set-subject-name needs -code and at least one of -fr and -ar, and takes no other arguments")
+	}
+	if !catalogue.ValidCode(*code) {
+		return fmt.Errorf("subject code %q: %w", *code, catalogue.ErrInvalidCode)
+	}
+	if err := checkNames(fr, ar); err != nil {
+		return err
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sj, changed, err := catalogue.NewStore(pool).SetSubjectNames(ctx, actor, *code, fr, ar)
+	if errors.Is(err, catalogue.ErrNotFound) {
+		return fmt.Errorf("unknown subject code %q", *code)
+	}
+	if err != nil {
+		return err
+	}
+	if !changed {
+		fmt.Fprintf(stdout, "no change: subject %s already has these names (%s)\n", sj.Code, displayNames(sj.Names))
+		return nil
+	}
+	fmt.Fprintf(stdout, "renamed subject %s: %s\n", sj.Code, displayNames(sj.Names))
+	return nil
+}
+
+// setChapterName sets a chapter's French and/or Arabic display name. A
+// chapter's name is shown with every lesson placed in it, published ones
+// included, but is not part of any reviewed snapshot (revisions store the
+// chapter's ID). The change is audited like setSubjectName.
+func setChapterName(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("set-chapter-name", flag.ContinueOnError)
+	subject := fs.String("subject", "", "code of an existing subject (required)")
+	code := fs.String("code", "", "code of an existing chapter of that subject (required)")
+	names := nameFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	fr, ar := names()
+	if *subject == "" || *code == "" || (fr == nil && ar == nil) || fs.NArg() > 0 {
+		return errors.New("set-chapter-name needs -subject, -code and at least one of -fr and -ar, and takes no other arguments")
+	}
+	if !catalogue.ValidCode(*subject) {
+		return fmt.Errorf("subject code %q: %w", *subject, catalogue.ErrInvalidCode)
+	}
+	if !catalogue.ValidCode(*code) {
+		return fmt.Errorf("chapter code %q: %w", *code, catalogue.ErrInvalidCode)
+	}
+	if err := checkNames(fr, ar); err != nil {
+		return err
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	sj, ch, changed, err := catalogue.NewStore(pool).SetChapterNames(ctx, actor, *subject, *code, fr, ar)
+	switch {
+	case errors.Is(err, catalogue.ErrNotFound):
+		return fmt.Errorf("unknown subject code %q", *subject)
+	case errors.Is(err, catalogue.ErrChapterNotFound):
+		return fmt.Errorf("unknown chapter code %q in subject %s", *code, *subject)
+	case err != nil:
+		return err
+	}
+	if !changed {
+		fmt.Fprintf(stdout, "no change: chapter %s of subject %s already has these names (%s)\n", ch.Code, sj.Code, displayNames(ch.Names))
+		return nil
+	}
+	fmt.Fprintf(stdout, "renamed chapter %s of subject %s: %s\n", ch.Code, sj.Code, displayNames(ch.Names))
+	return nil
+}
+
+// setOrder sets the display order (0 to 9999, lists sort by order, then
+// code) of a subject, or of a chapter with -chapter. The change is audited
+// with the old and new order and the local operator label.
+func setOrder(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("set-order", flag.ContinueOnError)
+	subject := fs.String("subject", "", "code of an existing subject (required)")
+	chapter := fs.String("chapter", "", "code of a chapter of that subject; without it the subject is reordered")
+	order := fs.Int("order", -1, "display order, 0 to 9999 (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	given := false
+	fs.Visit(func(f *flag.Flag) { given = given || f.Name == "order" })
+	if *subject == "" || !given || fs.NArg() > 0 {
+		return errors.New("set-order needs -subject and -order (and optionally -chapter), and takes no other arguments")
+	}
+	if !catalogue.ValidCode(*subject) {
+		return fmt.Errorf("subject code %q: %w", *subject, catalogue.ErrInvalidCode)
+	}
+	if *chapter != "" && !catalogue.ValidCode(*chapter) {
+		return fmt.Errorf("chapter code %q: %w", *chapter, catalogue.ErrInvalidCode)
+	}
+	if !catalogue.ValidSortOrder(*order) {
+		return fmt.Errorf("order %d: %w", *order, catalogue.ErrInvalidSortOrder)
+	}
+	actor, err := operatorActor()
+	if err != nil {
+		return err
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store := catalogue.NewStore(pool)
+	if *chapter == "" {
+		sj, changed, err := store.SetSubjectOrder(ctx, actor, *subject, *order)
+		if errors.Is(err, catalogue.ErrNotFound) {
+			return fmt.Errorf("unknown subject code %q", *subject)
+		}
+		if err != nil {
+			return err
+		}
+		if !changed {
+			fmt.Fprintf(stdout, "no change: subject %s already has order %d\n", sj.Code, sj.SortOrder)
+			return nil
+		}
+		fmt.Fprintf(stdout, "subject %s now has order %d\n", sj.Code, sj.SortOrder)
+		return nil
+	}
+	sj, ch, changed, err := store.SetChapterOrder(ctx, actor, *subject, *chapter, *order)
+	switch {
+	case errors.Is(err, catalogue.ErrNotFound):
+		return fmt.Errorf("unknown subject code %q", *subject)
+	case errors.Is(err, catalogue.ErrChapterNotFound):
+		return fmt.Errorf("unknown chapter code %q in subject %s", *chapter, *subject)
+	case err != nil:
+		return err
+	}
+	if !changed {
+		fmt.Fprintf(stdout, "no change: chapter %s of subject %s already has order %d\n", ch.Code, sj.Code, ch.SortOrder)
+		return nil
+	}
+	fmt.Fprintf(stdout, "chapter %s of subject %s now has order %d\n", ch.Code, sj.Code, ch.SortOrder)
+	return nil
+}
+
+// showCatalogue prints the subjects (or one subject with -subject) and
+// their chapters in display order, with IDs, orders and names ("-" when
+// unset). It reads only.
+func showCatalogue(ctx context.Context, args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("show-catalogue", flag.ContinueOnError)
+	only := fs.String("subject", "", "show only the subject with this code")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("show-catalogue takes only -subject")
+	}
+	if *only != "" && !catalogue.ValidCode(*only) {
+		return fmt.Errorf("subject code %q: %w", *only, catalogue.ErrInvalidCode)
+	}
+	pool, err := openMigrated(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store := catalogue.NewStore(pool)
+	codes := []string{*only}
+	if *only == "" {
+		subjects, err := store.Subjects(ctx)
+		if err != nil {
+			return err
+		}
+		if len(subjects) == 0 {
+			fmt.Fprintln(stdout, "the catalogue is empty (add subjects with add-subject)")
+			return nil
+		}
+		codes = codes[:0]
+		for _, s := range subjects {
+			codes = append(codes, s.Code)
+		}
+	}
+	for _, code := range codes {
+		sj, chapters, err := store.Chapters(ctx, code)
+		if errors.Is(err, catalogue.ErrNotFound) {
+			return fmt.Errorf("unknown subject code %q", code)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "subject %s (id %d, order %d): %s\n", sj.Code, sj.ID, sj.SortOrder, displayNames(sj.Names))
+		for _, c := range chapters {
+			fmt.Fprintf(stdout, "  chapter %s (id %d, order %d): %s\n", c.Code, c.ID, c.SortOrder, displayNames(c.Names))
+		}
+	}
 	return nil
 }
 
