@@ -188,6 +188,9 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 		auth.WriteError(w, http.StatusBadRequest, "invalid_request", "The upload is empty.")
 	case errors.Is(err, media.ErrUnsupportedHEIC):
 		unsupportedHEIC(w)
+	case errors.Is(err, media.ErrUnsupportedCMYK):
+		auth.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_cmyk",
+			"CMYK JPEGs (print colour) are not accepted. Convert the image to RGB (sRGB) and export it as JPEG or PNG.")
 	case errors.Is(err, media.ErrUnsupportedType):
 		auth.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_media_type",
 			"Only PNG, JPEG and WebP images are accepted (no SVG, GIF or other formats).")
@@ -197,6 +200,10 @@ func (h *Handlers) writeMediaError(w http.ResponseWriter, r *http.Request, err e
 	case errors.Is(err, media.ErrDimensions):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "invalid_dimensions",
 			fmt.Sprintf("Images may be at most %d pixels per side and %d megapixels.", media.MaxSide, media.MaxPixels/1_000_000))
+	case errors.Is(err, media.ErrTooComplex):
+		auth.WriteError(w, http.StatusUnprocessableEntity, "image_too_complex",
+			"The image needs too much memory to process (for example a large progressive JPEG without chroma subsampling, "+
+				"or a large interlaced 16-bit PNG). Export it as a standard JPEG or an 8-bit PNG, or reduce its size.")
 	case errors.Is(err, media.ErrTrailingData):
 		auth.WriteError(w, http.StatusUnprocessableEntity, "trailing_data",
 			"The file has data after the end of the image that is not a recognized phone-photo structure. "+
