@@ -81,6 +81,11 @@ func TestBrowserReaderServer(t *testing.T) {
 	// an administrator disables and enables again.
 	f.setName(f.newUser("test-onboard", 0).id, "TEST Enseignant à intégrer")
 	f.setName(f.newUser("test-suspend", 0, permissions.Author).id, "TEST Compte à suspendre")
+
+	// The course lifecycle spec (tests/browser-reader/course-admin.spec.mjs):
+	// an owner whose course is archived, restored and transferred to an heir.
+	f.setName(f.newUser("test-lifecycle-owner", 0, permissions.Author).id, "TEST Propriétaire Hédi")
+	f.setName(f.newUser("test-lifecycle-heir", 0, permissions.Author).id, "TEST Héritière Ines")
 	ch := f.chapter(f.subject, "test-chapter")
 	// A second chapter with no lessons, retired by the course chapter
 	// retirement spec without affecting the specs that use test-chapter.
