@@ -360,7 +360,9 @@ func run(o options) error {
 		urls     []string
 		uploads  atomic.Int64
 		reads    atomic.Int64
+		failed   time.Duration // first transport error, after the start
 	)
+	start := time.Now()
 	var wg sync.WaitGroup
 	for u := 0; u < o.uploaders; u++ {
 		wg.Add(1)
@@ -376,6 +378,12 @@ func run(o options) error {
 				key := in.name + " "
 				if err != nil {
 					key += "error"
+					mu.Lock()
+					if failed == 0 {
+						failed = time.Since(start)
+					}
+					mu.Unlock()
+					time.Sleep(100 * time.Millisecond) // the server may be gone
 				} else {
 					var r struct {
 						URL   string `json:"url"`
@@ -410,11 +418,14 @@ func run(o options) error {
 				mu.Unlock()
 				req, _ := http.NewRequest("GET", url, nil)
 				req.Header.Set("Cookie", cookie)
-				if resp, err := client.Do(req); err == nil {
-					io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
-					reads.Add(1)
+				resp, err := client.Do(req)
+				if err != nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
 				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				reads.Add(1)
 			}
 		}(r)
 	}
@@ -433,6 +444,9 @@ func run(o options) error {
 		fmt.Printf("Go heap (gctrace): largest at GC start %.0f MiB, largest live after GC %.0f MiB\n", mib(start), mib(live))
 	}
 	fmt.Printf("uploads %d, reads %d\n", uploads.Load(), reads.Load())
+	if failed > 0 {
+		fmt.Printf("first transport error after %s\n", failed.Round(100*time.Millisecond))
+	}
 	keys := make([]string, 0, len(statuses))
 	for k := range statuses {
 		keys = append(keys, k)
