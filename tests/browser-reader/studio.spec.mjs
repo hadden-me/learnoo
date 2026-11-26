@@ -60,8 +60,8 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
 async function newLesson(page, { title, language = 'fr' }) {
   await page.getByRole('link', { name: 'Nouvelle leçon' }).click();
   await expect(page.getByRole('heading', { name: 'Nouvelle leçon' })).toBeVisible();
-  await page.getByLabel('Matière').selectOption({ label: 'test-math' });
-  await page.getByLabel('Chapitre (facultatif)').selectOption({ label: 'test-chapter' });
+  await page.getByLabel('Matière').selectOption({ label: 'TEST Mathématiques' });
+  await page.getByLabel('Chapitre (facultatif)').selectOption({ label: 'TEST Nombres complexes' });
   if (language === 'ar') await page.getByRole('radio', { name: /Arabe/ }).check();
   await page.getByRole('button', { name: 'Commencer la rédaction' }).click();
   await page.getByLabel('Titre', { exact: true }).fill(title);
@@ -324,6 +324,50 @@ test('an Arabic lesson is edited right to left at 360px, and an expired session 
   await expect(page.getByText('Session expirée.')).toHaveCount(0);
   await save(page);
   expect(JSON.stringify((await openRevision(page)).content)).toContain('إضافة بعد انتهاء الجلسة.');
+  expect(problems).toEqual([]);
+});
+
+test('pickers, the editor and the lesson list name subjects and chapters in the lesson language', async ({ page, baseURL }) => {
+  // TEST catalogue names from the fixture (LRN-014): test-math and
+  // test-chapter are named in French and Arabic, test-physique is not.
+  const problems = watch(page, baseURL);
+  await signIn(page, author);
+  await page.getByRole('link', { name: 'Nouvelle leçon' }).click();
+  const subject = page.getByLabel('Matière');
+  const chapter = page.getByLabel('Chapitre (facultatif)');
+  await expect(subject.locator('option')).toHaveText(['TEST Mathématiques', 'test-physique']);
+  await expect(chapter.locator('option')).toHaveText(['Sans chapitre', 'TEST Nombres complexes']);
+  await expect(subject.locator('option').first()).not.toHaveAttribute('lang', /./);
+  // An Arabic lesson: Arabic names, marked right to left; the code stays the fallback.
+  await page.getByRole('radio', { name: /Arabe/ }).check();
+  await expect(subject.locator('option')).toHaveText(['TEST رياضيات', 'test-physique']);
+  for (const option of [subject.locator('option').first(), chapter.locator('option').nth(1)]) {
+    await expect(option).toHaveAttribute('lang', 'ar');
+    await expect(option).toHaveAttribute('dir', 'rtl');
+  }
+  await expect(chapter.locator('option').nth(1)).toHaveText('TEST الأعداد العقدية');
+  await chapter.selectOption({ label: 'TEST الأعداد العقدية' });
+  await page.getByRole('button', { name: 'Commencer la rédaction' }).click();
+  await page.getByLabel('Titre', { exact: true }).fill('TEST درس الأسماء');
+  await editor(page).click();
+  await page.keyboard.type('نص تجريبي.');
+  await saveButton(page).click();
+  await expect(page).toHaveURL(/\/edit$/);
+  const classification = page.locator('.classification');
+  await expect(classification.locator('strong bdi[lang="ar"][dir="rtl"]')).toHaveText('TEST رياضيات');
+  await expect(classification.getByLabel('Chapitre', { exact: true }).locator('option:checked')).toHaveText('TEST الأعداد العقدية');
+  // Reopened, the editor page's header names the subject too.
+  await page.reload();
+  await expect(page.locator('.lesson-context bdi[lang="ar"]').first()).toHaveText('TEST رياضيات');
+
+  // The lesson list: each lesson's subject and chapter in its own language.
+  await page.getByRole('link', { name: 'Mes leçons' }).first().click();
+  const arabicCard = page.locator('.lesson-card').filter({ hasText: 'TEST درس الأسماء' });
+  await expect(arabicCard.locator('.lesson-context bdi[lang="ar"]')).toHaveText(['TEST رياضيات', 'TEST الأعداد العقدية']);
+  expect(await arabicCard.locator('.lesson-context bdi').first().evaluate((el) => getComputedStyle(el).direction)).toBe('rtl');
+  const frenchCard = page.locator('.lesson-card').filter({ hasText: 'TEST Équations et nombres complexes' });
+  await expect(frenchCard.locator('.lesson-context')).toContainText('TEST Mathématiques · TEST Nombres complexes');
+  await expect(frenchCard.locator('.lesson-context bdi')).toHaveCount(0);
   expect(problems).toEqual([]);
 });
 
