@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/hadden-me/learnoo/internal/catalogue"
 	"github.com/hadden-me/learnoo/internal/database"
@@ -501,5 +502,158 @@ func TestNameGuardsIgnoreTemporaryShadowTables(t *testing.T) {
 		fmt.Sprintf(`UPDATE S.subjects SET name_fr = 'TEST Mathématiques', name_ar = 'TEST رياضيات' WHERE id = %d`, math),
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// conn opens a dedicated connection to the test schema.
+func (e *env) conn() *pgx.Conn {
+	e.t.Helper()
+	c, err := pgx.ConnectConfig(e.ctx, e.db.Config().ConnConfig.Copy())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.t.Cleanup(func() { _ = c.Close(context.Background()) })
+	return c
+}
+
+// blocked runs sql in tx in the background and waits until it is waiting
+// for a lock; the returned channel yields its result.
+func (e *env) blocked(tx pgx.Tx, pid uint32, sql string) <-chan error {
+	e.t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := tx.Exec(e.ctx, sql)
+		done <- err
+	}()
+	for i := 0; i < 500; i++ {
+		select {
+		case err := <-done:
+			e.t.Fatalf("%s did not wait for the concurrent transaction: %v", sql, err)
+		default:
+		}
+		var waiting bool
+		if err := e.db.QueryRow(e.ctx, `SELECT coalesce(wait_event_type = 'Lock', false) FROM pg_stat_activity WHERE pid = $1`, pid).
+			Scan(&waiting); err != nil {
+			e.t.Fatal(err)
+		}
+		if waiting {
+			return done
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.t.Fatalf("%s never waited for a lock", sql)
+	return nil
+}
+
+func renameSQL(subject int64, oldFr, newFr string) string {
+	q := func(s string) string {
+		if s == "" {
+			return "NULL"
+		}
+		return "'" + s + "'"
+	}
+	return fmt.Sprintf(`INSERT INTO catalogue_audit (operator_label, action, subject_id, old_name_fr, old_name_ar, new_name_fr, new_name_ar)
+		VALUES ('x@y', 'rename_subject', %d, %s, NULL, %s, NULL)`, subject, q(oldFr), q(newFr))
+}
+
+// Two direct-SQL writers audit a change from the same values: the audit
+// guard locks the entry, so the second waits for the first and is then
+// refused (READ COMMITTED: it reads the committed names; REPEATABLE READ and
+// SERIALIZABLE: serialization failure). Without the lock, a duplicate row for
+// a change its transaction never made, or an A→C row built on names already
+// changed to B, would commit.
+func TestConcurrentRenamesCannotAuditStaleValues(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		iso      pgx.TxIsoLevel
+		from, to string // the waiting transaction's row; the other renames from → "TEST B"
+		update   bool   // the waiting transaction also applies its row
+		code     string
+		msg      string
+	}{
+		{"duplicate row without its change", pgx.ReadCommitted, "", "TEST B", false, "LRN01", "current names"},
+		{"A to C after a committed A to B", pgx.ReadCommitted, "TEST A", "TEST C", true, "LRN01", "current names"},
+		{"repeatable read duplicate", pgx.RepeatableRead, "", "TEST B", false, "40001", ""},
+		{"serializable A to C", pgx.Serializable, "TEST A", "TEST C", true, "40001", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, dbtest.Migrated(t))
+			math := dbtest.AddSubject(t, e.db, "test-math")
+			if tc.from != "" {
+				if _, _, err := e.store.SetSubjectNames(e.ctx, operator, "test-math", ptr(tc.from), nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			first, waiting := e.conn(), e.conn()
+			var pid uint32 = waiting.PgConn().PID()
+			tx1, err := first.Begin(e.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx1.Rollback(e.ctx) }()
+			tx2, err := waiting.BeginTx(e.ctx, pgx.TxOptions{IsoLevel: tc.iso})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx2.Rollback(e.ctx) }()
+			// The waiting transaction's snapshot predates the other's commit.
+			if _, err := tx2.Exec(e.ctx, `SELECT count(*) FROM catalogue_audit`); err != nil {
+				t.Fatal(err)
+			}
+			for _, sql := range []string{renameSQL(math, tc.from, "TEST B"), fmt.Sprintf(`UPDATE subjects SET name_fr = 'TEST B' WHERE id = %d`, math)} {
+				if _, err := tx1.Exec(e.ctx, sql); err != nil {
+					t.Fatal(err)
+				}
+			}
+			done := e.blocked(tx2, pid, renameSQL(math, tc.from, tc.to))
+			if err := tx1.Commit(e.ctx); err != nil {
+				t.Fatal(err)
+			}
+			err = <-done
+			if err == nil && tc.update {
+				_, err = tx2.Exec(e.ctx, fmt.Sprintf(`UPDATE subjects SET name_fr = '%s' WHERE id = %d`, tc.to, math))
+			}
+			if err == nil {
+				err = tx2.Commit(e.ctx)
+			}
+			wantCode(t, tc.name, err, tc.code, tc.msg)
+			var renames int
+			var name string
+			if err := e.db.QueryRow(e.ctx, `SELECT (SELECT count(*) FROM catalogue_audit WHERE action = 'rename_subject' AND new_name_fr = 'TEST B'),
+				(SELECT name_fr FROM subjects WHERE id = $1)`, math).Scan(&renames, &name); err != nil || renames != 1 || name != "TEST B" {
+				t.Fatalf("after the race: %d rows to TEST B, name %q, %v", renames, name, err)
+			}
+		})
+	}
+}
+
+// Defence in depth: even an audit row with stale old values (as an
+// unlocked audit guard would have let through) cannot be used, because the
+// update guard compares the row's old values with the entry's. The table
+// owner here switches the audit guard off to plant such a row.
+func TestUpdateGuardRefusesAStaleAuditRow(t *testing.T) {
+	e := newEnv(t, dbtest.Migrated(t))
+	math := dbtest.AddSubject(t, e.db, "test-math")
+	ch := dbtest.AddChapter(t, e.db, math, "ch-01")
+	if _, _, err := e.store.SetSubjectNames(e.ctx, operator, "test-math", ptr("TEST A"), nil); err != nil {
+		t.Fatal(err)
+	}
+	before := e.state()
+	planted := func(row string) []string {
+		// Switched off for this transaction only: the refusal rolls it back.
+		return []string{`ALTER TABLE catalogue_audit DISABLE TRIGGER zz_guard_catalogue_audit`, row}
+	}
+	wantCode(t, "stale rename row", e.inTx(append(planted(renameSQL(math, "TEST Z", "TEST C")),
+		fmt.Sprintf(`UPDATE subjects SET name_fr = 'TEST C' WHERE id = %d`, math))...), "LRN01", "renamed without")
+	wantCode(t, "stale reorder row", e.inTx(append(planted(fmt.Sprintf(`INSERT INTO catalogue_audit
+		(operator_label, action, subject_id, chapter_id, old_sort_order, new_sort_order) VALUES ('x@y', 'reorder_chapter', %d, %d, 4, 5)`, math, ch)),
+		fmt.Sprintf(`UPDATE chapters SET sort_order = 5 WHERE id = %d`, ch))...), "LRN01", "reordered without")
+	if after := e.state(); after != before {
+		t.Fatalf("refused statements changed the catalogue:\n%s\n%s", before, after)
+	}
+	var enabled bool
+	if err := e.db.QueryRow(e.ctx, `SELECT tgenabled <> 'D' FROM pg_trigger WHERE tgname = 'zz_guard_catalogue_audit' AND tgrelid = 'catalogue_audit'::regclass`).
+		Scan(&enabled); err != nil || !enabled {
+		t.Fatalf("audit guard enabled %v %v", enabled, err)
 	}
 }

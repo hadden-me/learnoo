@@ -33,7 +33,10 @@
 --     rename_chapter record both names, reorder_subject and reorder_chapter
 --     the order. Three guards keep the audit exact:
 --       1. An audit row's old values must be the entry's current values, and
---          its new values must differ (zz_guard_catalogue_audit).
+--          its new values must differ (zz_guard_catalogue_audit). The guard
+--          locks the entry (FOR NO KEY UPDATE) until the transaction ends,
+--          so two transactions cannot both audit a change from the same
+--          values.
 --       2. An update that changes the names (the order) of an entry needs
 --          the latest rename (reorder) row of the same transaction for that
 --          entry to record exactly that change (zz_guard_*_metadata).
@@ -122,11 +125,18 @@ BEGIN
     IF NEW.action IN ('add_subject', 'add_chapter') THEN
         RETURN NEW;
     END IF;
+    -- The entry is locked until the transaction ends, as the operator
+    -- commands lock it before writing their row: a concurrent change waits,
+    -- and at READ COMMITTED this read sees the latest committed values (a
+    -- row built on stale old values is refused); at REPEATABLE READ or
+    -- SERIALIZABLE a concurrently changed entry is a serialization failure.
     IF NEW.chapter_id IS NULL THEN
-        EXECUTE format('SELECT true, name_fr, name_ar, sort_order FROM %I.subjects WHERE id = $1', TG_TABLE_SCHEMA)
+        EXECUTE format('SELECT true, name_fr, name_ar, sort_order FROM %I.subjects WHERE id = $1
+                         FOR NO KEY UPDATE', TG_TABLE_SCHEMA)
            INTO found_entry, cur_fr, cur_ar, cur_order USING NEW.subject_id;
     ELSE
-        EXECUTE format('SELECT true, name_fr, name_ar, sort_order FROM %I.chapters WHERE id = $1 AND subject_id = $2', TG_TABLE_SCHEMA)
+        EXECUTE format('SELECT true, name_fr, name_ar, sort_order FROM %I.chapters WHERE id = $1 AND subject_id = $2
+                         FOR NO KEY UPDATE', TG_TABLE_SCHEMA)
            INTO found_entry, cur_fr, cur_ar, cur_order USING NEW.chapter_id, NEW.subject_id;
     END IF;
     IF found_entry IS NULL THEN
