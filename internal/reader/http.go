@@ -69,17 +69,23 @@ type Config struct {
 // Handlers serves the reader pages.
 type Handlers struct {
 	Config
-	pages map[string]*template.Template
+	pages  map[string]*template.Template
+	assets manifest
 }
 
-// New parses the templates; it panics on a template error (a build defect).
+// New parses the templates and fingerprints the public assets; it panics on
+// an error in either (a build defect).
 func New(cfg Config) *Handlers {
-	base := template.Must(template.New("").Funcs(template.FuncMap{"dir": Dir}).ParseFS(files, "templates/layout.html"))
+	assets, err := embeddedAssets()
+	if err != nil {
+		panic(err)
+	}
+	base := template.Must(template.New("").Funcs(template.FuncMap{"dir": Dir, "asset": assets.url}).ParseFS(files, "templates/layout.html"))
 	pages := map[string]*template.Template{}
 	for _, name := range []string{"login", "invite", "dashboard", "subject", "lesson", "reported", "search", "error"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(files, "templates/"+name+".html"))
 	}
-	return &Handlers{Config: cfg, pages: pages}
+	return &Handlers{Config: cfg, pages: pages, assets: assets}
 }
 
 // Register mounts the reader routes documented in docs/API.md.
@@ -102,6 +108,7 @@ func (h *Handlers) Register(mux *http.ServeMux) {
 	page("GET /learn/lessons/{publicId}/reported", h.requireUser(h.reported))
 	page("GET /learn/lessons/{publicId}/media/{mediaId}", h.lessonMedia)
 	mux.Handle("GET /static/{path...}", headers(h.Auth.Middleware(http.HandlerFunc(h.static))))
+	mux.Handle("GET "+AssetPrefix+"{version}/{path...}", http.HandlerFunc(h.serveAsset))
 }
 
 // headers applies the reader's cache rule and default CSP; handlers may
@@ -758,14 +765,13 @@ func (h *Handlers) removeBookmark(w http.ResponseWriter, r *http.Request) {
 
 // ---- static assets ----
 
-// Public assets are generic styles and scripts with no lesson content.
-// Everything else under /static is lesson media (today only the renderer's
-// fixture image) and needs a session; anonymous requests get 404, as do
-// unknown paths and directories.
-var (
-	publicRendering = map[string]bool{"tokens.css": true, "site.css": true, "math.js": true}
-	protectedMedia  = map[string]bool{"complex-plane.svg": true}
-)
+// Unversioned static files. Public assets (isPublicAsset: generic styles and
+// scripts with no lesson content, and KaTeX) are also served fingerprinted
+// under /assets/ (assets.go), which pages use; these legacy URLs stay
+// private, no-store. Everything else under /static is lesson media (today
+// only the renderer's fixture image) and needs a session; anonymous requests
+// get 404, as do unknown paths and directories.
+var protectedMedia = map[string]bool{"complex-plane.svg": true}
 
 func (h *Handlers) static(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("path")
@@ -774,7 +780,7 @@ func (h *Handlers) static(w http.ResponseWriter, r *http.Request) {
 	case !fs.ValidPath(name):
 	case name == "reader.css":
 		fsys, _ = fs.Sub(files, "static")
-	case publicRendering[name], strings.HasPrefix(name, "vendor/katex/"):
+	case isPublicAsset(name):
 		fsys, _ = fs.Sub(rendering.Files, "static")
 	case protectedMedia[name]:
 		if _, ok := auth.SessionFrom(r.Context()); ok {

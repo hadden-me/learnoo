@@ -415,7 +415,7 @@ func TestLessonPageRendersCanonicalContentWithCredit(t *testing.T) {
 		`<div class="math" dir="ltr" data-display="true">`,
 		`<section class="exercise">`, `<details><summary>`, "Solution de test.",
 		`data-video-id="TESTvideo01"`, `src="/static/complex-plane.svg"`,
-		`/static/vendor/katex/katex.min.js`, `/static/math.js`,
+		mustAssetURL(t, "vendor/katex/katex.min.js"), mustAssetURL(t, "math.js"),
 		`Rédigé par <bdi class="author">TEST Autrice Amel</bdi>`,
 		`Relu et approuvé par <bdi class="reviewer">TEST Relecteur Karim</bdi>`,
 		"test-math", "test-chapter", "Objectif de test.",
