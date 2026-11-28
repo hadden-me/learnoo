@@ -52,6 +52,7 @@ button:disabled { cursor: wait; opacity: 0.65; }
 .toolbar button:not(:first-child):hover:not(:disabled) { background: var(--learnoo-color-brand-soft); }
 .video { border: 1px dashed var(--learnoo-color-control-border); padding: var(--learnoo-space-6); margin-block: var(--learnoo-space-8); border-radius: var(--learnoo-radius-card); }
 .video p { font-size: var(--learnoo-text-small); color: var(--learnoo-color-muted); }
+.video-print-link { display: none; }
 iframe { border: 0; width: 100%; aspect-ratio: 16/9; }
 .math-error { color: var(--learnoo-color-danger); background: var(--learnoo-color-danger-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 .math-error::before { content: "Formule non rendue : "; font: var(--learnoo-text-caption) var(--learnoo-font-sans); }
@@ -83,3 +84,21 @@ p, li, h1, h2, h3 { overflow-wrap: anywhere; }
 
 p:lang(ar), li:lang(ar) { line-height: var(--learnoo-leading-arabic); }
 h1:lang(ar), h2:lang(ar), h3:lang(ar) { line-height: var(--learnoo-leading-heading); }
+
+@media print {
+  body { background: var(--learnoo-color-surface); color: var(--learnoo-color-ink); }
+  .skip, header nav, .video-notice, iframe { display: none; }
+  main { max-width: none; margin: 0; padding: 0; border: 0; }
+  a { color: inherit; }
+  .formula { background: none; border: 1px solid var(--learnoo-color-control-border); }
+  .formula, .katex-display, figure, .callout, .exercise, .video { break-inside: avoid; }
+  h2, h3, summary { break-after: avoid; }
+  details { border: 0; padding: 0; }
+  details::details-content { content-visibility: visible; }
+  summary { list-style: none; min-block-size: 0; }
+  summary::-webkit-details-marker { display: none; }
+  .video { border-style: solid; }
+  .video-load { font-size: 0; min-block-size: 0; padding: 0; border: 0; background: none; }
+  .video-load::after { content: "https://youtu.be/" attr(data-video-id); font-size: var(--learnoo-text-small); font-weight: var(--learnoo-weight-body); color: var(--learnoo-color-ink); }
+  .video .video-print-link { display: block; margin: 0; color: var(--learnoo-color-ink); }
+}

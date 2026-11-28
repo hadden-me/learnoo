@@ -92,3 +92,38 @@ test('loading a video replaces the button and its notice with the player',async(
  expect(external.length).toBeGreaterThan(0);
  expect(external.every(u=>u.startsWith('https://www.youtube-nocookie.com/embed/'))).toBe(true);
 });
+test('print shows solutions and the video link, hides controls and keeps blocks whole',async({page,request,baseURL})=>{
+ const doc=structuredClone(fixture);doc.blocks.push({type:'youtube',title:'Vidéo de test',videoId:'TESTvideo01'});
+ const preview=await request.post('/preview',{data:doc});expect(preview.ok()).toBe(true);
+ const body=await preview.text();const headers=preview.headers();
+ await page.route(`${baseURL}/print-test`,route=>route.fulfill({status:200,headers,body}));
+ const external=[];page.on('request',r=>{if(new URL(r.url()).origin!==new URL(baseURL).origin)external.push(r.url());});
+ await page.route('https://www.youtube-nocookie.com/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>stub</title>'}));
+ await page.goto('/print-test');await expect(page.locator('.katex').first()).toBeAttached();
+ await page.emulateMedia({media:'print'});
+ await expect(page.locator('details > :not(summary)').first()).toBeVisible();
+ await expect(page.locator('header nav')).toBeHidden();
+ await expect(page.locator('.video-notice')).toBeHidden();
+ // Before the video is loaded: the button prints as the link.
+ expect(await page.locator('.video-load').evaluate(el=>getComputedStyle(el,'::after').content)).toBe('"https://youtu.be/TESTvideo01"');
+ for(const sel of ['.formula','.exercise','figure'])expect(await page.locator(sel).first().evaluate(el=>getComputedStyle(el).breakInside)).toBe('avoid');
+ await page.pdf({path:'test-results/lesson-print.pdf'});
+ expect(external).toEqual([]);
+ // After the student loads it: the player is hidden, the link still prints.
+ await page.emulateMedia({media:'screen'});
+ const video=page.locator('section.video');
+ await expect(video.locator('.video-print-link')).toHaveCount(0);
+ await video.getByRole('button',{name:'Charger la vidéo YouTube'}).click();
+ await expect(video.locator('iframe')).toHaveAttribute('src','https://www.youtube-nocookie.com/embed/TESTvideo01');
+ await expect(video.locator('.video-print-link')).toBeHidden();
+ await page.emulateMedia({media:'print'});
+ await expect(video.locator('iframe')).toBeHidden();
+ await expect(video.locator('.video-print-link')).toBeVisible();
+ await expect(video.locator('.video-print-link')).toHaveText('https://youtu.be/TESTvideo01');
+ await page.pdf({path:'test-results/lesson-print-video-loaded.pdf'});
+ expect(external.every(u=>u.startsWith('https://www.youtube-nocookie.com/embed/'))).toBe(true);
+ await page.goto('/bidi');
+ expect(await page.evaluate(()=>getComputedStyle(document.querySelector('[dir="rtl"]')).direction)).toBe('rtl');
+ expect(await page.evaluate(()=>getComputedStyle(document.querySelector('[dir="rtl"] .math')).direction)).toBe('ltr');
+ await page.pdf({path:'test-results/bidi-print.pdf'});
+});

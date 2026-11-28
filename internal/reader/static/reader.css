@@ -39,3 +39,6 @@ input:focus-visible { outline: 3px solid var(--learnoo-color-focus); outline-off
   .search-row { flex-wrap: wrap; }
   .search-row button { inline-size: 100%; }
 }
+@media print {
+  .bookmark, .report { display: none; }
+}

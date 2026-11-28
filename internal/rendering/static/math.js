@@ -27,7 +27,11 @@
       iframe.allow = 'fullscreen';
       // Replace the whole control (button and its notice), then keep
       // keyboard focus on the player that took the button's place.
-      (button.closest('.video-control') || button).replaceWith(iframe);
+      // A print-only copy of the link, since print hides the player.
+      const link = document.createElement('p');
+      link.className = 'video-print-link';
+      link.textContent = `https://youtu.be/${id}`;
+      (button.closest('.video-control') || button).replaceWith(iframe, link);
       iframe.focus();
     }, { once: true });
   }
